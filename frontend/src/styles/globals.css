@@ -1,0 +1,289 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius: var(--radius);
+}
+
+@layer base {
+  :root {
+    --background: 210 36% 97%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 213 94% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 28% 93%;
+    --secondary-foreground: 222 47% 20%;
+    --muted: 210 24% 93%;
+    --muted-foreground: 215 16% 46%;
+    --accent: 158 60% 94%;
+    --accent-foreground: 160 60% 22%;
+    --destructive: 0 84% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 24% 88%;
+    --input: 214 24% 91%;
+    --ring: 213 94% 48%;
+    --radius: 0.75rem;
+    --chart-1: 213 94% 48%;
+    --chart-2: 160 60% 40%;
+    --chart-3: 37 90% 55%;
+    --chart-4: 280 65% 58%;
+    --chart-5: 340 75% 55%;
+
+    /* Admin sidebar — light mode */
+    --sidebar-bg: 0 0% 100%;
+    --sidebar-border: 214 24% 88%;
+    --sidebar-text: 215 16% 46%;
+    --sidebar-text-active: 222 47% 11%;
+    --sidebar-active-bg: 213 94% 48% / 0.1;
+    --sidebar-active-border: 213 94% 48%;
+    --sidebar-hover-bg: 210 28% 96%;
+  }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 97%;
+    --card: 222 42% 10%;
+    --card-foreground: 210 40% 97%;
+    --popover: 222 42% 10%;
+    --popover-foreground: 210 40% 97%;
+    --primary: 213 90% 64%;
+    --primary-foreground: 222 47% 10%;
+    --secondary: 217 33% 15%;
+    --secondary-foreground: 210 40% 97%;
+    --muted: 217 28% 15%;
+    --muted-foreground: 215 18% 64%;
+    --accent: 158 50% 18%;
+    --accent-foreground: 158 60% 88%;
+    --destructive: 0 62% 38%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 28% 20%;
+    --input: 217 28% 20%;
+    --ring: 213 90% 64%;
+
+    --sidebar-bg: 222 52% 6%;
+    --sidebar-border: 217 28% 18%;
+    --sidebar-text: 215 18% 60%;
+    --sidebar-text-active: 0 0% 100%;
+    --sidebar-active-bg: 213 90% 50% / 0.2;
+    --sidebar-active-border: 213 90% 64%;
+    --sidebar-hover-bg: 222 47% 11%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans), system-ui, sans-serif;
+    min-height: 100%;
+  }
+  /* Only apply ambient gradient on public/auth pages, not the app shell */
+  body:not(.app-shell) {
+    background-image:
+      radial-gradient(900px circle at 10% -10%, hsl(var(--primary) / 0.07), transparent 60%),
+      radial-gradient(800px circle at 90% 0%, hsl(var(--accent) / 0.12), transparent 55%);
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }
+  img,
+  svg,
+  video,
+  canvas {
+    max-width: 100%;
+    height: auto;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+  }
+}
+
+/* ── gPawa brand tokens (sampled from logo: cyan→blue bolt, navy text) ── */
+:root {
+  --gpawa-cyan:   199 80% 60%;   /* #4FB4E8 — top of bolt */
+  --gpawa-blue:   213 66% 48%;   /* #2E7DD1 — mid bolt / primary CTA */
+  --gpawa-deep:   215 74% 37%;   /* #1B5FA8 — base of bolt */
+  --gpawa-navy:   218 71% 21%;   /* #12305C — wordmark / headings */
+  --gpawa-surface: 210 40% 97%; /* #F5F6F8 — page background */
+}
+
+/* Gradient for CTAs, total rows, and the bolt icon */
+.gpawa-gradient {
+  background: linear-gradient(135deg, hsl(var(--gpawa-cyan)), hsl(var(--gpawa-blue)));
+}
+.gpawa-gradient-text {
+  background: linear-gradient(135deg, hsl(var(--gpawa-cyan)), hsl(var(--gpawa-blue)));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── gPawa Admin Sidebar ──────────────────────────────────────── */
+.gpawa-sidebar {
+  background-color: hsl(var(--sidebar-bg)) !important;
+  color: hsl(var(--sidebar-text)) !important;
+  border-color: hsl(var(--sidebar-border));
+}
+
+.gpawa-sidebar-brand {
+  color: hsl(var(--sidebar-text-active)) !important;
+}
+
+.gpawa-sidebar .gpawa-sidebar-footer {
+  color: hsl(var(--sidebar-text));
+}
+
+.gpawa-sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: hsl(var(--sidebar-text));
+  transition: all 150ms ease;
+  position: relative;
+  border-left: 2px solid transparent;
+}
+
+.gpawa-sidebar-link:hover {
+  background: hsl(var(--sidebar-hover-bg));
+  color: hsl(var(--sidebar-text-active));
+}
+
+.gpawa-sidebar-link.active {
+  background: hsl(var(--sidebar-active-bg));
+  color: hsl(var(--sidebar-text-active));
+  border-left-color: hsl(var(--sidebar-active-border));
+}
+
+/* ── Polished card shadows ────────────────────────────────────── */
+.card-elevated {
+  box-shadow: 0 1px 3px hsl(222 47% 11% / 0.06), 0 4px 16px hsl(222 47% 11% / 0.06);
+}
+
+.dark .card-elevated {
+  box-shadow: 0 1px 3px hsl(0 0% 0% / 0.3), 0 4px 16px hsl(0 0% 0% / 0.2);
+}
+
+/* ── Auth card container ──────────────────────────────────────── */
+.auth-glow {
+  background: radial-gradient(ellipse 80% 50% at 50% -10%, hsl(var(--primary) / 0.12), transparent);
+}
+
+/* ── Misc ────────────────────────────────────────────────────── */
+.container {
+  max-width: 1200px;
+  padding: 0 20px;
+  margin: 0 auto;
+}
+
+.phone-input {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.phone-input .PhoneInputCountry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 0.5rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  min-height: 2.5rem;
+}
+
+.phone-input .PhoneInputCountrySelect {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  appearance: none;
+}
+
+.phone-input .PhoneInputCountryIcon {
+  width: 1.25rem;
+  height: 1rem;
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.phone-input .PhoneInputCountryIconImg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.phone-input .PhoneInputInput {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.phone-input .PhoneInputCountrySelectArrow {
+  margin-left: 0.25rem;
+  opacity: 0.6;
+  border-color: hsl(var(--muted-foreground));
+}
+
+.embla { overflow: hidden; }
+.embla__container { display: flex; }
+.embla__slide {
+  flex: 0 0 80%;
+  min-width: 0;
+}
+
+@media (min-width: 768px) { .embla__slide { flex: 0 0 45%; } }
+@media (min-width: 1024px) { .embla__slide { flex: 0 0 33.333%; } }
+
+[data-radix-popper-content-wrapper] {
+  background-color: hsl(var(--background)) !important;
+}
+
+.dark [data-radix-dropdown-menu-content] {
+  background-color: hsl(var(--popover));
+}
