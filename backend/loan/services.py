@@ -6,6 +6,8 @@ mutations stay aligned with the web portal (`loan.api.views`).
 """
 from __future__ import annotations
 
+from backend.features import require_feature
+
 import logging
 from decimal import Decimal, InvalidOperation
 
@@ -23,13 +25,13 @@ from loan.trust_ladder import (
     effective_max_loan,
 )
 from meter.models import Meter, MeterNotification
+from meter.allocation_service import authorize_loan_allocation, quantize_source_kwh
 from meter.notifications import create_system_notification
-from meter.services import push_units_to_thingsboard
 from transactions.models import TransactionLog, TransactionType, UnitTransaction
 from utils.general import dispatch_task
 from loan.tenure import validate_tenure_months
-from utils.billing import get_active_domestic_tariff
-from wallet.models import Wallet as UnitWallet
+from utils.billing import calculate_units_from_payment, get_active_domestic_tariff
+from wallet.models import UnitBalance
 from accounts.tasks import (
     handle_send_loan_application_email,
     handle_send_loan_disbursed_email,
@@ -93,7 +95,7 @@ def reconcile_user_loan_statuses(user) -> int:
     ).prefetch_related("repayments")
 
     for loan in loans:
-        if float(loan.outstanding_balance) <= 0:
+        if loan.outstanding_balance <= 0:
             loan.status = "COMPLETED"
             loan.save(update_fields=["status", "updated_at"])
             updated += 1
@@ -114,7 +116,7 @@ def get_blocking_loan_state(user) -> dict:
     outstanding_balance = Decimal("0")
 
     for loan in loans.filter(status__in=DEBT_LOAN_STATUSES).prefetch_related("repayments"):
-        balance = Decimal(str(loan.outstanding_balance))
+        balance = loan.outstanding_balance
         if balance > 0:
             debt_loans.append(loan)
             outstanding_balance += balance
@@ -203,19 +205,19 @@ def get_user_loan_stats(user) -> dict:
     approved_loans = loans.filter(status="APPROVED").count()
     total_loans = loans.count()
 
-    total_borrowed = float(
+    total_borrowed = (
         loans.filter(status__in=["APPROVED", "DISBURSED", "COMPLETED", "DEFAULTED"])
         .aggregate(total=Sum("amount_approved"))["total"]
-        or 0
+        or Decimal("0.00")
     )
 
-    total_repayments = float(
-        LoanRepayment.objects.filter(loan__user=user)
+    total_repayments = (
+        LoanRepayment.objects.filter(loan__user=user, payment_status="SUCCESS")
         .aggregate(total=Sum("amount_paid"))["total"]
-        or 0
+        or Decimal("0.00")
     )
 
-    outstanding_balance = float(blocking_state["outstanding_balance"])
+    outstanding_balance = blocking_state["outstanding_balance"]
 
     eligibility = get_loan_eligibility(user)
     repayable = get_repayable_loan(user)
@@ -242,7 +244,7 @@ def get_disbursed_loan_balances(user):
     for loan in LoanApplication.objects.filter(user=user, status="DISBURSED").order_by(
         "created_at"
     ):
-        balance = Decimal(str(loan.outstanding_balance))
+        balance = loan.outstanding_balance
         if balance > 0:
             loans_with_balance.append((loan, balance))
             total_outstanding += balance
@@ -250,12 +252,12 @@ def get_disbursed_loan_balances(user):
 
 
 def get_repayable_loan(user):
-    """Most recent disbursed loan with an outstanding balance."""
+    """Most recent disbursed or overdue loan with an outstanding balance."""
     reconcile_user_loan_statuses(user)
-    for loan in LoanApplication.objects.filter(user=user, status="DISBURSED").order_by(
+    for loan in LoanApplication.objects.filter(user=user, status__in=DEBT_LOAN_STATUSES).order_by(
         "-created_at"
     ):
-        if float(loan.outstanding_balance) > 0:
+        if loan.outstanding_balance > 0:
             return loan
     return None
 
@@ -297,6 +299,7 @@ def create_loan_application(
     purpose: str,
     tenure_months: int = 6,
     channel: str = "WEB",
+    meter_no: str | None = None,
 ) -> LoanApplication:
     """
     Same rules as ``LoanApplicationView.create`` (web loan apply).
@@ -305,16 +308,20 @@ def create_loan_application(
     if not can_apply:
         raise LoanOperationError(msg)
 
-    if not Meter.objects.filter(user=user).exists():
-        raise LoanOperationError(
-            "No meter found. Please register your meter before applying for a loan."
-        )
+    meter = Meter.objects.filter(
+        user=user, meter_no=meter_no, status=Meter.STATUS_ACTIVE,
+    ).first() if meter_no else None
+    if meter is None:
+        raise LoanOperationError("Select an active meter assigned to your account before applying.")
 
     try:
         amount_requested = Decimal(str(amount_requested))
     except (InvalidOperation, TypeError, ValueError):
         raise LoanOperationError("Invalid amount.")
 
+    if (not amount_requested.is_finite() or
+            amount_requested != amount_requested.to_integral_value()):
+        raise LoanOperationError("Use a whole UGX loan amount.")
     if amount_requested < Decimal("5000") or amount_requested > Decimal("200000"):
         raise LoanOperationError("Amount out of range. Use 5000 to 200000.")
 
@@ -343,6 +350,7 @@ def create_loan_application(
 
     loan = LoanApplication.objects.create(
         user=user,
+        intended_meter=meter,
         purpose=purpose,
         amount_requested=amount_requested,
         amount_approved=amount_approved if amount_approved > 0 else None,
@@ -416,15 +424,11 @@ def _resolve_loan_for_disburse(user, loan_id=None):
     return loan
 
 
-def disburse_loan(user, loan_id=None, *, channel: str = "WEB") -> dict:
+def disburse_loan(user, loan_id=None, *, channel: str = "WEB", meter_no: str | None = None) -> dict:
     """Same rules as ``LoanDisbursementView.post``."""
     loan = _resolve_loan_for_disburse(user, loan_id)
     if not loan:
         raise LoanOperationError("No approved loan found.")
-
-    meter = Meter.objects.filter(user=user).first()
-    if not meter:
-        raise LoanOperationError("No meter found.")
 
     with transaction.atomic():
         # Lock the row so two concurrent disbursement attempts (e.g. the apply
@@ -435,13 +439,35 @@ def disburse_loan(user, loan_id=None, *, channel: str = "WEB") -> dict:
             raise LoanOperationError(f"Loan is {loan.status}. Only APPROVED loans can be disbursed.")
         if not loan.amount_approved or loan.amount_approved <= 0:
             raise LoanOperationError("Loan amount not approved.")
+        if Decimal(str(loan.amount_approved)) != Decimal(str(loan.amount_approved)).to_integral_value():
+            raise LoanOperationError("Approved loan principal must be whole UGX before disbursement.")
+
+        meter = loan.intended_meter
+        if meter is None and meter_no:
+            meter = Meter.objects.filter(
+                user=user, meter_no=meter_no, status=Meter.STATUS_ACTIVE,
+            ).first()
+            if meter is not None:
+                loan.intended_meter = meter
+                loan.save(update_fields=["intended_meter", "updated_at"])
+        if meter is None:
+            raise LoanOperationError("An explicit owned meter selection is required before disbursement.")
+        if (meter.user_id != user.pk or meter.status != Meter.STATUS_ACTIVE or
+                meter.is_deleted or (meter_no and meter.meter_no != meter_no)):
+            raise LoanOperationError("The selected loan meter is no longer assigned and active.")
 
         if loan.tariff:
-            units_to_disburse = loan.calculate_units_from_amount()
+            # Use the tariff stored on the loan, matching its quote even if a
+            # newer tariff became active before disbursement.
+            calculated_units, _ = calculate_units_from_payment(
+                Decimal(str(loan.amount_approved)), user, tariff=loan.tariff,
+                apply_deductions=False,
+            )
+            units_to_disburse = quantize_source_kwh(calculated_units)
         else:
-            units_to_disburse = round(float(loan.amount_approved) / 500)
+            units_to_disburse = quantize_source_kwh(Decimal(loan.amount_approved) / Decimal("500"))
 
-        LoanDisbursement.objects.create(
+        disbursement = LoanDisbursement.objects.create(
             loan_application=loan,
             disbursed_amount=loan.amount_approved,
             units_disbursed=units_to_disburse,
@@ -451,15 +477,20 @@ def disburse_loan(user, loan_id=None, *, channel: str = "WEB") -> dict:
         loan.status = "DISBURSED"
         loan.save()
 
-        unit_wallet, _ = UnitWallet.objects.get_or_create(user=user)
-        unit_wallet.balance += Decimal(str(units_to_disburse))
-        unit_wallet.save()
+        allocation = authorize_loan_allocation(disbursement, units_to_disburse)
 
-        push_ok, push_msg = push_units_to_thingsboard(
-            meter=meter,
-            units=units_to_disburse,
-            reference_id=loan.loan_id,
+        # An approved loan authorizes energy before repayment. Store the
+        # allocation in kWh; the legacy Wallet.balance is labelled UGX and
+        # cannot safely hold energy. Physical delivery needs a bound device
+        # acknowledgement protocol and is intentionally deferred.
+        unit_balance, _ = UnitBalance.objects.select_for_update().get_or_create(user=user)
+        unit_balance.add_units(
+            units_to_disburse,
+            description=f"Loan {loan.loan_id} disbursement",
+            reference=loan.loan_id,
         )
+        push_ok = False
+        push_msg = "Allocation recorded; physical meter delivery awaits a validated device protocol."
 
         TransactionLog.objects.create(
             user=user,
@@ -471,21 +502,18 @@ def disburse_loan(user, loan_id=None, *, channel: str = "WEB") -> dict:
             details={
                 "channel": channel,
                 "units_disbursed": float(units_to_disburse),
-                "meter_push": {"status": "OK" if push_ok else "FAILED", "message": push_msg},
+                "meter_push": {"status": "DEFERRED", "message": push_msg},
             },
         )
 
-        try:
-            UnitTransaction.objects.create(
-                sender=user,
-                receiver=user,
-                units=units_to_disburse,
-                direction="IN",
-                status="COMPLETED",
-                message=f"Loan disbursement to wallet - {loan.loan_id}",
-            )
-        except Exception as exc:
-            logger.warning("UnitTransaction creation failed during disbursement: %s", exc)
+        UnitTransaction.objects.create(
+            sender=user,
+            receiver=user,
+            units=units_to_disburse,
+            direction="IN",
+            status="COMPLETED",
+            message=f"Loan disbursement to wallet - {loan.loan_id}",
+        )
     create_system_notification(
         user=user,
         notification_type=MeterNotification.TYPE_LOAN_DISBURSEMENT,
@@ -508,6 +536,8 @@ def disburse_loan(user, loan_id=None, *, channel: str = "WEB") -> dict:
         "loan_id": loan.loan_id,
         "loan_pk": loan.id,
         "units_disbursed": round(float(units_to_disburse), 2),
+        "allocation_id": allocation.pk,
+        "meter_no": meter.meter_no,
         "meter_push_ok": push_ok,
         "meter_push_message": push_msg,
     }
@@ -542,7 +572,14 @@ def repay_loan(
     is_anonymous: bool = False,
 ) -> dict:
     """Same rules as ``LoanRepaymentView.post`` (web repayment)."""
+    # Only new third-party activity is gated; own repayment remains available.
+    if is_anonymous or (paid_by_user is not None and paid_by_user.pk != user.pk):
+        require_feature("third_party_repayment")
     loan = _resolve_loan_for_repay(user, loan_id)
+
+    # This legacy service records SUCCESS without proof of funds. New repayments
+    # are handled by transactions.payment_settlement after provider verification.
+    raise LoanOperationError("Unverified repayment is disabled; use verified Mobile Money repayment.")
 
     if loan.status != "DISBURSED":
         raise LoanOperationError("Loan is not disbursed or already completed")

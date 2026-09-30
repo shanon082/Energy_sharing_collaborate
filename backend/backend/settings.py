@@ -44,9 +44,15 @@ BASE_URL = get_env_variable("BASE_URL", "http://localhost:8000/api/v1")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 load_dotenv(BASE_DIR / ".env")
+
+from backend.feature_config import load_feature_flags, parse_feature_bool
+FEATURE_FLAGS = load_feature_flags(os.environ)
+SIMULATED_METER_ENABLED = parse_feature_bool(
+    os.environ.get("SIMULATED_METER_ENABLED", "false"), name="SIMULATED_METER_ENABLED",
+)
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-6j))8vb%nflvwwb3-n4pp5k^==r6@8oy4*ruxtqmmqj3aj4ea7'
 DEBUG = get_env_variable("DEBUG", "True") == "True"
+SECRET_KEY = get_env_variable("SECRET_KEY", "development-only-unsafe-key" if DEBUG else None)
 
 # =============================
 # Frontend URL (used in verification/reset email links)
@@ -197,9 +203,9 @@ BASE_URL = get_env_variable("BASE_URL", "http://localhost:8000/api/v1")
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': get_env_variable('DB_NAME', 'project'),
-        'USER': get_env_variable('DB_USER', 'postgres'),
-        'PASSWORD': get_env_variable('DB_PASSWORD', 'postgres'),
+        'NAME': get_env_variable('DB_NAME', 'energy_share'),
+        'USER': get_env_variable('DB_USER', 'energy_user'),
+        'PASSWORD': get_env_variable('DB_PASSWORD', ''),
         'HOST': get_env_variable('DB_HOST', 'localhost'),
         'PORT': get_env_variable('DB_PORT', 5432, cast=int),
         "ATOMIC_REQUESTS": True,
@@ -272,7 +278,7 @@ EMAIL_PORT = get_env_variable("EMAIL_PORT", 587, cast=int)
 EMAIL_USE_TLS = get_env_variable("EMAIL_USE_TLS", "True") == "True"
 EMAIL_USE_SSL = get_env_variable("EMAIL_USE_SSL", "False") == "True"
 EMAIL_HOST_USER = get_env_variable("EMAIL_HOST_USER", "gpawateam@gmail.com")
-EMAIL_HOST_PASSWORD = get_env_variable("EMAIL_HOST_PASSWORD", "sfho agbj vknb pflm") 
+EMAIL_HOST_PASSWORD = get_env_variable("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = get_env_variable("DEFAULT_EMAIL_SENDER", "gpawateam@gmail.com")
 DEFAULT_EMAIL_SENDER = DEFAULT_FROM_EMAIL
 
@@ -301,6 +307,11 @@ from datetime import timedelta
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
+    "verified-payment-reconciliation": {
+        "task": "transactions.tasks.reconcile_pending_payments",
+        "schedule": crontab(minute="*/5"),
+        "options": {"queue": "celery"},
+    },
     "ami-meter-balance-snapshots": {
         "task": "meter.tasks.snapshot_ami_meter_balances",
         "schedule": crontab(minute=0, hour="*/6"),
@@ -311,9 +322,9 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=15, hour=1),
         "options": {"queue": "celery"},
     },
-    "ami-pending-unit-delivery": {
-        "task": "meter.tasks.retry_pending_ami_deliveries",
-        "schedule": crontab(minute="*/5"),
+    "simulated-meter-outbox": {
+        "task": "meter.tasks.dispatch_simulated_outbox",
+        "schedule": crontab(minute="*/1"),
         "options": {"queue": "celery"},
     },
     "ami-low-units-poll": {

@@ -1,3 +1,4 @@
+from backend.features import requires_feature
 import random
 import uuid
 from decimal import Decimal, InvalidOperation
@@ -580,6 +581,7 @@ class SendUnitsView(GenericAPIView):
     permission_classes = (IsAuthenticated,)
     serializer_class = SendUnitSerializer
 
+    @requires_feature("peer_sharing")
     def post(self, request, *args, **kwargs):
         try:
             serializer = self.serializer_class(data=request.data)
@@ -725,6 +727,7 @@ class SendUnitsView(GenericAPIView):
 class ReceiveUnitsView(APIView):
 
 
+    @requires_feature("peer_sharing")
     def post(self, request, *args, **kwargs):
         meter_info = request.data
         logger.info(
@@ -893,6 +896,10 @@ class ActivateReceivedUnitsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        return Response({
+            "code": "DEVICE_PROTOCOL_UNAVAILABLE",
+            "message": "STS token provisioning is paused until an authenticated meter protocol is validated.",
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         user = request.user
         meter_no = request.data.get("meter_no")
 
@@ -1107,6 +1114,10 @@ class GenerateTokenFromWalletView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        return Response({
+            "code": "DEVICE_PROTOCOL_UNAVAILABLE",
+            "message": "STS token provisioning is paused until an authenticated meter protocol is validated.",
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         user = request.user
         meter_no = request.data.get("meter_no")
 
@@ -1145,7 +1156,7 @@ class GenerateTokenFromWalletView(APIView):
         raw = request.data.get("amount")
         try:
             amount = Decimal(str(raw))
-            if amount <= 0:
+            if not amount.is_finite() or amount <= 0:
                 raise ValueError
         except (InvalidOperation, ValueError, TypeError):
             return Response(
@@ -1408,12 +1419,15 @@ class ApplyWalletToMeterView(APIView):
     """
     POST /api/v1/meter/apply-wallet-units/
 
-    AMI meters: debit the user's unit balance and push kWh to the meter over the network.
-    STS meters: use /meter/generate-token/ to obtain a keypad token instead.
+    Compatibility route for new, source-bound simulator reservations. It no
+    longer spends the ambiguous legacy UnitBalance or calls a physical gateway.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from meter.api.delivery_views import reserve_delivery_response
+        return reserve_delivery_response(request)
+
         user = request.user
         meter_no = request.data.get("meter_no")
 
@@ -1999,6 +2013,8 @@ class BuyUnitsView(GenericAPIView):
     
     def _simulate_sandbox_payment(self, user_id, amount, transaction_id, meter_id):
         """Simulate successful payment in dev mode after 2 seconds."""
+        # Old process-local threads must never create purchased credit.
+        return
         logger.info(f"Sandbox: Starting payment simulation for user {user_id}")
         time.sleep(2)
         time.sleep(2)
@@ -2216,6 +2232,10 @@ class LoadTokenToMeterView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
+        return Response({
+            "code": "LEGACY_TOKEN_LOAD_DISABLED",
+            "message": "This route could duplicate meter credit without debiting its source allocation.",
+        }, status=status.HTTP_410_GONE)
         token_code = request.data.get('token')
         
         if not token_code:
@@ -2291,7 +2311,7 @@ class LoadTokenToMeterView(APIView):
             unit_balance, _ = UnitBalance.objects.get_or_create(user=request.user)
             
             logger.info(
-                f"Token {token.token} loaded for user {request.user.email}: "
+                f"Token allocation loaded for user {request.user.id}: "
                 f"Added {token.units} units to meter {meter.meter_no}. "
                 f"UnitBalance unchanged at {unit_balance.balance} units"
             )
@@ -2314,6 +2334,8 @@ class MeterPushTestView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def post(self, request, *args, **kwargs):
+        if not settings.DEBUG or settings.AMI_GATEWAY != "utils.ami_gateway.MockAMIGateway":
+            return Response({"code": "SIMULATION_ONLY", "message": "Test pushes are available only with the mock gateway in development."}, status=403)
         amount_raw = request.data.get("amount")
         reference_id = str(request.data.get("reference_id", "")).strip() or f"TEST-{uuid.uuid4().hex[:8].upper()}"
 
@@ -2329,6 +2351,9 @@ class MeterPushTestView(APIView):
             meter = Meter.objects.get(user=request.user)
         except Meter.DoesNotExist:
             return Response({"error": "No meter found for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not (meter.iot_device_token or "").startswith("dev-"):
+            return Response({"code": "SIMULATION_ONLY", "message": "A simulation meter is required."}, status=403)
 
         ok, msg = push_units_to_thingsboard(meter=meter, units=amount, reference_id=reference_id)
         status_code = status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST
@@ -2353,6 +2378,8 @@ class AdminMeterPushTestView(APIView):
     permission_classes = (permissions.IsAdminUser,)
 
     def post(self, request, *args, **kwargs):
+        if not settings.DEBUG or settings.AMI_GATEWAY != "utils.ami_gateway.MockAMIGateway":
+            return Response({"code": "SIMULATION_ONLY", "message": "Test pushes are available only with the mock gateway in development."}, status=403)
         meter_no = str(request.data.get("meter_no", "")).strip()
         amount_raw = request.data.get("amount")
         reference_id = str(request.data.get("reference_id", "")).strip() or f"ADMIN-TEST-{uuid.uuid4().hex[:8].upper()}"
@@ -2372,6 +2399,9 @@ class AdminMeterPushTestView(APIView):
             meter = Meter.objects.get(meter_no=meter_no)
         except Meter.DoesNotExist:
             return Response({"error": "Meter not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not (meter.iot_device_token or "").startswith("dev-"):
+            return Response({"code": "SIMULATION_ONLY", "message": "A simulation meter is required."}, status=403)
 
         ok, msg = push_units_to_thingsboard(meter=meter, units=amount, reference_id=reference_id)
         status_code = status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST
@@ -2401,7 +2431,7 @@ class EstimateUnitsView(APIView):
         raw = request.query_params.get("amount", "")
         try:
             amount = Decimal(str(raw))
-            if amount <= 0:
+            if not amount.is_finite() or amount <= 0:
                 raise ValueError
         except (InvalidOperation, ValueError):
             return Response({"error": "Provide a positive numeric amount."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2411,18 +2441,18 @@ class EstimateUnitsView(APIView):
             get_active_domestic_tariff,
             get_minimum_payment_for_units,
             get_monthly_tier_context,
-            get_outstanding_deductions,
             get_monthly_units_consumed,
         )
 
-        deductions = get_outstanding_deductions(request.user)
-        net_amount = max(Decimal("0"), amount - deductions)
+        # This endpoint previews an electricity purchase. Loan repayment is a
+        # separate, verified payment purpose and cannot be inferred here.
+        net_amount = amount
         tariff = get_active_domestic_tariff()
         units, breakdown = calculate_units_from_payment(
             amount,
             request.user,
             tariff=tariff,
-            outstanding_bills=deductions,
+            outstanding_bills=Decimal("0"),
             apply_deductions=False,
         )
         minimum_payment = get_minimum_payment_for_units(request.user, tariff)
@@ -2433,7 +2463,7 @@ class EstimateUnitsView(APIView):
             "estimated_units": float(units),
             "tariff": tariff.tariff_code if tariff else None,
             "gross_amount": float(amount),
-            "deductions": float(deductions),
+            "deductions": 0,
             "net_amount": float(net_amount),
             "service_charge": float(breakdown.service_charge),
             "vat": float(breakdown.vat),

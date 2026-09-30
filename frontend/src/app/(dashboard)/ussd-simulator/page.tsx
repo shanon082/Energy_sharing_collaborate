@@ -78,6 +78,10 @@ export default function UssdSimulatorPage() {
           return;
         }
         const data = await res.json();
+        if (res.status === 403 && data?.code === "FEATURE_DISABLED") {
+          setAuthError(data.message);
+          return;
+        }
         const options: PortalAccount[] = data?.results ?? [];
         if (options.length === 0) {
           setAuthError("No phone number on your account. Add one in My Account first.");
@@ -141,6 +145,10 @@ export default function UssdSimulatorPage() {
       const data = await res.json();
       if (res.status === 401) {
         setAuthError("Your session expired. Sign in again to continue.");
+        return;
+      }
+      if (res.status === 403 && data?.code === "FEATURE_DISABLED") {
+        setError(data.message);
         return;
       }
       const responseText: string = data?.response || data?.error || "No response";

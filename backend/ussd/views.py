@@ -1,3 +1,4 @@
+from backend.features import requires_feature, require_feature, FeatureDisabled, feature_enabled
 import logging
 import threading
 import uuid
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@requires_feature("ussd")
 def ussd_phone_numbers(request):
     """
     Web USSD simulator helper — returns only the logged-in portal user's phone.
@@ -69,6 +71,8 @@ def ussd_phone_numbers(request):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@requires_feature("ussd")
+@requires_feature("peer_sharing")
 def ussd_receiver_meters(request):
     """
     Web USSD simulator helper — receiver meters for share flows.
@@ -345,18 +349,11 @@ def _reply_parent_menu(session: UssdSession, user, raw_steps: list[str]):
 
 
 def _main_menu_text() -> str:
-    return (
-        "gPawa\n"
-        "1. Wallet & Meter\n"
-        "2. Buy Units\n"
-        "3. Loans\n"
-        "4. Share Units\n"
-        "5. My Tokens\n"
-        "6. Manage\n"
-        "7. Alerts\n"
-        "8. Exit\n"
-        "9. Energy Usage"
-    )
+    lines = ["gPawa", "1. Wallet & Meter", "2. Buy Units", "3. Loans"]
+    if feature_enabled("peer_sharing"):
+        lines.append("4. Share Units")
+    lines.extend(["5. My Tokens", "6. Manage", "7. Alerts", "8. Exit", "9. Energy Usage"])
+    return "\n".join(lines)
 
 
 def _reply_main_menu(session: UssdSession, nav_reset_at: int | None = None):
@@ -415,6 +412,7 @@ def _wants_main_menu(steps: list[str], session: UssdSession) -> bool:
 
 
 
+@requires_feature("ussd")
 def _start_buy_units(user, phone_number: str, amount_raw: str):
     meter = Meter.objects.filter(user=user).first()
     if not meter:
@@ -533,6 +531,7 @@ def _check_buy_status(user, tx_id_raw: str):
     return True, f"PENDING\nTxID: {transaction.id}"
 
 
+@requires_feature("ussd")
 def _apply_loan(user, amount_raw: str, tenure_months: int):
     try:
         loan = create_loan_application(
@@ -564,6 +563,7 @@ def _apply_loan(user, amount_raw: str, tenure_months: int):
     return True, f"Loan rejected.\nReason: {loan.rejection_reason}"
 
 
+@requires_feature("ussd")
 def _repay_loan(user, loan_id_raw: str | None, amount_raw: str):
     try:
         loan_key = None if loan_id_raw in (None, "", "0") else loan_id_raw
@@ -584,6 +584,7 @@ def _repay_loan(user, loan_id_raw: str | None, amount_raw: str):
     )
 
 
+@requires_feature("peer_sharing")
 def _share_preview_for_ussd(user, receiver_meter_no: str, units_raw: str):
     """Validate meter/units and return summary text before PIN entry."""
     try:
@@ -613,6 +614,7 @@ def _share_preview_for_ussd(user, receiver_meter_no: str, units_raw: str):
     return True, summary
 
 
+@requires_feature("ussd")
 def _generate_sts_token(user, units_raw: str):
     meter = Meter.objects.filter(user=user, architecture=Meter.ARCH_STS).first()
     if not meter:
@@ -674,6 +676,7 @@ def _generate_sts_token(user, units_raw: str):
         return False, "Failed to generate token."
 
 
+@requires_feature("ussd")
 def _apply_wallet_to_ami(user, units_raw: str, meter_no: str | None = None):
     qs = Meter.objects.filter(user=user, architecture=Meter.ARCH_AMI)
     if meter_no:
@@ -862,6 +865,7 @@ def _notifications_summary(user):
 @csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@requires_feature("ussd")
 def ussd_entry(request):
     """
     USSD endpoint in Africa's Talking format:
@@ -870,6 +874,9 @@ def ussd_entry(request):
     - phoneNumber
     - text
     """
+    requested_steps = _menu(str(request.data.get("text", "")))
+    if requested_steps and requested_steps[0] == "4":
+        require_feature("peer_sharing")
     session_id = str(request.data.get("sessionId", "")).strip() or f"fallback-{uuid.uuid4().hex[:10]}"
     service_code = str(request.data.get("serviceCode", "")).strip()
     phone_number = request.data.get("phoneNumber", "")
@@ -1231,6 +1238,7 @@ def ussd_entry(request):
 
         # 4) Share units — meter → units → summary → account PIN
         if steps[0] == "4":
+            require_feature("peer_sharing")
             if len(steps) == 1:
                 ussd_session.last_text = text
                 ussd_session.save(update_fields=["user", "last_text", "updated_at"])
@@ -1553,6 +1561,8 @@ def ussd_entry(request):
         ussd_session.last_text = text
         ussd_session.save(update_fields=["user", "last_text", "updated_at"])
         return _reply_done(ussd_session, "Invalid menu option.")
+    except FeatureDisabled:
+        raise
     except Exception as exc:
         logger.exception("USSD processing error")
         ussd_session.last_text = text

@@ -169,6 +169,10 @@ class LoanApplication(TimeStampedModel):
     )    
     loan_id = models.CharField(max_length=10, unique=True, default=generate_loan_id)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='loan_applications')
+    intended_meter = models.ForeignKey(
+        'meter.Meter', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='intended_loans',
+    )
     purpose = models.TextField()
     amount_requested = models.DecimalField(max_digits=10, decimal_places=2)
     amount_approved = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -186,7 +190,9 @@ class LoanApplication(TimeStampedModel):
     
 
     def save(self, *args, **kwargs):
-        if self.credit_score:
+        # Disbursed debt must retain its stored rate when status or notification
+        # fields are saved; changing the score tier later must not reprice it.
+        if self.credit_score and (self._state.adding or self.status in {"PENDING", "APPROVED", "REJECTED"}):
             tier_info = get_tier_by_score(self.credit_score)
             if tier_info:
                 self.loan_tier = tier_info['name']
@@ -210,23 +216,29 @@ class LoanApplication(TimeStampedModel):
         return 0
     
     def calculate_units_from_amount(self, amount=None):
-        """Calculate kWh purchasable for a UGX amount (ERA billing incl. service + VAT)."""
+        """Mirror the loan disbursement's existing tariff/legacy branch exactly."""
+        from meter.allocation_service import quantize_source_kwh
         from utils.billing import calculate_units_from_payment
 
-        loan_amount = Decimal(str(amount or self.amount_approved))
+        loan_amount = Decimal(str(self.amount_approved if amount is None else amount))
+        if self.tariff_id is None:
+            return quantize_source_kwh(loan_amount / Decimal("500"))
         units, _ = calculate_units_from_payment(
             loan_amount,
             self.user,
+            tariff=self.tariff,
             apply_deductions=False,
         )
-        return float(units)
+        return units
 
     def calculate_cost_for_units(self, units):
         """Total UGX payable (energy + service + VAT) for a given kWh amount."""
         from utils.billing import calculate_cost_from_units
 
-        cost, _ = calculate_cost_from_units(Decimal(str(units)), self.user)
-        return float(cost)
+        if self.tariff_id is None:
+            return Decimal(str(units)) * Decimal("500")
+        cost, _ = calculate_cost_from_units(Decimal(str(units)), self.user, tariff=self.tariff)
+        return cost
 
     def __str__(self):
         tier_display = f" ({self.loan_tier})" if self.loan_tier else ""
@@ -240,42 +252,22 @@ class LoanApplication(TimeStampedModel):
     
     @property
     def total_amount_due(self):
+        from loan.financial import interest_charge, money
         if not self.amount_approved:
-            return 0
-        interest = (float(self.amount_approved) * float(self.interest_rate) / 100) * (self.tenure_months / 12)
-        return float(self.amount_approved) + interest
+            return Decimal("0.00")
+        return Decimal(self.amount_approved) + money(interest_charge(self))
     
     @property
     def amount_paid(self):
-        return sum(float(repayment.amount_paid) for repayment in self.repayments.all())
+        from loan.financial import applied_repayments
+        return applied_repayments(self)
 
 
     @property
     def outstanding_balance(self):
-        """Calculate outstanding balance with the statutory 100%-of-principal cap on all charges."""
-        if not self.amount_approved:
-            return 0
-
-        principal = float(self.amount_approved)
-
-        # Interest (annual rate applied pro-rata over tenure)
-        interest = principal * float(self.interest_rate) / 100 * (self.tenure_months / 12)
-
-        # Late-payment penalty: 0.1% per day on principal
-        penalty = 0.0
-        if self.due_date and timezone.now() > self.due_date:
-            days_late = (timezone.now() - self.due_date).days
-            penalty = days_late * 0.001 * principal
-
-        # Statutory cap: total charges (interest + penalty) must not exceed 100% of principal
-        max_charges = principal * float(
-            getattr(settings, 'MAX_CUMULATIVE_CHARGES_MULTIPLIER', 1.0)
-        )
-        total_charges = min(interest + penalty, max_charges)
-
-        total_due = principal + total_charges
-        balance = total_due - self.amount_paid
-        return max(0.0, balance)
+        """Principal plus capped charges, less only applied successful repayments."""
+        from loan.financial import outstanding_debt
+        return outstanding_debt(self)
     
     class Meta:
         ordering = ['-created_at']
@@ -291,7 +283,7 @@ class LoanDisbursement(TimeStampedModel):
     meter = models.ForeignKey('meter.Meter', on_delete=models.CASCADE, related_name='loan_disbursements')
     
     def __str__(self):
-        return f"Disbursement for Loan #{self.loan_application.loan_id} - Token: {self.token}"
+        return f"Disbursement for Loan #{self.loan_application.loan_id}"
     
     def save(self, *args, **kwargs):
         if not self.token_expiry:
@@ -302,6 +294,10 @@ class LoanDisbursement(TimeStampedModel):
 class LoanRepayment(TimeStampedModel):
     loan = models.ForeignKey(LoanApplication, on_delete=models.CASCADE, related_name='repayments')
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2)
+    # For new verified payments amount_paid is the full amount received. NULL
+    # on historical rows preserves their existing debt-reduction interpretation.
+    amount_applied_ugx = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    excess_ugx = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     payment_date = models.DateTimeField(auto_now_add=True)
     units_paid = models.FloatField()
     is_on_time = models.BooleanField(default=True)

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN
 from typing import Optional
 
 from django.db.models import Q, Sum
@@ -70,33 +70,44 @@ def get_active_domestic_tariff(on_date: Optional[date] = None):
 
 
 def get_monthly_units_consumed(user, month_date: Optional[date] = None) -> Decimal:
-    """Total kWh purchased by user in the calendar month (COMPLETED purchases)."""
-    from transactions.models import UnitTransaction
+    """Purchased kWh for the cumulative purchase-based tariff bands.
+
+    New settled purchases use their unique allocation source. Historical meter
+    purchase rows use payment_reference when present (or row id when absent).
+    UnitTransaction self-credits have no economic source identity and may also
+    be loan disbursements, so they are never added as another purchase.
+    """
+    from meter.models import EnergyAllocation, Transaction as MeterTransaction
 
     month_date = month_date or timezone.localdate()
+    allocations = EnergyAllocation.objects.filter(
+        owner=user, purchase_intent__status="SETTLED",
+        created_at__year=month_date.year,
+        created_at__month=month_date.month,
+    ).select_related("purchase_intent")
+    purchased = Decimal("0")
+    represented_references = set()
+    for allocation in allocations:
+        purchased += allocation.amount_kwh
+        represented_references.add(str(allocation.purchase_intent.provider_reference))
 
-    # Buy-units flow records self-credits on UnitTransaction (sender=receiver=user).
-    unit_tx_total = UnitTransaction.objects.filter(
-        sender=user,
-        receiver=user,
-        direction="IN",
-        status="COMPLETED",
-        create_date__year=month_date.year,
-        create_date__month=month_date.month,
-    ).aggregate(total=Sum("units"))
-    purchased = Decimal(str(unit_tx_total["total"] or 0))
-
-    # Also honour unified meter.Transaction records when present.
-    from meter.models import Transaction as MeterTransaction
-
-    meter_tx_total = MeterTransaction.objects.filter(
+    seen_legacy_references = set()
+    meter_rows = MeterTransaction.objects.filter(
         user=user,
         transaction_type=MeterTransaction.TYPE_PURCHASE,
         status=MeterTransaction.STATUS_COMPLETED,
         create_date__year=month_date.year,
         create_date__month=month_date.month,
-    ).aggregate(total=Sum("amount_kwh"))
-    purchased += Decimal(str(meter_tx_total["total"] or 0))
+    ).order_by("pk")
+    for row in meter_rows:
+        reference = row.payment_reference.strip()
+        if reference and (reference in represented_references or reference in seen_legacy_references):
+            continue
+        if reference:
+            seen_legacy_references.add(reference)
+        # No reference means the legacy row itself is the only stable identity;
+        # the reconciliation report flags this weaker provenance.
+        purchased += row.amount_kwh
 
     return purchased
 
@@ -112,18 +123,12 @@ def is_lifeline_eligible(user) -> bool:
 def recompute_lifeline_eligibility(user) -> bool:
     """Rolling 6-month average ≤ 100 kWh/month → lifeline eligible."""
     from dateutil.relativedelta import relativedelta
-    from transactions.models import UnitTransaction
-
-    six_months_ago = timezone.now() - relativedelta(months=6)
-    agg = UnitTransaction.objects.filter(
-        sender=user,
-        receiver=user,
-        direction="IN",
-        status="COMPLETED",
-        create_date__gte=six_months_ago,
-    ).aggregate(total=Sum("units"))
-
-    avg_monthly = Decimal(str(agg["total"] or 0)) / 6
+    first_month = timezone.localdate().replace(day=1) - relativedelta(months=5)
+    monthly = sum(
+        get_monthly_units_consumed(user, first_month + relativedelta(months=step))
+        for step in range(6)
+    )
+    avg_monthly = monthly / Decimal(6)
     eligible = avg_monthly <= Decimal("100")
 
     try:
@@ -159,7 +164,7 @@ def _service_charge(tariff, user=None, month_date: Optional[date] = None) -> Dec
     """Monthly service fee — charged once on the first purchase of each calendar month."""
     if user is not None and get_monthly_units_consumed(user, month_date) > 0:
         return Decimal("0")
-    if tariff and tariff.service_charge and tariff.service_charge > 0:
+    if tariff is not None:
         return Decimal(str(tariff.service_charge))
     return DEFAULT_SERVICE_CHARGE
 
@@ -231,7 +236,7 @@ def _energy_cost_for_units(
     if remaining_units > 0:
         total_cost += remaining_units * FALLBACK_ENERGY_RATE
 
-    return total_cost.quantize(Decimal("0.01")), lifeline_applied
+    return total_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN), lifeline_applied
 
 
 def calculate_bill_for_units(
@@ -247,7 +252,7 @@ def calculate_bill_for_units(
 
     service = _service_charge(tariff, user, month_date)
     subtotal = energy_cost + service
-    vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+    vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
     total = subtotal + vat
 
     return BillBreakdown(
@@ -310,17 +315,22 @@ def calculate_units_from_payment(
         if hi - lo < Decimal("0.0001"):
             break
 
-    best_breakdown.energy_units = best_units.quantize(Decimal("0.01"))
+    # Truncate energy to the allocation quantum, then price that exact grant.
+    # Nearest rounding could create energy whose bill exceeds a paid amount.
+    granted_units = best_units.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+    if granted_units > 0:
+        best_breakdown = calculate_bill_for_units(granted_units, user, tariff, month_date)
+    best_breakdown.energy_units = granted_units
     best_breakdown.amount_deducted = deductions
     best_breakdown.net_payment = net
-    if best_units <= 0:
+    if granted_units <= 0:
         # Surface fixed charges so the UI can explain why small payments yield 0 kWh.
         min_bill = calculate_bill_for_units(Decimal("0.01"), user, tariff, month_date)
         best_breakdown.service_charge = min_bill.service_charge
         best_breakdown.vat = min_bill.vat
         best_breakdown.subtotal = min_bill.subtotal
         best_breakdown.total = min_bill.total
-    return best_units.quantize(Decimal("0.01")), best_breakdown
+    return granted_units, best_breakdown
 
 
 def get_minimum_payment_for_units(
@@ -341,20 +351,19 @@ def get_monthly_tier_context(user, month_date: Optional[date] = None) -> dict:
     month_date = month_date or timezone.localdate()
     already = get_monthly_units_consumed(user, month_date)
     eligible = is_lifeline_eligible(user)
-    lifeline_cap = Decimal("15")
+    tariff = get_active_domestic_tariff(month_date)
+    blocks = list(tariff.blocks.order_by("block_order")) if tariff else []
+    lifeline_block = next((block for block in blocks if block.is_lifeline_block), None)
+    lifeline_cap = Decimal(lifeline_block.max_units) if lifeline_block and lifeline_block.max_units is not None else Decimal("0")
     lifeline_remaining = (
         max(Decimal("0"), lifeline_cap - already) if eligible else Decimal("0")
     )
-    service_due = _service_charge(get_active_domestic_tariff(month_date), user, month_date) > 0
+    service_due = _service_charge(tariff, user, month_date) > 0
 
-    if already < lifeline_cap and eligible:
-        current_band = "lifeline"
-    elif already < Decimal("80"):
-        current_band = "normal"
-    elif already < Decimal("150"):
-        current_band = "cooking"
-    else:
-        current_band = "super_normal"
+    current = next((block for block in blocks if block.max_units is None or
+                    already < Decimal(block.max_units)), None)
+    current_band = ("lifeline" if current and current.is_lifeline_block and eligible else
+                    current.block_name.lower().replace(" ", "_") if current else "unconfigured")
 
     return {
         "monthly_units_consumed": already.quantize(Decimal("0.01")),

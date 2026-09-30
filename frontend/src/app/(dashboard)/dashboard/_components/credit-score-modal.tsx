@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -8,7 +10,6 @@ import {
   X, 
   TrendingUp, 
   TrendingDown, 
-  Award, 
   Clock, 
   Wallet, 
   Share2, 
@@ -17,63 +18,75 @@ import {
   Brain,
   Target,
   BarChart3,
-  ChevronLeft,
   Star,
   Activity,
   Shield
 } from "lucide-react";
 import { get } from "@/lib/fetch";
-import { cn } from "@/lib/utils";
+import { getApiErrorMessage } from "@/lib/api-response";
 
 interface CreditScoreModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-interface CreditScoreData {
-  overall_score: number;
-  base_score: number;
-  behavioral_bonus: number;
-  components: {
-    payment_history: number;
-    wallet_usage: number;
-    purchase_activity: number;
-    sharing_behavior: number;
-    loan_history: number;
-  };
-  history: Array<{
-    previous_score: number;
-    new_score: number;
-    change_amount: number;
-    reason: string;
-    event_type: string;
-    created_at: string;
-  }>;
-}
+const creditScoreSchema = z.object({
+  overall_score: z.number(),
+  base_score: z.number(),
+  behavioral_bonus: z.number(),
+  components: z.object({
+    payment_history: z.number(),
+    wallet_usage: z.number(),
+    purchase_activity: z.number(),
+    sharing_behavior: z.number(),
+    loan_history: z.number(),
+  }),
+  history: z.array(z.object({
+    previous_score: z.number(),
+    new_score: z.number(),
+    change_amount: z.number(),
+    reason: z.string(),
+    event_type: z.string(),
+    created_at: z.string(),
+  })),
+  error: z.string().optional(),
+});
+
+type CreditScoreData = z.infer<typeof creditScoreSchema>;
 
 export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalProps) {
   const [data, setData] = useState<CreditScoreData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchCreditScore();
-    }
-  }, [isOpen]);
-
-  const fetchCreditScore = async () => {
+  const fetchCreditScore = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const response = await get("loans/credit-score/");
-      if (!response.error && response.data) {
-        setData(response.data);
+      const response = await get<unknown>("loans/credit-score/");
+      if (response.error) {
+        setError(getApiErrorMessage(response.error, "Credit score is unavailable."));
+        setData(null);
+        return;
       }
-    } catch (error) {
-      console.error("Failed to fetch credit score:", error);
+      const parsed = creditScoreSchema.safeParse(response.data);
+      if (!parsed.success || parsed.data.error) {
+        setError("Credit score is temporarily unavailable. Please try again later.");
+        setData(null);
+        return;
+      }
+      setData(parsed.data);
+    } catch {
+      setError("Could not load your credit score. Please try again later.");
+      setData(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) void fetchCreditScore();
+  }, [isOpen, fetchCreditScore]);
 
   // Handle escape key press
   useEffect(() => {
@@ -106,20 +119,12 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
   };
 
   const getScoreGrade = (score: number) => {
-    if (score >= 90) return { grade: "Excellent", icon: "👑", description: "Top creditworthiness - You qualify for the best rates!" };
-    if (score >= 80) return { grade: "Very Good", icon: "⭐", description: "Strong credit profile - Great loan terms available" };
-    if (score >= 70) return { grade: "Good", icon: "👍", description: "Solid credit standing - Good loan options" };
-    if (score >= 60) return { grade: "Fair", icon: "📊", description: "Average credit rating - Building positive history" };
-    if (score >= 50) return { grade: "Needs Improvement", icon: "⚠️", description: "Room for growth - Keep making timely payments" };
-    return { grade: "Poor", icon: "🔴", description: "Requires attention - Focus on improving your habits" };
-  };
-
-  const getTierInfo = (score: number) => {
-    if (score >= 90) return { tier: "Platinum", color: "bg-purple-500", textColor: "text-purple-700", max_amount: 200000, interest_rate: "9%" };
-    if (score >= 80) return { tier: "Gold", color: "bg-yellow-500", textColor: "text-yellow-700", max_amount: 150000, interest_rate: "10%" };
-    if (score >= 70) return { tier: "Silver", color: "bg-gray-400", textColor: "text-gray-700", max_amount: 100000, interest_rate: "11%" };
-    if (score >= 60) return { tier: "Bronze", color: "bg-amber-600", textColor: "text-amber-700", max_amount: 50000, interest_rate: "12%" };
-    return { tier: "Not Eligible", color: "bg-gray-300", textColor: "text-gray-500", max_amount: 0, interest_rate: "N/A" };
+    if (score >= 90) return { grade: "Excellent", description: "Strong recorded credit signals" };
+    if (score >= 80) return { grade: "Very Good", description: "Positive recorded credit signals" };
+    if (score >= 70) return { grade: "Good", description: "Positive credit history" };
+    if (score >= 60) return { grade: "Fair", description: "Credit history is developing" };
+    if (score >= 50) return { grade: "Needs Improvement", description: "Keep making timely repayments" };
+    return { grade: "Needs Review", description: "Check your loan eligibility for current terms" };
   };
 
   if (!isOpen) return null;
@@ -127,7 +132,6 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
   const overallScore = data?.overall_score || 0;
   const baseScore = data?.base_score || 0;
   const behavioralBonus = data?.behavioral_bonus || 0;
-  const tierInfo = getTierInfo(overallScore);
 
   return (
     <div 
@@ -151,7 +155,7 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
           </div>
           <CardTitle className="text-xl">Your Credit Score</CardTitle>
           <CardDescription>
-            Your overall creditworthiness based on third-party data and your activity
+            Your current recorded credit signals and account activity
           </CardDescription>
         </CardHeader>
 
@@ -160,6 +164,10 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
             <div className="py-12 text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
               <p className="text-muted-foreground">Loading credit score...</p>
+            </div>
+          ) : error || !data ? (
+            <div role="alert" className="py-8 text-center text-sm text-muted-foreground">
+              {error || "Credit score is unavailable."}
             </div>
           ) : (
             <>
@@ -187,7 +195,7 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
                     <span className="text-xs font-medium text-blue-600">Base Score</span>
                   </div>
                   <div className="text-2xl font-bold text-blue-700">{baseScore}</div>
-                  <div className="text-xs text-blue-600 mt-1">From third-party data</div>
+                  <div className="text-xs text-blue-600 mt-1">From recorded profile signals</div>
                 </div>
                 <div className="p-4 rounded-lg bg-green-50 text-center">
                   <div className="flex items-center justify-center gap-1 mb-2">
@@ -206,30 +214,11 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
                 </p>
               </div>
 
-              {/* Loan Tier Information */}
-              <div className={`mb-6 p-4 rounded-lg ${tierInfo.color} bg-opacity-10`}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium">Current Loan Tier</span>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium text-white ${tierInfo.color}`}>
-                    {tierInfo.tier}
-                  </span>
-                </div>
-                {tierInfo.max_amount > 0 ? (
-                  <>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-sm">Maximum Loan Amount</span>
-                      <span className="text-lg font-bold">UGX {tierInfo.max_amount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <span className="text-sm">Interest Rate</span>
-                      <span className="text-md font-semibold">{tierInfo.interest_rate}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-sm text-center mt-2">
-                    Continue building your credit history to qualify for loans
-                  </div>
-                )}
+              <div className="mb-6 rounded-lg bg-blue-50 p-4 text-sm text-blue-900">
+                Loan eligibility, limits, and rates are checked when you apply.{' '}
+                <Link href="/dashboard/request-loan" onClick={onClose} className="font-medium underline">
+                  Check current loan terms
+                </Link>
               </div>
 
               {/* Score Components */}
@@ -256,7 +245,7 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
                     <div className="flex justify-between text-sm mb-1">
                       <span className="flex items-center gap-1">
                         <Wallet className="h-3 w-3" />
-                        Wallet Usage
+                        Historical Wallet Activity
                       </span>
                       <span className="font-medium">{data?.components.wallet_usage}%</span>
                     </div>
@@ -280,7 +269,7 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
                     <div className="flex justify-between text-sm mb-1">
                       <span className="flex items-center gap-1">
                         <Share2 className="h-3 w-3" />
-                        Sharing Behavior
+                        Historical Sharing Activity
                       </span>
                       <span className="font-medium">{data?.components.sharing_behavior}%</span>
                     </div>
@@ -342,17 +331,14 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
                 </h4>
                 <ul className="text-xs space-y-1 text-gray-700">
                   <li>✓ Make loan payments on or before the due date</li>
-                  <li>✓ Use your wallet for transactions instead of direct payments</li>
                   <li>✓ Purchase units regularly to show consistent activity</li>
-                  <li>✓ Share units with others to build community trust</li>
                   <li>✓ Complete loans successfully to build history</li>
                 </ul>
               </div>
 
               {/* Info Note */}
               <div className="mt-4 text-xs text-center text-muted-foreground">
-                <p>Your credit score updates in real-time based on your activity</p>
-                <p>Higher scores unlock better loan terms and higher limits</p>
+                <p>Eligibility and loan terms are determined by the loan application service.</p>
               </div>
 
               {/* Close button at bottom */}

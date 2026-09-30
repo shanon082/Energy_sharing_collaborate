@@ -28,6 +28,7 @@ import DashboardNavLinks from "@/components/dashboard/dashboard-nav-links";
 import { Zap, Settings, LogOut, Menu } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "@/hooks/use-account";
+import { useFeatures } from "@/contexts/features-context";
 
 interface RightHeaderProps {
   onProfileClick?: () => void;
@@ -38,6 +39,7 @@ export default function RightHeader({ onProfileClick, onMeterClick }: RightHeade
   const pathname = usePathname();
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const { user } = useAccount();
+  const { ussd } = useFeatures();
   const [cachedEmail, setCachedEmail] = useState("");
 
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function RightHeader({ onProfileClick, onMeterClick }: RightHeade
               logoSize={LOGO_SIZES.sidebar.logoSize}
             />
             <DashboardNavLinks className="text-base" />
-            <Link
+            {ussd && <Link
               href="/ussd-simulator"
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary",
@@ -96,7 +98,7 @@ export default function RightHeader({ onProfileClick, onMeterClick }: RightHeade
             >
               <Smartphone className="h-4 w-4" />
               USSD Simulator
-            </Link>
+            </Link>}
           </nav>
         </SheetContent>
       </Sheet>
@@ -159,12 +161,12 @@ export default function RightHeader({ onProfileClick, onMeterClick }: RightHeade
               </Link>
             </DropdownMenuItem>
 
-            <DropdownMenuItem asChild>
+            {ussd && <DropdownMenuItem asChild>
               <Link href="/ussd-simulator">
                 <Smartphone className="h-4 w-4 mr-2" />
                 USSD Simulator
               </Link>
-            </DropdownMenuItem>
+            </DropdownMenuItem>}
 
             <DropdownMenuSeparator />
 

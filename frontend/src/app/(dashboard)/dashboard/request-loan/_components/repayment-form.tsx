@@ -8,9 +8,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { X, Smartphone, Loader2, CheckCircle2, XCircle, Wallet } from "lucide-react";
+import { X, Smartphone, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { repayLoan, repayLoanWithMomo } from "../../myloans/action";
+import { getErrorMessage } from "@/lib/errors";
+import { checkPaymentStatus, repayLoanWithMomo } from "../../myloans/action";
 
 interface RepaymentFormProps {
   loan: {
@@ -46,7 +47,6 @@ export default function RepaymentForm({
   const [momoStatus, setMomoStatus] = useState<
     "idle" | "pending" | "success" | "failed"
   >("idle");
-  const [paymentSource, setPaymentSource] = useState<"WALLET" | "PHONE">("PHONE");
   const [externalId, setExternalId] = useState<string | null>(null);
   const [pollingCount, setPollingCount] = useState(0);
 
@@ -55,10 +55,11 @@ export default function RepaymentForm({
   const quickAmounts = [5000, 10000, 20000, 50000];
 
   useEffect(() => {
+    const fullAmount = String(Math.ceil(outstandingBalance));
     if (paymentMode === "full") {
-      setAmount(String(Math.round(outstandingBalance)));
-    } else if (paymentMode === "partial" && amount === String(Math.round(outstandingBalance))) {
-      setAmount("");
+      setAmount(fullAmount);
+    } else if (paymentMode === "partial") {
+      setAmount((current) => current === fullAmount ? "" : current);
     }
   }, [paymentMode, outstandingBalance]);
 
@@ -72,52 +73,57 @@ export default function RepaymentForm({
 
   // Validate form input
   const validateForm = (): string | null => {
-    if (!amount || parseFloat(amount) <= 0)
+    if (!amount || !/^\d+$/.test(amount) || Number(amount) <= 0)
       return "Please enter a valid amount";
 
     const paymentAmount = parseFloat(amount);
-    if (paymentAmount > outstandingBalance) {
+    if (paymentAmount > Math.ceil(outstandingBalance)) {
       return `Amount exceeds outstanding balance of ${outstandingBalance.toLocaleString()} UGX`;
     }
     // if (paymentAmount < 1000) return "Minimum payment amount is 1,000 UGX";
-    if (paymentSource === "PHONE" && !phoneNumber.trim())
+    if (!phoneNumber.trim())
       return "Phone number is required for Mobile Money payments";
 
     const formattedPhone = formatPhoneNumber(phoneNumber);
-    if (paymentSource === "PHONE" && (formattedPhone.length !== 12 || !formattedPhone.startsWith("256"))) {
+    if (formattedPhone.length !== 12 || !formattedPhone.startsWith("256")) {
       return "Please enter a valid Ugandan phone number (e.g., 07XXXXXXXX or 2567XXXXXXXX)";
     }
 
     return null;
   };
 
-  // Polling logic for Momo payment
+  // Only a provider-verified status from Django can complete this repayment.
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (externalId && momoStatus === "pending") {
-      interval = setInterval(async () => {
-        try {
-          setPollingCount((prev) => prev + 1);
-
-          // Simulate polling success after 5 attempts (sandbox mode)
-          if (pollingCount >= 5) {
-            clearInterval(interval);
-            setMomoStatus("success");
-            setSuccess(
-              `Payment successful! check your account balance to confirm.`
-            );
-          }
-        } catch (err) {
-          console.error(err);
-          clearInterval(interval);
-          setMomoStatus("failed");
-          setError("Unable to verify payment. Please check your transactions.");
-          setIsProcessing(false);
-        }
-      }, 2000);
+    if (!externalId || momoStatus !== "pending") return;
+    if (pollingCount >= 25) {
+      setExternalId(null);
+      setSuccess("Payment is still unverified. Reconciliation continues after you leave this page.");
+      setIsProcessing(false);
+      return;
     }
-
-    return () => clearInterval(interval);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await checkPaymentStatus(externalId);
+        if (result.payment_status === "SUCCESS") {
+          setMomoStatus("success");
+          setSuccess(Number(result.excess_ugx || 0) > 0
+            ? `Payment verified. UGX ${result.amount_applied_ugx} reduced debt; UGX ${result.excess_ugx} needs reconciliation.`
+            : result.message || "Payment verified and debt reduced.");
+          setIsProcessing(false);
+        } else if (result.payment_status === "FAILED") {
+          setMomoStatus("failed");
+          setError("Payment failed. Your debt was not reduced.");
+          setIsProcessing(false);
+        } else {
+          setPollingCount((count) => count + 1);
+        }
+      } catch {
+        setSuccess("Verification is temporarily unavailable. Reconciliation continues in the background.");
+        setExternalId(null);
+        setIsProcessing(false);
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [externalId, momoStatus, pollingCount]);
 
   // Auto-close and refresh 10s after success
@@ -126,7 +132,7 @@ export default function RepaymentForm({
       const timer = setTimeout(() => {
         onSuccess();
         window.location.reload();
-      }, 2000);
+      }, 10000);
 
       return () => clearTimeout(timer);
     }
@@ -147,16 +153,8 @@ export default function RepaymentForm({
     setPollingCount(0);
 
     try {
-      if (paymentSource === "WALLET") {
-        await repayLoan(loan.id, parseFloat(amount), "WALLET");
-        setMomoStatus("success");
-        setSuccess("Payment successful from wallet.");
-        setIsProcessing(false);
-        return;
-      }
-
       const formattedPhone = formatPhoneNumber(phoneNumber);
-      const result = await repayLoanWithMomo(loan.id, parseFloat(amount), formattedPhone);
+      const result = await repayLoanWithMomo(parseFloat(amount), formattedPhone, loan.id);
 
       if (result.status === "PENDING") {
         setExternalId(result.external_id);
@@ -166,19 +164,15 @@ export default function RepaymentForm({
       } else {
         throw new Error(result.error || "Mobile Money payment failed");
       }
-    } catch (err: any) {
-      console.error(err);
+    } catch (err: unknown) {
       setMomoStatus("failed");
-      setError(err.message || "Payment failed. Please try again.");
+      setError(getErrorMessage(err));
       setIsProcessing(false);
     }
   };
 
   const handleAmountChange = (value: string) => {
-    const numericValue = value.replace(/[^\d.]/g, "");
-    const parts = numericValue.split(".");
-    if (parts.length > 2) return;
-    setAmount(numericValue);
+    setAmount(value.replace(/\D/g, ""));
   };
 
   const handlePhoneChange = (value: string) => {
@@ -221,14 +215,13 @@ export default function RepaymentForm({
             size="icon"
             className="absolute top-2 right-2 h-8 w-8"
             onClick={onCancel}
-            disabled={isProcessing && momoStatus === "pending"}
           >
             <X className="h-4 w-4" />
           </Button>
 
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2">
-              {paymentSource === "PHONE" ? <Smartphone className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
+              <Smartphone className="h-5 w-5" />
               Loan Payment - {loan.loan_id}
             </CardTitle>
             <div className="space-y-2 text-sm text-muted-foreground">
@@ -246,29 +239,9 @@ export default function RepaymentForm({
           </CardHeader>
 
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Pay From</label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant={paymentSource === "PHONE" ? "default" : "outline"}
-                  onClick={() => setPaymentSource("PHONE")}
-                  disabled={isProcessing && momoStatus === "pending"}
-                >
-                  Phone
-                </Button>
-                <Button
-                  type="button"
-                  variant={paymentSource === "WALLET" ? "default" : "outline"}
-                  onClick={() => setPaymentSource("WALLET")}
-                  disabled={isProcessing && momoStatus === "pending"}
-                >
-                  Wallet
-                </Button>
-              </div>
-            </div>
+            <p className="text-sm text-muted-foreground">Pay by verified Mobile Money. Wallet spending is paused pending balance reconciliation.</p>
 
-            {paymentSource === "PHONE" && (
+            {(
               <div className="space-y-2">
                 <label className="text-sm font-medium">
                   MTN Mobile Money Number
@@ -282,7 +255,7 @@ export default function RepaymentForm({
                   disabled={isProcessing && momoStatus === "pending"}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Sandbox phone payment will auto-complete.
+                  Debt changes only after the provider confirms the UGX payment.
                 </p>
               </div>
             )}
@@ -322,7 +295,7 @@ export default function RepaymentForm({
                     }}
                     disabled={
                       (isProcessing && momoStatus === "pending") ||
-                      quickAmount > outstandingBalance
+                      quickAmount > Math.ceil(outstandingBalance)
                     }
                     className={cn(
                       "text-xs",
@@ -367,7 +340,6 @@ export default function RepaymentForm({
                 variant="outline"
                 onClick={onCancel}
                 className="flex-1"
-                disabled={isProcessing && momoStatus === "pending"}
               >
                 Cancel
               </Button>
@@ -377,7 +349,7 @@ export default function RepaymentForm({
                   (isProcessing && momoStatus === "pending") ||
                   !amount ||
                   parseFloat(amount) <= 0 ||
-                  parseFloat(amount) > outstandingBalance
+                  parseFloat(amount) > Math.ceil(outstandingBalance)
                 }
                 className="flex-1"
               >

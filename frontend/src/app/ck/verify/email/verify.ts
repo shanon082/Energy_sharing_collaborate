@@ -21,8 +21,6 @@ export async function verifyEmail(uid: string, token: string): Promise<VerifyRes
     
     const response = await get(`auth/verify-email/?uid=${encodeURIComponent(decodedUid)}&token=${encodeURIComponent(token)}`);
     
-    console.log("Verification response:", response);
-    
     if (response.error) {
       return { 
         success: false, 
@@ -34,8 +32,7 @@ export async function verifyEmail(uid: string, token: string): Promise<VerifyRes
       success: true, 
       message: 'Email verified successfully' 
     };
-  } catch (err) {
-    console.error('Verification Error:', err);
+  } catch {
     return { 
       success: false, 
       error: 'Server error occurred during verification' 

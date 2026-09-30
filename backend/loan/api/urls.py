@@ -15,7 +15,7 @@ from .views import (
     UserLoansView,
     CreditScoreView,
 )
-from loan.api.momo_views import MoMoPaymentView, PaymentStatusView, ActiveMoMoPaymentView
+from transactions.api.payment_views import VerifiedLoanRepaymentView, VerifiedLoanPaymentStatusView
 from webhooks.api.views import LoanTokenVerificationView
 
 urlpatterns = [
@@ -29,9 +29,9 @@ urlpatterns = [
     path('disburse/<int:loan_id>/', LoanDisbursementView.as_view(), name='loan-disburse'),
     path('notify/<int:loan_id>/', LoanNotificationView.as_view(), name='loan-notify'),
     path('verify-token/', LoanTokenVerificationView.as_view(), name='verify-token'),
-    path('repay/momo/<int:loan_id>/', MoMoPaymentView.as_view(), name='loan-repay-momo'),
-    path('repay/momo/active/', ActiveMoMoPaymentView.as_view(), name='loan-repay-momo-active'),
-    path('payment-status/<str:external_id>/', PaymentStatusView.as_view(), name='payment-status'),
+    path('repay/momo/<int:loan_id>/', VerifiedLoanRepaymentView.as_view(), name='loan-repay-momo'),
+    path('repay/momo/active/', VerifiedLoanRepaymentView.as_view(), name='loan-repay-momo-active'),
+    path('payment-status/<str:external_id>/', VerifiedLoanPaymentStatusView.as_view(), name='payment-status'),
     # path('momo-callback/', MoMoPaymentCallbackView.as_view(), name='momo-callback'),
     path('tariffs/', TariffListView.as_view(), name='tariff-list'),
     path('credit-score/', CreditScoreView.as_view(), name='credit-score'),

@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/dialog";
 import BuyUnitsSuggestion from "../../request-loan/_components/buy-units-suggestion";
 import RepaymentForm from "../../request-loan/_components/repayment-form";
-import { repayLoan } from "../action";
 import { get } from "@/lib/fetch-client";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -67,7 +66,6 @@ interface Loan {
   rejection_reason: string | null;
   user_notified: boolean;
   repayments: LoanRepayment[];
-  disbursement_token: string | null;
   disbursement_units: number | null;
   total_amount_due: number;
   outstanding_balance: number;
@@ -133,7 +131,7 @@ export default function LoanList({ loans }: LoanListProps) {
   const canRepay = (loan: Loan): boolean => {
     const status = getLoanStatus(loan);
     const balance = calculateOutstandingBalance(loan);
-    return status === 'DISBURSED' && balance > 0;
+    return (status === 'DISBURSED' || status === 'DEFAULTED') && balance > 0;
   };
 
   const handleRepaymentSuccess = () => {
@@ -183,54 +181,6 @@ export default function LoanList({ loans }: LoanListProps) {
     };
   };
 
-  const handleDisburseLoan = async (loan: Loan) => {
-    if (!canDisburse(loan)) {
-      setErrorMessage('Loan cannot be accepted at this time');
-      return;
-    }
-
-    try {
-      console.log('Starting acceptance for loan:', loan.id);
-      setSuccessMessage('Accepting loan...');
-
-      const data = await disburseLoan(loan.id);
-      console.log('Acceptment response:', data);
-
-      handleDisbursementSuccess(data);
-      setSuccessMessage('Loan accepted successfully! A meter token has been generated.');
-
-      setTimeout(() => {
-        window.location.reload();
-      }, 3000);
-
-    } catch (error: any) {
-      console.error('Disbursement error:', error);
-
-      if (error.message.includes('Authentication') || error.message.includes('login')) {
-        setErrorMessage('Your session has expired. Please log in again.');
-        setTimeout(() => {
-          window.location.href = '/auth/login';
-        }, 2000);
-      } else {
-        setErrorMessage(error.message || 'An error occurred while accepting the loan.');
-      }
-    }
-  };
-
-  const handleDisbursementSuccess = (data: { token?: string; units_added?: number } | any) => {
-    console.log('Disbursement success data:', data);
-    const token = data.token || data.disbursement_token || '';
-    const units = data.units_added || data.units_disbursed || 0;
-
-    if (token) {
-      setDisbursementData({ token, units });
-      setShowTokenPopup(true);
-    } else {
-      setDisbursementData(null);
-      setShowTokenPopup(false);
-    }
-  };
-
   // Clear messages after 5 seconds
   useEffect(() => {
     if (successMessage) {
@@ -257,8 +207,8 @@ export default function LoanList({ loans }: LoanListProps) {
     const status = getLoanStatus(loan);
     const explanations: Record<string, string> = {
       'PENDING': 'Your loan application is under review',
-      'APPROVED': 'Loan approved! Click "Accept Loan" to generate your meter token',
-      'DISBURSED': 'A meter token has been generated. You can now make repayments',
+      'APPROVED': 'Loan approved. Energy allocation is being recorded.',
+      'DISBURSED': 'Energy has been allocated to your unit balance. You can now make repayments.',
       'COMPLETED': 'Loan has been fully repaid - Thank you!',
       'REJECTED': 'Your loan application was not approved',
       'DEFAULTED': 'Loan repayment is overdue',
@@ -316,7 +266,6 @@ export default function LoanList({ loans }: LoanListProps) {
               <TableHead className="text-right">Amount</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Balance</TableHead>
-              <TableHead>Token</TableHead>
               <TableHead>Units</TableHead>
               <TableHead>Applied</TableHead>
               <TableHead>Due Date</TableHead>
@@ -363,9 +312,6 @@ export default function LoanList({ loans }: LoanListProps) {
                       ? <span className="text-red-600 font-medium">{outstandingBalance.toLocaleString()} UGX</span>
                       : <span className="text-green-600 font-medium">Paid</span>
                     }
-                  </TableCell>
-                  <TableCell className="text-sm font-mono">
-                    {loan.disbursement_token || "-"}
                   </TableCell>
                   <TableCell className="text-sm font-mono">
                     {loan.disbursement_units ? `${loan.disbursement_units}` : "-"}
@@ -475,7 +421,6 @@ export default function LoanList({ loans }: LoanListProps) {
               <p><strong>Interest Rate:</strong> {detailLoan.interest_rate ?? "-"}%</p>
               <p><strong>Tenure (months):</strong> {detailLoan.tenure_months ?? "-"}</p>
               <p><strong>Credit Score:</strong> {detailLoan.credit_score ?? "-"}</p>
-              <p><strong>Disbursement Token:</strong> {detailLoan.disbursement_token || "-"}</p>
               <p><strong>Disbursement Units:</strong> {detailLoan.disbursement_units ?? "-"}</p>
               <p>
                 <strong>Applied At:</strong>{" "}

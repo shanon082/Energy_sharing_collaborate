@@ -128,11 +128,14 @@ class ElectricityTariffSerializer(serializers.ModelSerializer):
 class LoanRepaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanRepayment
-        fields = ['id', 'amount_paid', 'payment_date', 'units_paid', 'is_on_time', 'payment_reference']
+        fields = ['id', 'amount_paid', 'amount_applied_ugx', 'excess_ugx', 'payment_status',
+                  'payment_date', 'units_paid', 'is_on_time', 'payment_reference']
 
 class LoanApplicationSerializer(serializers.ModelSerializer):
     repayments = LoanRepaymentSerializer(many=True, read_only=True)
     outstanding_balance = serializers.SerializerMethodField()
+    amount_paid = serializers.SerializerMethodField()
+    total_amount_due = serializers.SerializerMethodField()
     get_total_amount_due = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     is_eligible = serializers.SerializerMethodField()
@@ -180,6 +183,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
 
     def get_outstanding_balance(self, obj):
         return obj.outstanding_balance
+
+    def get_amount_paid(self, obj):
+        return obj.amount_paid
     
     def get_total_amount_due(self, obj):
         return obj.total_amount_due
@@ -188,8 +194,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         return obj.check_eligibility()
     
     def get_disbursement_token(self, obj):
-        if hasattr(obj, 'disbursement') and obj.disbursement:
-            return obj.disbursement.token
+        # LoanDisbursement.token is a legacy database placeholder, not a
+        # validated STS/keypad token. Keep historical rows but do not present
+        # newly generated placeholders as meter-load credentials.
         return None
     
     def get_disbursement_units(self, obj):
@@ -250,6 +257,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         return obj.due_date
 
 class LoanApplicationCreateSerializer(serializers.ModelSerializer):
+    meter_no = serializers.CharField(write_only=True)
     tariff_id = serializers.PrimaryKeyRelatedField(
         queryset=ElectricityTariff.objects.filter(is_active=True),
         source='tariff',
@@ -261,10 +269,12 @@ class LoanApplicationCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApplication
         fields = [
-            'purpose', 'amount_requested', 'tenure_months', 'tariff_id',
+            'purpose', 'amount_requested', 'tenure_months', 'tariff_id', 'meter_no',
         ]
     
     def validate_amount_requested(self, value):
+        if value != value.to_integral_value():
+            raise serializers.ValidationError("Use whole UGX for a loan application.")
         if value < 5000:
             raise serializers.ValidationError("Minimum loan amount is 5,000 UGX")
         if value > 200000:

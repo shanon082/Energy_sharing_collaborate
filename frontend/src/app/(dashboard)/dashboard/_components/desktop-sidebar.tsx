@@ -8,9 +8,11 @@ import { GpawaLogo, LOGO_SIZES } from "@/components/common/gpawa-logo";
 import DashboardNavLinks from "@/components/dashboard/dashboard-nav-links";
 import { IconMoneybag } from "@tabler/icons-react";
 import { PersonIcon } from "@radix-ui/react-icons";
+import { useFeatures } from "@/contexts/features-context";
 
 export default function DesktopSidebar() {
   const pathname = usePathname();
+  const { peer_sharing, ussd } = useFeatures();
 
   return (
     <div className="hidden border-r bg-muted/40 md:block">
@@ -52,7 +54,7 @@ export default function DesktopSidebar() {
               )}
             >
               <Forward className="h-4 w-4" />
-              Share Units
+              {peer_sharing ? "Load / Share Units" : "Load My Meter"}
             </Link>            
             {/* <Link
               href="/dashboard/transfering"
@@ -144,7 +146,7 @@ export default function DesktopSidebar() {
               <PersonIcon className="h-4 w-4" />
               My Account
             </Link>
-            <Link
+            {ussd && <Link
               href="/ussd-simulator"
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-all hover:text-primary",
@@ -153,7 +155,7 @@ export default function DesktopSidebar() {
             >
               <Smartphone className="h-4 w-4" />
               USSD Simulator
-            </Link>
+            </Link>}
           </nav>
         </div>
       </div>

@@ -5,6 +5,8 @@ import DesktopSidebar from "../_components/desktop-sidebar";
 import RightHeader from "../_components/right-header";
 import LoansClient from "./_components/loans-client";
 import { get } from "@/lib/fetch";
+import { getFeatureAvailability } from "@/lib/features-server";
+import FeatureUnavailable from "@/components/common/feature-unavailable";
 
 async function getLoans() {
   try {
@@ -25,6 +27,8 @@ export default async function LoansPage({
 }) {
   const loans = await getLoans();
   const params = await searchParams;
+  const { third_party_repayment } = await getFeatureAvailability();
+  if (params?.tab === "pay-for-someone" && !third_party_repayment) return <FeatureUnavailable />;
   const defaultTab = params?.tab ?? "my-loans";
 
   return (
@@ -36,7 +40,9 @@ export default async function LoansPage({
           <div>
             <h1 className="text-lg font-semibold md:text-2xl">Loans</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Apply for a loan, view your loan history, or pay off someone else's loan.
+              {third_party_repayment
+                ? "Apply for a loan, view your loan history, or pay off someone else's loan."
+                : "Apply for a loan or view your loan history."}
             </p>
           </div>
           <Suspense fallback={<div className="p-4 text-muted-foreground">Loading…</div>}>

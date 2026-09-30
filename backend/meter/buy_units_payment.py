@@ -84,6 +84,9 @@ def complete_buy_units_payment(user, amount_decimal, transaction_id, meter_id, c
   Credit unit wallet after a successful payment. Safe to call once; skips if already COMPLETED.
   Returns (success: bool, units_purchased: Decimal, error: str|None).
   """
+  # No trusted provider evidence is supplied here. Historical pending records
+  # require operator reconciliation; this legacy helper cannot settle them.
+  return False, Decimal("0"), "Legacy purchase settlement requires verified provider evidence"
   try:
     amount_decimal = Decimal(str(amount_decimal))
   except (InvalidOperation, TypeError, ValueError):

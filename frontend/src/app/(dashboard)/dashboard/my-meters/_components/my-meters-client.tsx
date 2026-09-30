@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   Gauge,
@@ -10,7 +10,6 @@ import {
   RefreshCw,
   Trash2,
   Wifi,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +26,7 @@ import { get } from "@/lib/fetch-client";
 import { useSelectedMeter } from "@/contexts/selected-meter-context";
 import { deleteMeter } from "../actions";
 import AddMeterDialog from "./add-meter-dialog";
-import MeterLoadDialog from "@/app/(dashboard)/dashboard/_components/meter-load-dialog";
+import EnergyStatusCard from "@/components/dashboard/energy-status-card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,14 +38,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { UserMeter } from "@/interface/meter.interface";
-import type { AmiLoadSuccessResult } from "@/app/(dashboard)/dashboard/share/actions";
 
 export default function MyMetersClient() {
   const { meters, isLoading, refreshMeters } = useSelectedMeter();
   const [selectedNo, setSelectedNo] = useState<string | null>(null);
-  const [walletBalance, setWalletBalance] = useState(0);
   const [addOpen, setAddOpen] = useState(false);
-  const [loadOpen, setLoadOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [checkingUnits, setCheckingUnits] = useState(false);
@@ -69,32 +65,6 @@ export default function MyMetersClient() {
     setCheckError("");
     setActionMessage("");
   }, [selected?.meter_number]);
-
-  const fetchWallet = useCallback(async () => {
-    const res = await get<{ success?: boolean; wallet?: { balance?: string } }>("wallet/balance");
-    if (!res.error && res.data?.success) {
-      setWalletBalance(parseFloat(res.data.wallet?.balance ?? "0") || 0);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchWallet();
-  }, [fetchWallet]);
-
-  const handleLoadSuccess = useCallback(
-    async (result?: AmiLoadSuccessResult) => {
-      await refreshMeters();
-      await fetchWallet();
-      if (!result) return;
-      setActionMessage(result.message);
-      setCheckError("");
-      if (result.live_units_kwh != null && Number.isFinite(result.live_units_kwh)) {
-        setLiveUnits(result.live_units_kwh);
-        setLiveQueriedAt(result.live_queried_at ?? new Date().toISOString());
-      }
-    },
-    [refreshMeters, fetchWallet]
-  );
 
   const handleCheckUnits = async () => {
     if (!selected || selected.architecture !== "AMI") return;
@@ -137,7 +107,6 @@ export default function MyMetersClient() {
 
   const handleMeterAdded = async () => {
     await refreshMeters();
-    await fetchWallet();
     setAddOpen(false);
   };
 
@@ -229,13 +198,14 @@ export default function MyMetersClient() {
                 </div>
                 <p className="mt-3 text-sm">
                   <span className="font-semibold tabular-nums">{meter.units.toFixed(2)}</span>
-                  <span className="text-muted-foreground ml-1">kWh</span>
+                  <span className="text-muted-foreground ml-1">kWh legacy snapshot</span>
                 </p>
               </button>
             ))}
           </div>
 
           {selected && (
+            <>
             <Card>
               <CardHeader>
                 <div className="flex items-start justify-between gap-3">
@@ -267,14 +237,14 @@ export default function MyMetersClient() {
               <CardContent className="space-y-6">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <InfoTile
-                    label="Units"
+                    label="Legacy meter snapshot"
                     value={`${selected.units.toFixed(2)} kWh`}
                   />
                   <InfoTile
                     label={
                       selected.architecture === "AMI"
-                        ? "Pending delivery to meter"
-                        : "Pending units"
+                        ? "Legacy pending snapshot"
+                        : "Legacy pending units"
                     }
                     value={`${selected.pending_units.toFixed(2)} kWh`}
                   />
@@ -353,14 +323,6 @@ export default function MyMetersClient() {
                     Check Units
                   </Button>
                   <Button
-                    onClick={() => setLoadOpen(true)}
-                    disabled={walletBalance <= 0}
-                    className="gpawa-gradient text-white gap-2"
-                  >
-                    <Zap className="h-4 w-4" />
-                    Load Units
-                  </Button>
-                  <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => refreshMeters()}
@@ -379,13 +341,17 @@ export default function MyMetersClient() {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Wallet: {walletBalance.toFixed(2)} kWh available to load.
-                  {selected.architecture === "AMI"
-                    ? " Load sends units directly to your device via ThingsBoard."
-                    : " Load generates an STS keypad token for this meter."}
+                  New energy allocations and confirmed delivery are shown separately below.
+                  Historical balances require reconciliation before delivery.
                 </p>
               </CardContent>
             </Card>
+            {selected.architecture === "AMI" ? (
+              <EnergyStatusCard meterNo={selected.meter_number} />
+            ) : (
+              <p className="rounded-md border p-4 text-sm">STS keypad loading awaits a validated device protocol.</p>
+            )}
+            </>
           )}
         </div>
       )}
@@ -394,15 +360,6 @@ export default function MyMetersClient() {
         open={addOpen}
         onOpenChange={setAddOpen}
         onSuccess={handleMeterAdded}
-      />
-
-      <MeterLoadDialog
-        meter={selected}
-        open={loadOpen}
-        onOpenChange={setLoadOpen}
-        walletBalance={walletBalance}
-        onWalletBalanceChange={setWalletBalance}
-        onSuccess={handleLoadSuccess}
       />
 
       <AlertDialog open={deleteOpen} onOpenChange={(o) => !deleting && setDeleteOpen(o)}>

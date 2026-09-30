@@ -2,8 +2,10 @@ from datetime import timedelta
 
 from celery import shared_task
 from django.utils import timezone
+from django.conf import settings
+from django.db.models import Q
 
-from meter.models import Meter
+from meter.models import Meter, MeterDelivery
 from meter.usage_service import snapshot_all_ami_meters, sync_meter_usage
 
 
@@ -31,6 +33,23 @@ def retry_pending_ami_deliveries():
     from meter.ami_delivery import retry_all_pending_ami_deliveries
 
     return retry_all_pending_ami_deliveries()
+
+
+@shared_task(name="meter.tasks.dispatch_simulated_outbox")
+def dispatch_simulated_outbox():
+    """Poll durable reservations; never invoke physical gateway code."""
+    if not settings.DEBUG or not getattr(settings, "SIMULATED_METER_ENABLED", False):
+        return 0
+    from meter.simulation import dispatch_delivery
+
+    stale = timezone.now() - timedelta(seconds=30)
+    ids = list(MeterDelivery.objects.filter(
+        Q(status__in=[MeterDelivery.QUEUED, MeterDelivery.OUTCOME_UNKNOWN])
+        | Q(status=MeterDelivery.DISPATCHED, dispatched_at__lte=stale)
+    ).order_by("created_at").values_list("pk", flat=True)[:100])
+    for delivery_id in ids:
+        dispatch_delivery(delivery_id)
+    return len(ids)
 
 
 @shared_task(name="meter.tasks.poll_ami_low_units", ignore_result=True, expires=1)

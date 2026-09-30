@@ -2,9 +2,12 @@ import { Suspense } from 'react'
 import DesktopSidebar from "../_components/desktop-sidebar"
 import RightHeader from "../_components/right-header"
 import TransferForm from './_components/transfer_form';
+import { disabledFeature } from "@/lib/features-server";
+import FeatureUnavailable from "@/components/common/feature-unavailable";
 
 
 const TransferunitsPage = async () => {
+  if (await disabledFeature("meter_transfers")) return <FeatureUnavailable />;
   return (
     <div className="grid min-h-screen w-full md:grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]">
       <DesktopSidebar />

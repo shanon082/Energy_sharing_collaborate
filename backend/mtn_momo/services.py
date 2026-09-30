@@ -51,7 +51,7 @@ class MTNMoMoService:
         token = response.json().get("access_token")
         if token:
           return token
-      logger.error("Token request failed: %s - %s", response.status_code, response.text)
+      logger.error("Token request failed with HTTP %s", response.status_code)
     except requests.RequestException as exc:
       logger.error("Token request error: %s", exc)
     return None
@@ -96,7 +96,7 @@ class MTNMoMoService:
       "payeeNote": "gPAWA electricity units purchase",
     }
 
-    logger.info("MoMo requesttopay ref=%s external=%s payload=%s", reference_id, external_id, payload)
+    logger.info("MoMo request-to-pay initiated for reference %s", reference_id)
 
     try:
       response = requests.post(url, headers=headers, json=payload, timeout=20)
@@ -117,10 +117,10 @@ class MTNMoMoService:
             + sandbox_hint
           ),
         }
-      logger.error("Payment request failed: %s - %s", response.status_code, response.text)
+      logger.error("Payment request failed with HTTP %s", response.status_code)
       return {
         "status": "FAILED",
-        "message": f"Payment request failed ({response.status_code}): {response.text}",
+        "message": f"Payment request failed ({response.status_code})",
       }
     except requests.RequestException as exc:
       logger.error("Payment request error: %s", exc)
@@ -145,25 +145,28 @@ class MTNMoMoService:
       response = requests.get(url, headers=headers, timeout=15)
       if response.status_code == 200:
         data = response.json()
-        raw_status = data.get("status", "FAILED")
+        raw_status = data.get("status", "UNKNOWN")
         status_map = {
           "SUCCESSFUL": "SUCCESS",
           "PENDING": "PENDING",
           "FAILED": "FAILED",
         }
         return {
-          "status": status_map.get(raw_status, "FAILED"),
+          "provider": "MTN_PRODUCTION" if self.environment == "production" else "MTN_SANDBOX",
+          "reference_id": str(reference_id),
+          "external_id": data.get("externalId"),
+          "status": status_map.get(raw_status, "UNKNOWN"),
           "transaction_id": data.get("financialTransactionId"),
           "amount": data.get("amount"),
           "currency": data.get("currency"),
           "payer": (data.get("payer") or {}).get("partyId"),
           "message": f"Payment {raw_status.lower()}",
         }
-      logger.error("Status check failed: %s - %s", response.status_code, response.text)
+      logger.error("Status check failed with HTTP %s", response.status_code)
       return {
-        "status": "FAILED",
-        "message": f"Status check failed ({response.status_code}): {response.text}",
+        "status": "UNKNOWN",
+        "message": f"Status check unavailable ({response.status_code})",
       }
     except requests.RequestException as exc:
       logger.error("Status check error: %s", exc)
-      return {"status": "FAILED", "message": str(exc)}
+      return {"status": "UNKNOWN", "message": "Status check unavailable"}

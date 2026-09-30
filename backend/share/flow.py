@@ -3,6 +3,8 @@ Single-step share execution (wallet → receiver meter) after password confirmat
 """
 from __future__ import annotations
 
+from backend.features import require_feature, requires_feature
+
 import logging
 import uuid
 from decimal import Decimal
@@ -57,6 +59,7 @@ def build_share_summary(receiver_meter: Meter, units: Decimal) -> str:
     )
 
 
+@requires_feature("peer_sharing")
 def execute_share_units(
     sender: User,
     receiver_meter_no: str,
@@ -68,6 +71,8 @@ def execute_share_units(
     Debit sender wallet and deliver units to receiver (STS token or AMI push).
     Raises ShareFlowError on validation failures.
     """
+    if channel.upper() == "USSD":
+        require_feature("ussd")
     if units < Decimal("2"):
         raise ShareFlowError("Minimum 2 units required to share.")
 

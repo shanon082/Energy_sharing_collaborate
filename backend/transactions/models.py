@@ -88,3 +88,58 @@ class TransactionLog(models.Model):
 
     def __str__(self):
         return f"{self.transaction_type} - {self.user.username} - {self.created_at}"
+
+
+class PaymentIntent(models.Model):
+    """One provider reference and one authorized financial purpose."""
+
+    PURCHASE = "PURCHASE"
+    LOAN_REPAYMENT = "LOAN_REPAYMENT"
+    PURPOSES = [(PURCHASE, "Electricity purchase"), (LOAN_REPAYMENT, "Loan repayment")]
+
+    PENDING = "PENDING"
+    SETTLED = "SETTLED"
+    FAILED = "FAILED"
+    STATUSES = [(PENDING, "Pending"), (SETTLED, "Settled"), (FAILED, "Failed")]
+
+    owner = models.ForeignKey(User, on_delete=models.PROTECT, related_name="payment_intents")
+    purpose = models.CharField(max_length=20, choices=PURPOSES)
+    amount = models.DecimalField(max_digits=20, decimal_places=2)
+    currency = models.CharField(max_length=3, default="UGX")
+    provider = models.CharField(max_length=20, default="MTN_PRODUCTION")
+    provider_reference = models.UUIDField(unique=True)
+    provider_external_id = models.CharField(max_length=100, unique=True)
+    purchase = models.OneToOneField(
+        Transaction, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="payment_intent",
+    )
+    repayment = models.OneToOneField(
+        "loan.LoanRepayment", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="payment_intent",
+    )
+    meter = models.ForeignKey(Meter, on_delete=models.PROTECT, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default=PENDING)
+    initiated_at = models.DateTimeField(auto_now_add=True)
+    settled_at = models.DateTimeField(null=True, blank=True)
+    provider_transaction_id = models.CharField(max_length=100, blank=True)
+    # Populated only for new, verified purchases. The full provider receipt is
+    # always ``amount``; the difference remains visible for reconciliation.
+    purchase_billed_ugx = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    purchase_residual_ugx = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    purchase_calculation = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(purpose="PURCHASE", purchase__isnull=False, repayment__isnull=True, meter__isnull=False)
+                    | models.Q(purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=False, meter__isnull=True)
+                ),
+                name="payment_intent_one_purpose",
+            ),
+            models.UniqueConstraint(
+                fields=["provider", "provider_transaction_id"],
+                condition=~models.Q(provider_transaction_id=""),
+                name="payment_provider_transaction_unique",
+            ),
+        ]

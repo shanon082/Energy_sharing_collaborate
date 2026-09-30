@@ -1,3 +1,4 @@
+from backend.features import requires_feature
 import logging
 from decimal import Decimal
 from django.utils import timezone
@@ -42,19 +43,19 @@ logger = logging.getLogger(__name__)
 class TariffListView(generics.ListAPIView):
     permission_classes = (IsAuthenticated,)
     serializer_class = ElectricityTariffSerializer
-    
+
     def get_queryset(self):
         return ElectricityTariff.objects.filter(is_active=True)
 
 class LoanApplicationView(generics.ListCreateAPIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
-    serializer_class = LoanApplicationCreateSerializer  
+    serializer_class = LoanApplicationCreateSerializer
 
     def get_serializer_class(self):
         if self.request.method == "POST":
             return LoanApplicationCreateSerializer
-        return LoanApplicationSerializer  
+        return LoanApplicationSerializer
 
     def create(self, request, *args, **kwargs):
         try:
@@ -69,16 +70,17 @@ class LoanApplicationView(generics.ListCreateAPIView):
                     {"error": apply_message},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Check if user has a meter first
-            try:
-                meter = Meter.objects.get(user=request.user)
-            except Meter.DoesNotExist:
+
+            meter_no = str(data.get("meter_no") or "").strip()
+            meter = Meter.objects.filter(
+                user=request.user, meter_no=meter_no, status=Meter.STATUS_ACTIVE,
+            ).first() if meter_no else None
+            if meter is None:
                 return Response(
-                    {"error": "No meter found. Please register your meter before applying for a loan."},
+                    {"error": "Select an active meter assigned to your account before applying."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
 
@@ -103,8 +105,10 @@ class LoanApplicationView(generics.ListCreateAPIView):
             else:
                 amount_approved = min(max_eligible, amount_requested)
 
+            serializer.validated_data.pop("meter_no", None)
             loan = serializer.save(
                 user=request.user,
+                intended_meter=meter,
                 credit_score=credit_score,
                 amount_approved=amount_approved if amount_approved > 0 else None,
                 loan_tier=tier_name,
@@ -163,11 +167,11 @@ class LoanApplicationView(generics.ListCreateAPIView):
                     logger.exception("Auto-disbursement failed for loan %s", loan.loan_id)
 
             # Calculate units based on tariff (for response)
-            if tariff and amount_approved:
+            if amount_approved:
                 units_calculated = loan.calculate_units_from_amount()
-                cost_breakdown = self.get_cost_breakdown(loan, float(amount_approved))
+                cost_breakdown = self.get_cost_breakdown(loan, Decimal(str(amount_approved)))
             else:
-                units_calculated = amount_approved / 500 
+                units_calculated = 0
                 cost_breakdown = None
 
             response_data = {
@@ -232,47 +236,24 @@ class LoanApplicationView(generics.ListCreateAPIView):
         return max(0, min(calculate_weighted_credit_score(credit_signal), 100))
 
     def get_cost_breakdown(self, loan, amount):
-        """Calculate detailed cost breakdown for block tariff"""
-        if not loan.tariff:
+        """Quote the same energy, service charge and VAT as the billing engine."""
+        if loan.tariff_id is None:
+            # Historical no-tariff loans still use a different 500 UGX/kWh
+            # disbursement rule; do not label that as a VAT-inclusive bill.
             return None
-    
-        blocks = loan.tariff.blocks.all().order_by('block_order')
-        breakdown = []
-        remaining_amount = amount
-    
-        for block in blocks:
-            if remaining_amount <= 0:
-                break
-            
-            if block.max_units:
-                block_units_available = block.max_units - block.min_units + 1
-                block_cost = block_units_available * float(block.rate_per_unit)
-            
-                if remaining_amount >= block_cost:
-                    # Full block
-                    units_from_block = block_units_available
-                    cost_from_block = block_cost
-                    remaining_amount -= block_cost
-                else:
-                    # Partial block
-                    units_from_block = remaining_amount / float(block.rate_per_unit)
-                    cost_from_block = remaining_amount
-                    remaining_amount = 0
-            else:
-                # Last block - use all remaining amount
-                units_from_block = remaining_amount / float(block.rate_per_unit)
-                cost_from_block = remaining_amount
-                remaining_amount = 0
-        
-            breakdown.append({
-                'block_name': block.block_name,
-                'units': round(units_from_block, 2),
-                'rate': float(block.rate_per_unit),
-                'cost': round(cost_from_block, 2),
-                'block_range': f"{block.min_units}-{block.max_units if block.max_units else '∞'}"
-            })
-    
-        return breakdown
+        from utils.billing import calculate_units_from_payment
+
+        units, bill = calculate_units_from_payment(
+            Decimal(str(amount)), loan.user, tariff=loan.tariff, apply_deductions=False,
+        )
+        return {
+            "energy_units_kwh": str(units),
+            "energy_cost_ugx": str(bill.energy_cost),
+            "service_charge_ugx": str(bill.service_charge),
+            "vat_ugx": str(bill.vat),
+            "total_ugx": str(bill.total),
+            "unallocated_ugx": str(Decimal(str(amount)) - bill.total),
+        }
     # def determine_loan_tier(self, score):
     #     """Determine loan tier, maximum amount, and interest rate based on credit score"""
     #     tiers = [
@@ -281,7 +262,7 @@ class LoanApplicationView(generics.ListCreateAPIView):
     #         {'min_score': 85, 'max_score': 89, 'name': 'GOLD', 'max_amount': 150000, 'interest_rate': 10.0},
     #         {'min_score': 90, 'max_score': 100, 'name': 'PLATINUM', 'max_amount': 200000, 'interest_rate': 9.0}
     #     ]
-        
+
     #     for tier in tiers:
     #         if tier['min_score'] <= score <= tier['max_score']:
     #             return tier['name'], tier['max_amount'], tier['interest_rate']
@@ -289,7 +270,7 @@ class LoanApplicationView(generics.ListCreateAPIView):
     def determine_loan_tier(self, score):
         """Determine loan tier, maximum amount, and interest rate based on credit score"""
         tier_info = get_tier_by_score(score)
-    
+
         if tier_info:
             return tier_info['name'], tier_info['max_amount'], tier_info['interest_rate']
         return None
@@ -299,7 +280,7 @@ class LoanApplicationView(generics.ListCreateAPIView):
         tier_info = self.determine_loan_tier(score)
         if not tier_info:
             return 0
-        
+
         tier_name, max_amount, interest_rate = tier_info
         return min(max_amount, requested_amount)
 
@@ -315,7 +296,7 @@ class LoanApplicationView(generics.ListCreateAPIView):
 class UserLoansView(generics.ListAPIView):
     permission_classes = (IsAuthenticated,)
     serializer_class = LoanApplicationSerializer
-    
+
     def get_queryset(self):
         from loan.services import reconcile_user_loan_statuses
 
@@ -325,7 +306,7 @@ class UserLoansView(generics.ListAPIView):
 class LoanDetailView(generics.RetrieveAPIView):
     permission_classes = (IsAuthenticated,)
     serializer_class = LoanApplicationSerializer
-    
+
     def get_queryset(self):
         from loan.services import reconcile_user_loan_statuses
 
@@ -335,34 +316,34 @@ class LoanDetailView(generics.RetrieveAPIView):
 
 # class LoanRepaymentView(APIView):
 #     permission_classes = (IsAuthenticated,)
-    
+
 #     def post(self, request, loan_id):
 #         try:
 #             loan = LoanApplication.objects.get(id=loan_id, user=request.user)
-            
+
 #             if loan.status != 'DISBURSED':
 #                 return Response(
-#                     {"error": "Loan is not disbursed or already completed"}, 
+#                     {"error": "Loan is not disbursed or already completed"},
 #                     status=status.HTTP_400_BAD_REQUEST
 #                 )
-            
+
 #             amount = float(request.data.get('amount', 0))
-            
+
 #             if amount <= 0:
 #                 return Response(
-#                     {"error": "Invalid amount"}, 
+#                     {"error": "Invalid amount"},
 #                     status=status.HTTP_400_BAD_REQUEST
 #                 )
-            
+
 #             # Get current outstanding balance
 #             current_balance = loan.outstanding_balance
-            
+
 #             if amount > current_balance:
 #                 return Response(
-#                     {"error": f"Amount exceeds outstanding balance of {current_balance} UGX"}, 
+#                     {"error": f"Amount exceeds outstanding balance of {current_balance} UGX"},
 #                     status=status.HTTP_400_BAD_REQUEST
 #                 )
-            
+
 #             payment_source = str(request.data.get('payment_source', 'PHONE')).upper()
 #             if payment_source not in {'WALLET', 'PHONE', 'MOBILE_MONEY'}:
 #                 return Response(
@@ -373,7 +354,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #             tariff_info = {
 #                 'tariff_code': loan.tariff.tariff_code if loan.tariff else 'DEFAULT',
 #             }
-            
+
 #             with transaction.atomic():
 #                 # Generate payment reference
 #                 payment_ref = generate_random_string(12)
@@ -391,7 +372,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                         description=f"Loan repayment for {loan.loan_id}",
 #                         transaction_ref=payment_ref,
 #                     )
-                
+
 #                 # Create repayment record
 #                 repayment = LoanRepayment.objects.create(
 #                     loan=loan,
@@ -402,7 +383,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                     payment_method='MOBILE_MONEY' if payment_source != 'WALLET' else 'CASH',
 #                     payment_status='SUCCESS'
 #                 )
-                
+
 #                 # Create Transaction Log - THIS WAS MISSING
 #                 TransactionLog.objects.create(
 #                     user=request.user,
@@ -420,14 +401,14 @@ class LoanDetailView(generics.RetrieveAPIView):
 
 #                 # IMPORTANT: Refresh loan from database to get updated state
 #                 loan.refresh_from_db()
-                
+
 #                 # Check if loan is fully paid - after recording the payment
 #                 new_balance = loan.outstanding_balance
-                
+
 #                 if new_balance <= 0:
 #                     loan.status = 'COMPLETED'
 #                     loan.save()
-                    
+
 #                     # Log completion
 #                     TransactionLog.objects.create(
 #                         user=request.user,
@@ -437,11 +418,11 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                         reference_id=loan.loan_id,
 #                         details={'message': 'Loan fully repaid'}
 #                     )
-                    
+
 #                     message = "Loan fully repaid! Thank you."
 #                 else:
 #                     message = "Payment successful"
-            
+
 #             # Return updated loan info
 #             return Response({
 #                 "message": message,
@@ -452,25 +433,25 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                 "total_paid": loan.amount_paid,
 #                 "total_due": loan.total_amount_due
 #             })
-            
+
 #         except LoanApplication.DoesNotExist:
 #             return Response(
-#                 {"error": "Loan not found"}, 
+#                 {"error": "Loan not found"},
 #                 status=status.HTTP_404_NOT_FOUND
 #             )
 #         except Exception as e:
 #             logger.error(f"Repayment error: {str(e)}")
 #             return Response(
-#                 {"error": f"Failed to process repayment: {str(e)}"}, 
+#                 {"error": f"Failed to process repayment: {str(e)}"},
 #                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
 #             )
-    
+
 #     def get_repayment_breakdown(self, loan, amount):
 #         """Calculate breakdown for repayment amount"""
 #         if not loan.tariff:
 #             return None
 #         return loan.calculate_cost_for_units(loan.calculate_units_from_amount(amount))
-    
+
 #     def check_payment_timeliness(self, loan):
 #         """Check if payment is on time"""
 #         if not loan.due_date:
@@ -480,24 +461,24 @@ class LoanDetailView(generics.RetrieveAPIView):
 
 # class LoanDisbursementView(APIView):
 #     permission_classes = (IsAuthenticated,)
-    
+
 #     def get_cost_breakdown(self, loan, amount):
 #         """Calculate detailed cost breakdown for block tariff"""
 #         if not loan.tariff:
 #             return None
-        
+
 #         blocks = loan.tariff.blocks.all().order_by('block_order')
 #         breakdown = []
 #         remaining_amount = amount
-        
+
 #         for block in blocks:
 #             if remaining_amount <= 0:
 #                 break
-                
+
 #             if block.max_units:
 #                 block_units_available = block.max_units - block.min_units + 1
 #                 block_cost = block_units_available * float(block.rate_per_unit)
-                
+
 #                 if remaining_amount >= block_cost:
 #                     units_from_block = block_units_available
 #                     cost_from_block = block_cost
@@ -510,7 +491,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                 units_from_block = remaining_amount / float(block.rate_per_unit)
 #                 cost_from_block = remaining_amount
 #                 remaining_amount = 0
-            
+
 #             breakdown.append({
 #                 'block_name': block.block_name,
 #                 'units': round(units_from_block, 2),
@@ -518,26 +499,26 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                 'cost': round(cost_from_block, 2),
 #                 'block_range': f"{block.min_units}-{block.max_units if block.max_units else 'inf'}"
 #             })
-        
+
 #         return breakdown
-    
+
 #     def post(self, request, loan_id):
 #         try:
 #             loan = LoanApplication.objects.get(id=loan_id, user=request.user)
-            
+
 #             if loan.status != 'APPROVED':
 #                 return Response({"error": "Loan is not approved for disbursement"}, status=status.HTTP_400_BAD_REQUEST)
-            
+
 #             if not loan.amount_approved or loan.amount_approved <= 0:
 #                 return Response({"error": "Loan amount not approved"}, status=status.HTTP_400_BAD_REQUEST)
-            
+
 #             with transaction.atomic():
 #                 # Get user's meter
 #                 try:
 #                     meter = Meter.objects.get(user=request.user)
 #                 except Meter.DoesNotExist:
 #                     return Response({"error": "Meter not found"}, status=status.HTTP_400_BAD_REQUEST)
-                
+
 #                 # Calculate units to disburse based on tariff block rates
 #                 if loan.tariff:
 #                     units_to_disburse = loan.calculate_units_from_amount()
@@ -579,7 +560,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                     source='LOAN',
 #                     loan_application=loan,
 #                 )
-                
+
 #                 # Update loan status to DISBURSED
 #                 loan.status = 'DISBURSED'
 #                 loan.save()
@@ -596,7 +577,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                         'token': meter_token.token
 #                     }
 #                 )
-            
+
 #             return Response({
 #                 "message": "Loan disbursed successfully. Use the generated token on your meter.",
 #                 "token": meter_token.token,
@@ -604,7 +585,7 @@ class LoanDetailView(generics.RetrieveAPIView):
 #                 "units_disbursed": round(units_to_disburse, 2),
 #                 "tariff_info": tariff_info
 #             })
-            
+
 #         except LoanApplication.DoesNotExist:
 #             return Response({"error": "Loan not found"}, status=status.HTTP_404_NOT_FOUND)
 #         except Meter.DoesNotExist:
@@ -612,18 +593,18 @@ class LoanDetailView(generics.RetrieveAPIView):
 
 class LoanNotificationView(APIView):
     permission_classes = (IsAuthenticated,)
-    
+
     def post(self, request, loan_id):
         try:
             loan = LoanApplication.objects.get(id=loan_id, user=request.user)
-            
+
             if loan.user_notified:
                 return Response({"message": "User already notified"}, status=status.HTTP_200_OK)
-            
+
             # Mark as notified
             loan.user_notified = True
             loan.save()
-            
+
             if loan.status == 'APPROVED' and loan.check_eligibility():
                 # For approved loans, we'll handle disbursement in a separate step
                 return Response({
@@ -638,52 +619,20 @@ class LoanNotificationView(APIView):
                     "approved": False,
                     "suggestion": "buy_units"
                 })
-                
+
         except LoanApplication.DoesNotExist:
             return Response({"error": "Loan not found"}, status=status.HTTP_404_NOT_FOUND)
-        
+
 class LoanStatsView(APIView):
     permission_classes = (IsAuthenticated,)
-    
+
     def get(self, request):
         try:
-            loans = LoanApplication.objects.filter(user=request.user)
+            from loan.services import get_user_loan_stats
 
-            pending_applications = loans.filter(status="PENDING").count()
-            active_loans = loans.filter(status__in=["APPROVED", "DISBURSED", "DEFAULTED"]).count()
-            approved_loans = loans.filter(status="APPROVED").count()
-            total_loans = loans.count()
-
-            total_borrowed = float(
-                loans.filter(status__in=["APPROVED", "DISBURSED", "COMPLETED", "DEFAULTED"])
-                .aggregate(total=Sum("amount_approved"))["total"] or 0
-            )
-
-            total_repayments = float(
-                LoanRepayment.objects.filter(loan__user=request.user)
-                .aggregate(total=Sum("amount_paid"))["total"] or 0
-            )
-
-            outstanding_balance = sum(
-                float(l.outstanding_balance)
-                for l in loans.exclude(status__in=["COMPLETED", "REJECTED"])
-            )
-
-            credit_signal = get_or_create_dummy_credit_signal(request.user)
-            credit_score = calculate_weighted_credit_score(credit_signal)
-
-            stats = {
-                "active_loans": active_loans,
-                "pending_applications": pending_applications,
-                "approved_loans": approved_loans,
-                "total_loans": total_loans,
-                "total_borrowed": total_borrowed,
-                "total_repayments": total_repayments,
-                "outstanding_balance": outstanding_balance,
-                "credit_score": credit_score,
-                "has_blocking_loan": active_loans > 0 or pending_applications > 0 or outstanding_balance > 0,
-            }
-
+            stats = get_user_loan_stats(request.user)
+            for field in ("total_borrowed", "total_repayments", "outstanding_balance"):
+                stats[field] = str(stats[field])
             return Response(stats, status=200)
 
         except Exception as e:
@@ -719,16 +668,16 @@ class LoanDisbursementView(APIView):
         except Exception as e:
             logger.error(f"Repayment error: {str(e)}")
             return Response(
-                {"error": f"Failed to process repayment: {str(e)}"}, 
+                {"error": f"Failed to process repayment: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     def get_repayment_breakdown(self, loan, amount):
         """Calculate breakdown for repayment amount"""
         if not loan.tariff:
             return None
         return loan.calculate_cost_for_units(loan.calculate_units_from_amount(amount))
-    
+
     def check_payment_timeliness(self, loan):
         """Check if payment is on time"""
         if not loan.due_date:
@@ -738,24 +687,24 @@ class LoanDisbursementView(APIView):
 
 class LoanDisbursementView(APIView):
     permission_classes = (IsAuthenticated,)
-    
+
     def get_cost_breakdown(self, loan, amount):
         """Calculate detailed cost breakdown for block tariff"""
         if not loan.tariff:
             return None
-        
+
         blocks = loan.tariff.blocks.all().order_by('block_order')
         breakdown = []
         remaining_amount = amount
-        
+
         for block in blocks:
             if remaining_amount <= 0:
                 break
-                
+
             if block.max_units:
                 block_units_available = block.max_units - block.min_units + 1
                 block_cost = block_units_available * float(block.rate_per_unit)
-                
+
                 if remaining_amount >= block_cost:
                     units_from_block = block_units_available
                     cost_from_block = block_cost
@@ -768,7 +717,7 @@ class LoanDisbursementView(APIView):
                 units_from_block = remaining_amount / float(block.rate_per_unit)
                 cost_from_block = remaining_amount
                 remaining_amount = 0
-            
+
             breakdown.append({
                 'block_name': block.block_name,
                 'units': round(units_from_block, 2),
@@ -776,26 +725,48 @@ class LoanDisbursementView(APIView):
                 'cost': round(cost_from_block, 2),
                 'block_range': f"{block.min_units}-{block.max_units if block.max_units else 'inf'}"
             })
-        
+
         return breakdown
-    
+
     def post(self, request, loan_id):
+        # Auto, staff and consumer paths share one source-bound allocation.
+        from loan.services import LoanOperationError, disburse_loan
+        try:
+            result = disburse_loan(
+                request.user, loan_id, channel="WEB",
+                meter_no=str(request.data.get("meter_no") or "").strip() or None,
+            )
+        except LoanOperationError as exc:
+            return Response({"error": exc.message}, status=status.HTTP_409_CONFLICT)
+        return Response({
+            "message": "Authorized loan energy allocated to your unit balance; meter delivery requires acknowledgement.",
+            "units_disbursed": result["units_disbursed"],
+            "allocation_id": result["allocation_id"],
+            "meter_no": result["meter_no"],
+            "delivery_status": "NOT_REQUESTED",
+        })
+
         try:
             loan = LoanApplication.objects.get(id=loan_id, user=request.user)
-            
+
             if loan.status != 'APPROVED':
                 return Response({"error": "Loan is not approved for disbursement"}, status=status.HTTP_400_BAD_REQUEST)
-            
+
             if not loan.amount_approved or loan.amount_approved <= 0:
                 return Response({"error": "Loan amount not approved"}, status=status.HTTP_400_BAD_REQUEST)
-            
+
             with transaction.atomic():
+                # Recheck after locking; concurrent approved-loan requests must not
+                # issue two allocations before the status changes to DISBURSED.
+                loan = LoanApplication.objects.select_for_update().get(id=loan_id, user=request.user)
+                if loan.status != 'APPROVED':
+                    return Response({"error": "Loan is already disbursed or no longer approved"}, status=status.HTTP_409_CONFLICT)
                 # Get user's meter
                 try:
                     meter = Meter.objects.get(user=request.user)
                 except Meter.DoesNotExist:
                     return Response({"error": "Meter not found"}, status=status.HTTP_400_BAD_REQUEST)
-                
+
                 # Calculate units to disburse based on tariff block rates
                 if loan.tariff:
                     units_to_disburse = loan.calculate_units_from_amount()
@@ -813,7 +784,7 @@ class LoanDisbursementView(APIView):
                         'rate_per_kwh': 500,
                         'tariff_name': 'Default Rate'
                     }
-                
+
                 # ADD UNITS TO UNIT BALANCE (for sharing)
                 unit_balance, _ = UnitBalance.objects.get_or_create(user=request.user)
                 unit_balance.add_units(
@@ -821,35 +792,19 @@ class LoanDisbursementView(APIView):
                     description=f"Loan {loan.loan_id} disbursement",
                     reference=loan.loan_id
                 )
-                
-                # Create numeric token for meter loading
-                token_value = generate_numeric_token(10)  # Use numeric token
-                while MeterToken.objects.filter(token=token_value).exists():
-                    token_value = generate_numeric_token(10)
-                
-                meter_token = MeterToken.objects.create(
-                    user=request.user,
-                    token=token_value,
-                    units=units_to_disburse,
-                    meter=meter,
-                    source='LOAN',
-                    loan_application=loan,
-                    is_used=False  # Token not used yet
-                )
-                
+
                 # Create disbursement record
                 disbursement = LoanDisbursement.objects.create(
                     loan_application=loan,
                     disbursed_amount=loan.amount_approved,
                     units_disbursed=units_to_disburse,
-                    token=token_value,
                     meter=meter
                 )
-                
+
                 # Update loan status to DISBURSED
                 loan.status = 'DISBURSED'
                 loan.save()
-                
+
                 # Log transaction
                 TransactionLog.objects.create(
                     user=request.user,
@@ -860,27 +815,24 @@ class LoanDisbursementView(APIView):
                     reference_id=loan.loan_id,
                     details={
                         'units_disbursed': float(units_to_disburse),
-                        'token': meter_token.token,
                         'unit_balance_after': float(unit_balance.balance)
                     }
                 )
-                
+
                 logger.info(
                     f"Loan {loan.loan_id} disbursed: "
                     f"Added {units_to_disburse} units to {request.user.email}'s UnitBalance. "
-                    f"New unit balance: {unit_balance.balance}. "
-                    f"Numeric token: {token_value}"
+                    f"New unit balance: {unit_balance.balance}."
                 )
-                
+
                 return Response({
                     "message": "Loan disbursed successfully! Units added to your available balance.",
-                    "token": meter_token.token,  # Numeric token
                     "units_disbursed": round(units_to_disburse, 2),
-                    "units_available_to_share": float(unit_balance.balance),
+                    "unit_balance": float(unit_balance.balance),
                     "tariff_info": tariff_info,
-                    "note": "Use the token above to load units to your meter, or share units with others."
+                    "note": "The allocation is recorded. STS loading awaits a validated device protocol."
                 })
-                
+
             from loan.services import LoanOperationError, disburse_loan
 
             result = disburse_loan(request.user, loan_id, channel="WEB")
@@ -909,33 +861,37 @@ class LoanDisbursementView(APIView):
 
 class LoanRepaymentView(APIView):
     permission_classes = (IsAuthenticated,)
-    
+
     def post(self, request, loan_id):
+        return Response({
+            "code": "UNVERIFIED_REPAYMENT_DISABLED",
+            "message": "Use verified Mobile Money repayment. Wallet spending is unavailable until balance provenance is reconciled.",
+        }, status=status.HTTP_409_CONFLICT)
         try:
             loan = LoanApplication.objects.get(id=loan_id, user=request.user)
-            
+
             if loan.status != 'DISBURSED':
                 return Response(
-                    {"error": "Loan is not disbursed or already completed"}, 
+                    {"error": "Loan is not disbursed or already completed"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             amount = float(request.data.get('amount', 0))
-            
+
             if amount <= 0:
                 return Response(
-                    {"error": "Invalid amount"}, 
+                    {"error": "Invalid amount"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             current_balance = loan.outstanding_balance
-            
+
             if amount > current_balance:
                 return Response(
-                    {"error": f"Amount exceeds outstanding balance of {current_balance} UGX"}, 
+                    {"error": f"Amount exceeds outstanding balance of {current_balance} UGX"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             payment_source = str(request.data.get('payment_source', 'PHONE')).upper()
             if payment_source not in {'WALLET', 'PHONE', 'MOBILE_MONEY'}:
                 return Response(
@@ -948,11 +904,11 @@ class LoanRepaymentView(APIView):
             days_late = 0
             if not is_on_time and loan.due_date:
                 days_late = (timezone.now() - loan.due_date).days
-            
+
             tariff_info = {
                 'tariff_code': loan.tariff.tariff_code if loan.tariff else 'DEFAULT',
             }
-            
+
             with transaction.atomic():
                 payment_ref = generate_random_string(12)
 
@@ -969,7 +925,7 @@ class LoanRepaymentView(APIView):
                         description=f"Loan repayment for {loan.loan_id}",
                         transaction_ref=payment_ref,
                     )
-                
+
                 # Create repayment record
                 repayment = LoanRepayment.objects.create(
                     loan=loan,
@@ -980,7 +936,7 @@ class LoanRepaymentView(APIView):
                     payment_method='MOBILE_MONEY' if payment_source != 'WALLET' else 'CASH',
                     payment_status='SUCCESS'
                 )
-                
+
                 # Update credit score for repayment
                 CreditScoreService.update_credit_score(
                     user=request.user,
@@ -993,7 +949,7 @@ class LoanRepaymentView(APIView):
                         'payment_source': payment_source
                     }
                 )
-                
+
                 # Create Transaction Log
                 TransactionLog.objects.create(
                     user=request.user,
@@ -1012,11 +968,11 @@ class LoanRepaymentView(APIView):
 
                 loan.refresh_from_db()
                 new_balance = loan.outstanding_balance
-                
+
                 if new_balance <= 0:
                     loan.status = 'COMPLETED'
                     loan.save()
-                    
+
                     # Bonus credit score for completing loan
                     CreditScoreService.update_credit_score(
                         user=request.user,
@@ -1024,7 +980,7 @@ class LoanRepaymentView(APIView):
                         reference_id=loan.loan_id,
                         extra_data={'loan_id': loan.loan_id}
                     )
-                    
+
                     TransactionLog.objects.create(
                         user=request.user,
                         transaction_type=TransactionType.LOAN_COMPLETION,
@@ -1033,16 +989,16 @@ class LoanRepaymentView(APIView):
                         reference_id=loan.loan_id,
                         details={'message': 'Loan fully repaid'}
                     )
-                    
+
                     message = "Loan fully repaid! Thank you."
                 else:
                     message = "Payment successful"
-            
+
             # Get updated credit score
             new_credit_score, _, _ = CreditScoreService.update_credit_score(
                 request.user, 'NO_CHANGE'
             )
-            
+
             return Response({
                 "message": message,
                 "payment_reference": payment_ref,
@@ -1053,19 +1009,19 @@ class LoanRepaymentView(APIView):
                 "total_due": loan.total_amount_due,
                 "credit_score_updated": True
             })
-            
+
         except LoanApplication.DoesNotExist:
             return Response(
-                {"error": "Loan not found"}, 
+                {"error": "Loan not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
             logger.error(f"Repayment error: {str(e)}")
             return Response(
-                {"error": f"Failed to process repayment: {str(e)}"}, 
+                {"error": f"Failed to process repayment: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     def check_payment_timeliness(self, loan):
         if not loan.due_date:
             return True
@@ -1074,20 +1030,20 @@ class LoanRepaymentView(APIView):
 
 class CreditScoreView(APIView):
     permission_classes = (IsAuthenticated,)
-    
+
     def get(self, request):
-        try:            
+        try:
             user = request.user
-            
+
             # Get or create credit signal (base score source)
             credit_signal = get_or_create_dummy_credit_signal(user)
-            
+
             # Calculate base score from third-party factors (0-100)
             base_score = calculate_weighted_credit_score(credit_signal)
-            
+
             # Get or create behavioral factors
             factors, _ = CreditScoreFactors.objects.get_or_create(user=user)
-            
+
             # Calculate behavioral bonus (max 40 points)
             behavioral_bonus = min(40, (
                 (factors.on_time_payments * 2) +
@@ -1096,10 +1052,10 @@ class CreditScoreView(APIView):
                 (factors.sharing_count * 1) +
                 (factors.loans_completed * 5)
             ))
-            
+
             # Overall score (base + bonus, capped at 100)
             overall_score = min(100, base_score + behavioral_bonus)
-            
+
             # Calculate component scores
             components = {
                 'payment_history': base_score,
@@ -1108,12 +1064,12 @@ class CreditScoreView(APIView):
                 'sharing_behavior': min(100, factors.sharing_count * 15),
                 'loan_history': min(100, (factors.loans_completed * 20) if factors.loans_taken > 0 else 50),
             }
-            
+
             # Get recent history
             history = CreditScoreHistory.objects.filter(
                 user=user
             ).order_by('-created_at')[:10]
-            
+
             history_data = [{
                 'previous_score': h.previous_score,
                 'new_score': h.new_score,
@@ -1122,10 +1078,10 @@ class CreditScoreView(APIView):
                 'event_type': h.event_type,
                 'created_at': h.created_at.isoformat()
             } for h in history]
-            
+
             # Log for debugging
             logger.info(f"Credit score for {user.email}: base={base_score}, bonus={behavioral_bonus}, overall={overall_score}")
-            
+
             return Response({
                 'overall_score': overall_score,
                 'base_score': base_score,
@@ -1138,7 +1094,7 @@ class CreditScoreView(APIView):
                     'financial_capacity': credit_signal.financial_capacity,
                 }
             })
-            
+
         # try:
         #     from loan.services import get_user_loan_stats
 
@@ -1159,9 +1115,9 @@ class CreditScoreView(APIView):
                 },
                 'history': [],
                 'error': str(e)
-            }, status=status.HTTP_200_OK) 
+            }, status=status.HTTP_200_OK)
 
-            
+
 
 class RepayableLoanView(APIView):
     permission_classes = (IsAuthenticated,)
@@ -1180,6 +1136,10 @@ class ActiveLoanRepaymentView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def post(self, request):
+        return Response({
+            "code": "UNVERIFIED_REPAYMENT_DISABLED",
+            "message": "Use verified Mobile Money repayment for your active loan.",
+        }, status=status.HTTP_409_CONFLICT)
         try:
             from loan.services import LoanOperationError, repay_loan
 
@@ -1218,6 +1178,7 @@ class LoanLookupByPhoneView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @requires_feature("third_party_repayment")
     def get(self, request):
         from accounts.models import User as UserModel
         phone = request.query_params.get("phone", "").strip()
@@ -1264,6 +1225,7 @@ class PayForSomeoneView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
+    @requires_feature("third_party_repayment")
     def post(self, request):
         from accounts.models import User as UserModel
         from loan.services import repay_loan, LoanOperationError

@@ -125,13 +125,10 @@ def handle_post_email_verification(user):
         logger.info(f"[ACCOUNT_ACTIVATION] Created wallet {wallet.id}")
 
 
-ADMIN_PROVISIONED_DEFAULT_PASSWORD = "1234"
-
-
 def create_admin_provisioned_user(*, owner_name, email, phone_number):
     """
     Create a client account from the admin meter registration flow.
-    User logs in with email + default password and must change password on first login.
+    The owner sets a password through the existing email reset flow.
     """
     email = (email or "").strip().lower()
     phone_number = (phone_number or "").strip()
@@ -159,7 +156,7 @@ def create_admin_provisioned_user(*, owner_name, email, phone_number):
         account_is_active=True,
         must_change_password=True,
     )
-    user.set_password(ADMIN_PROVISIONED_DEFAULT_PASSWORD)
+    user.set_unusable_password()
     user.save()
 
     Profile.objects.filter(user=user).update(email_verified=True)

@@ -18,6 +18,8 @@ To integrate a real CRB:
        CRB_PROVIDER = 'loan.crb.MetropolCRBProvider'
   4. Wire it into the credit-scoring flow in loan/api/views.py where UserCreditSignal is used.
 """
+from backend.features import feature_enabled, requires_feature
+
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -74,6 +76,7 @@ class MetropolCRBProvider(CreditBureauProvider):
     Ask the developer for: API endpoint, client ID, secret, certificate.
     """
 
+    @requires_feature("external_crb")
     def fetch_report(self, national_id: str, user=None) -> Optional[CreditReport]:
         raise NotImplementedError("MetropolCRBProvider is a stub. Implement with Metropol API credentials.")
 
@@ -84,6 +87,7 @@ class GnuGridCRBProvider(CreditBureauProvider):
     Ask the developer for: Consumer Portal API credentials.
     """
 
+    @requires_feature("external_crb")
     def fetch_report(self, national_id: str, user=None) -> Optional[CreditReport]:
         raise NotImplementedError("GnuGridCRBProvider is a stub. Implement with gnuGrid API credentials.")
 
@@ -92,6 +96,9 @@ def get_crb_provider() -> CreditBureauProvider:
     """Return the active CRB provider based on settings.CRB_PROVIDER (default: NoOp)."""
     from django.conf import settings
     import importlib
+
+    if not feature_enabled("external_crb"):
+        return NoOpCreditBureauProvider()
 
     provider_path = getattr(settings, 'CRB_PROVIDER', 'loan.crb.NoOpCreditBureauProvider')
     module_path, class_name = provider_path.rsplit('.', 1)

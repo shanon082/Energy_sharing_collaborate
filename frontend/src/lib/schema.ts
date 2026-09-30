@@ -3,6 +3,7 @@ import validator from "validator";
 import dayjs from "dayjs";
 import { get, patch } from "./fetch";
 import { getApiErrorMessage } from "./api-response";
+import type { ComponentType } from "react";
 
 export const createAccountSchema = z
   .object({
@@ -214,11 +215,11 @@ export const TransferSchema = z.object({
 });
 
 export const BuyUnitSchema = z.object({
-  phone_number: z.string().optional().default(""),
-  amount: z.coerce
-    .number()
-    .min(1, { message: "Minimum deposit amount is Ugx. 5000" }),
-  payment_source: z.enum(["WALLET", "PHONE"]).default("PHONE"),
+  meter_no: z.string().min(1, "Choose the meter for this electricity purchase"),
+  phone_number: z.string(),
+  amount: z.number().int("Enter a whole-UGX amount")
+    .min(1, { message: "Enter a positive UGX amount" }),
+  payment_source: z.enum(["WALLET", "PHONE"]),
 }).superRefine((data, ctx) => {
   if (data.payment_source === "PHONE" && !validator.isMobilePhone(data.phone_number || "")) {
     ctx.addIssue({
@@ -282,7 +283,7 @@ export enum TransactionProvider {
 export type DashboardNavigationType = {
   name: string;
   href: string;
-  icon?: any;
+  icon?: ComponentType<{ className?: string }>;
   current: boolean;
 };
 
@@ -573,16 +574,26 @@ export const getUserProfile = async (): Promise<UserProfile> => {
     }>("meter/my-meter/");
 
     // Fetch loans
-    const loansResponse = await get<any>("loans/my-loans/");
+    const loansResponse = await get<LoanApplication[] | { results?: LoanApplication[]; data?: LoanApplication[] }>("loans/my-loans/");
 
     // Fetch loan stats
-    const loanStatsResponse = await get<any>("loans/stats/");
-    
-    const loansData = Array.isArray(loansResponse.data)
-      ? loansResponse.data
-      : loansResponse.data?.results || loansResponse.data?.data || [];
+    type LoanStatsPayload = {
+      active_loans?: number;
+      total_loans?: number;
+      total_borrowed?: string | number;
+      total_repayments?: string | number;
+      outstanding_balance?: string | number;
+      credit_score?: number | null;
+    };
+    const loanStatsResponse = await get<LoanStatsPayload | { data: LoanStatsPayload }>("loans/stats/");
 
-    const statsData = loanStatsResponse.data?.data || loanStatsResponse.data || undefined;
+    const rawLoans = loansResponse.data;
+    const loansData = Array.isArray(rawLoans)
+      ? rawLoans
+      : rawLoans?.results || rawLoans?.data || [];
+
+    const rawStats = loanStatsResponse.data;
+    const statsData = rawStats && "data" in rawStats ? rawStats.data : rawStats;
     
     const loanStats = statsData
       ? {

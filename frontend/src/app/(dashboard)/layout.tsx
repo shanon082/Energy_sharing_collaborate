@@ -5,6 +5,8 @@ import { isStaffUser } from "@/lib/staff";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { SelectedMeterProvider } from "@/contexts/selected-meter-context";
+import { FeaturesProvider } from "@/contexts/features-context";
+import { getFeatureAvailability } from "@/lib/features-server";
 
 export default async function UserProtectedLayout({
   children,
@@ -35,5 +37,6 @@ export default async function UserProtectedLayout({
     redirect("/auth/verify-email");
   }
 
-  return <SelectedMeterProvider>{children}</SelectedMeterProvider>;
+  const features = await getFeatureAvailability();
+  return <FeaturesProvider features={features}><SelectedMeterProvider>{children}</SelectedMeterProvider></FeaturesProvider>;
 }

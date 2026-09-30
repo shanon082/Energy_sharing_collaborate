@@ -66,7 +66,7 @@ All buy/estimate flows use `utils/billing.py` with the ERA domestic tariff (`DOM
 
 ### Monthly tracking
 
-`get_monthly_units_consumed(user)` sums completed `UnitTransaction` self-purchases plus `meter.models.Transaction` purchases (`amount_kwh`) for the current month. This drives:
+`get_monthly_units_consumed(user)` counts new verified purchases by their unique `EnergyAllocation.purchase_intent`, then historical completed meter purchase rows once per reference (or row when no reference exists). Self-credit `UnitTransaction` rows are excluded because they can duplicate purchases or represent loans. See `BILLING_ACCOUNTING.md` for reconciliation limits. This drives:
 
 1. Whether service charge applies on the next purchase.
 2. Which tariff tier the next kWh are priced at.

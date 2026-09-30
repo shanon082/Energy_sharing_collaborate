@@ -114,6 +114,10 @@ class BuyUnitsView(GenericAPIView):
     serializer_class = BuyUnitSerializer
 
     def post(self, request, *args, **kwargs):
+        return Response({
+            "code": "LEGACY_PURCHASE_DISABLED",
+            "message": "This purchase route cannot verify payment. Use the verified meter purchase flow.",
+        }, status=status.HTTP_409_CONFLICT)
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 

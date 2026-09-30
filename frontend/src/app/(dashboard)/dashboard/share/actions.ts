@@ -3,6 +3,8 @@
 import { post } from "@/lib/fetch";
 
 export type ApplyWalletUnitsResult = {
+  status?: "QUEUED";
+  deliveries?: { id: number; command_id: string; amount_kwh: string; status: string }[];
   success?: boolean;
   message?: string;
   error?: string;
@@ -28,7 +30,7 @@ export type AmiLoadSuccessResult = {
 
 export async function applyWalletUnits(data: {
   meter_no: string;
-  amount: number;
+  amount: string | number;
 }): Promise<{ data?: ApplyWalletUnitsResult; error?: unknown; status: number }> {
   return post<ApplyWalletUnitsResult>("meter/apply-wallet-units/", data);
 }

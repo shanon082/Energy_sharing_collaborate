@@ -2,8 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import TokenList from "./tokenslist";
-import GenerateTokenCard from "./generate-token-card";
-import AmiStatusCard from "../../_components/ami-status-card";
+import EnergyStatusCard from "@/components/dashboard/energy-status-card";
 import MeterSelector from "../../_components/meter-selector";
 import { useSelectedMeter } from "@/contexts/selected-meter-context";
 import { get } from "@/lib/fetch-client";
@@ -15,41 +14,7 @@ interface TokensPageClientProps {
 
 export default function TokensPageClient({ initialTokens }: TokensPageClientProps) {
   const { selectedMeter, meters, isLoading } = useSelectedMeter();
-  const [unitBalance, setUnitBalance] = useState(0);
   const [tokens, setTokens] = useState(initialTokens);
-
-  useEffect(() => {
-    async function loadWallet() {
-      try {
-        const res = await get<any>("wallet/balance");
-        if (!res.error && res.data?.success) {
-          // Get unit_balance.balance for units (kWh)
-          const bal = parseFloat(
-            res.data?.unit_balance?.balance ?? res.data?.unit_balance ?? "0"
-          );
-          setUnitBalance(Number.isFinite(bal) ? bal : 0);
-        }
-      } catch {
-        setUnitBalance(0);
-      }
-    }
-    loadWallet();
-  }, [selectedMeter?.meter_number]);
-
-  async function refreshWallet() {
-    try {
-      const res = await get<any>("wallet/balance");
-      if (!res.error && res.data?.success) {
-        // Get unit_balance.balance for units (kWh)
-        const bal = parseFloat(
-          res.data?.unit_balance?.balance ?? res.data?.unit_balance ?? "0"
-        );
-        setUnitBalance(Number.isFinite(bal) ? bal : 0);
-      }
-    } catch {
-      /* keep current balance */
-    }
-  }
 
   useEffect(() => {
     async function loadTokens() {
@@ -79,8 +44,8 @@ export default function TokensPageClient({ initialTokens }: TokensPageClientProp
         <h1 className="text-lg font-semibold md:text-2xl">Tokens</h1>
         <p className="text-sm text-muted-foreground mt-1">
           {selectedMeter?.architecture === "AMI"
-            ? "AMI meters sync balance over the network — no tokens required"
-            : "Generate and manage STS meter tokens"}
+            ? "Review simulated delivery and historical token records"
+            : "Historical STS tokens remain visible; new keypad issuance is paused"}
         </p>
       </div>
 
@@ -88,26 +53,16 @@ export default function TokensPageClient({ initialTokens }: TokensPageClientProp
         <div className="space-y-4">
           <MeterSelector />
           {selectedMeter.architecture === "STS" ? (
-            <GenerateTokenCard
-              architecture="STS"
-              unitBalance={unitBalance}
-              meterNo={selectedMeter.meter_number}
-              stsMeters={meters.filter((m) => m.architecture === "STS")}
-              onTokenGenerated={refreshWallet}
-            />
+            <p className="rounded-md border p-4 text-sm">New STS tokens require a validated device protocol. Historical tokens remain listed below.</p>
           ) : (
-            <AmiStatusCard
-              meter={selectedMeter}
-              unitBalance={unitBalance}
-              onApplied={refreshWallet}
-            />
+            <EnergyStatusCard meterNo={selectedMeter.meter_number} />
           )}
         </div>
       )}
 
       {!hasMeter && !isLoading && (
         <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
-          Register a meter first to generate tokens.
+          Register a meter to view its delivery status and historical tokens.
         </div>
       )}
 

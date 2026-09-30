@@ -1,6 +1,9 @@
 from django.urls import include, path
 
+from backend.features import FeatureAvailabilityView
+
 urlpatterns = [
+    path("features/", FeatureAvailabilityView.as_view(), name="features"),
     path(
         "auth/",
         include(("accounts.api.urls", "auth"), namespace="auth"),

@@ -118,6 +118,8 @@ class MoMoPaymentView(APIView):
 
     def _complete_sandbox_payment(self, loan_id, amount, external_id, repayment_id):
         """Background task to complete sandbox payment after 5 seconds"""
+        # Legacy process-local simulation is not evidence of received funds.
+        return
         import time
         time.sleep(5)
 

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { API_URL } from "@/common/constants/api";
 import { AUTHENTICATION_COOKIE } from "@/common/constants/auth-cookie";
 import { refreshAuthSession, ensureValidSession } from "@/lib/refresh-session";
+import { disabledApiFeature } from "@/lib/features-server";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -36,6 +37,8 @@ async function forwardToBackend(
 
 async function proxyToBackend(req: NextRequest, context: RouteContext) {
   const { path } = await context.params;
+  const disabled = await disabledApiFeature(path.join("/"));
+  if (disabled) return NextResponse.json(disabled, { status: 403 });
   const cookieStore = await cookies();
   let token = cookieStore.get(AUTHENTICATION_COOKIE)?.value;
   await ensureValidSession();

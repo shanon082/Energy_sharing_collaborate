@@ -15,23 +15,31 @@ import {
   ClockIcon,
   DollarSignIcon,
   AlertCircleIcon,
-  ZapIcon,
   TrendingUpIcon,
 } from "lucide-react";
 import { get } from "@/lib/fetch";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useFeatures } from "@/contexts/features-context";
 
 interface LoanStats {
   active_loans: number;
   pending_applications: number;
   approved_loans: number;
-  total_repayments: number;
-  total_borrowed: number;
-  outstanding_balance: number;
+  total_repayments: number | string;
+  total_borrowed: number | string;
+  outstanding_balance: number | string;
   total_loans: number;
 }
 
+interface WalletBalanceResponse {
+  success: boolean;
+  wallet?: { balance?: string | number | null };
+  unit_balance?: { balance?: string | number | null };
+  total_meter_units?: string | number | null;
+}
+
 export default function LoanOverview() {
+  const { peer_sharing } = useFeatures();
   const [stats, setStats] = useState<LoanStats>({
     active_loans: 0,
     pending_applications: 0,
@@ -45,12 +53,11 @@ export default function LoanOverview() {
   const [moneyBalance, setMoneyBalance] = useState<number>(0);  // UGX money
   const [unitBalance, setUnitBalance] = useState<number>(0);   // Energy units available to share
   const [meterUnits, setMeterUnits] = useState<number>(0);     // Units already on meters
-  const [refreshKey, setRefreshKey] = useState(0); // To refresh balances after token load
 
   // Fetch all balances
-  const fetchBalances = async () => {
+  const fetchBalances = useCallback(async () => {
     try {
-      const response = await get<any>("wallet/balance/");
+      const response = await get<WalletBalanceResponse>("wallet/balance/");
       
       if (!response.error && response.data?.success) {
         // Money in wallet (UGX) - for deposits/withdrawals/purchases
@@ -67,41 +74,23 @@ export default function LoanOverview() {
     } catch (error) {
       console.error("Error fetching balances:", error);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchBalances();
-  }, [refreshKey]); // Re-fetch when refreshKey changes
+    void fetchBalances();
+  }, [fetchBalances]);
 
   useEffect(() => {
     async function fetchLoanStats() {
       try {
-        const response = await get<any>("loans/stats/");
-        const walletResponse = await get<any>("wallet/balance/");
+        const response = await get<LoanStats>("loans/stats/");
 
         if (response.error) {
           console.warn("Failed to fetch loan stats:", response.error);
           return;
         }
 
-        setStats(response.data);
-
-        // FIX: Don't overwrite meterUnits here if we already have the correct value
-        // Only set it if we don't have it yet or if the walletResponse has the correct data
-        if (!walletResponse.error && walletResponse.data?.success) {
-          // Only set wallet balance if not already set
-          if (moneyBalance === 0) {
-            setMoneyBalance(Number(walletResponse.data.wallet?.balance || 0));
-          }
-          // FIX: Use unit_balance.balance for unitBalance
-          if (unitBalance === 0) {
-            setUnitBalance(Number(walletResponse.data.unit_balance?.balance || 0));
-          }
-          // FIX: Use total_meter_units for meterUnits
-          if (meterUnits === 0) {
-            setMeterUnits(Number(walletResponse.data.total_meter_units || 0));
-          }
-        }
+        if (response.data) setStats(response.data);
       } catch (error) {
         console.error("Error fetching loan stats:", error);
       } finally {
@@ -109,23 +98,19 @@ export default function LoanOverview() {
       }
     }
 
-    fetchLoanStats();
-  }, [refreshKey]);
+    void fetchLoanStats();
+  }, []);
 
   // Format currency values
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number | string) => {
     return new Intl.NumberFormat("en-UG", {
       style: "currency",
       currency: "UGX",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(amount));
   };
 
-  // Handle successful token load
-  const handleTokenLoadSuccess = () => {
-    setRefreshKey(prev => prev + 1); // Refresh all data
-  };
 
   if (loading) {
     return (
@@ -178,7 +163,7 @@ export default function LoanOverview() {
           </CardHeader>
           <CardContent>
             <div className="text-xs text-muted-foreground">
-              Money available for purchasing units or loan repayments
+              Legacy wallet ledger; spending is paused until provenance is reconciled.
             </div>
           </CardContent>
         </Card>
@@ -187,7 +172,7 @@ export default function LoanOverview() {
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription>Available Units to Share</CardDescription>
+              <CardDescription>Historical unit balance</CardDescription>
               <TrendingUpIcon className="h-4 w-4 text-blue-500" />
             </div>
             <CardTitle className="text-4xl">
@@ -196,7 +181,7 @@ export default function LoanOverview() {
           </CardHeader>
           <CardContent>
             <div className="text-xs text-muted-foreground">
-              Units you can share with friends and family
+              Historical aggregate; delivery eligibility is shown in Electricity allocation below.
             </div>
           </CardContent>
         </Card>
@@ -205,7 +190,7 @@ export default function LoanOverview() {
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardDescription>Meter Units</CardDescription>
+              <CardDescription>Reported meter snapshot</CardDescription>
               <AlertCircleIcon className="h-4 w-4 text-yellow-500" />
             </div>
             <CardTitle className="text-4xl">
@@ -214,7 +199,7 @@ export default function LoanOverview() {
           </CardHeader>
           <CardContent>
             <div className="text-xs text-muted-foreground">
-              Units already loaded on your meter (ready to use)
+              Legacy meter snapshot; confirmed new delivery is shown below.
             </div>
           </CardContent>
         </Card>
@@ -322,12 +307,12 @@ export default function LoanOverview() {
               View My Loans
             </Link>
           </Button>
-          <Button asChild variant="outline" className="flex-1">
-            <Link href="/dashboard/share-units">
+          {peer_sharing && <Button asChild variant="outline" className="flex-1">
+            <Link href="/dashboard/share">
               <TrendingUpIcon className="h-4 w-4 mr-2" />
               Share Units
             </Link>
-          </Button>
+          </Button>}
         </CardContent>
       </Card>
     </div>

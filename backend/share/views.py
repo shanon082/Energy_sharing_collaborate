@@ -1,3 +1,4 @@
+from backend.features import requires_feature
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -173,6 +174,7 @@ class ShareReceiverPreviewView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @requires_feature("peer_sharing")
     def get(self, request):
         meter_number = normalize_meter_no(request.query_params.get("meter_number") or "")
         if not meter_number:
@@ -238,6 +240,7 @@ class ShareReceiverPreviewView(APIView):
 class ShareUnitsView(APIView):
     permission_classes = [IsAuthenticated]
     
+    @requires_feature("peer_sharing")
     def post(self, request):
         verification_code = request.data.get('verification_code')
         
@@ -491,6 +494,7 @@ class ShareUnitsView(APIView):
 class TransferUnitsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @requires_feature("meter_transfers")
     def post(self, request):
         verification_code = request.data.get("verification_code")
 

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { API_URL } from "@/common/constants/api";
 import { requireUssdAuthHeaders } from "@/lib/ussd-api-auth";
+import { disabledFeature } from "@/lib/features-server";
 
 export async function GET(_request: NextRequest) {
+  const disabled = await disabledFeature("ussd");
+  if (disabled) return NextResponse.json(disabled, { status: 403 });
+  const sharingDisabled = await disabledFeature("peer_sharing");
+  if (sharingDisabled) return NextResponse.json(sharingDisabled, { status: 403 });
   const authHeaders = await requireUssdAuthHeaders();
   if (!authHeaders) {
     return NextResponse.json(
@@ -19,6 +24,9 @@ export async function GET(_request: NextRequest) {
     });
 
     const data = await backendResponse.json();
+    if (backendResponse.status === 403 && data?.code === "FEATURE_DISABLED") {
+      return NextResponse.json(data, { status: 403 });
+    }
     return NextResponse.json(
       {
         ok: backendResponse.ok,

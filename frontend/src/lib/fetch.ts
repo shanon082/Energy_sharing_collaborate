@@ -4,6 +4,7 @@ import { API_URL } from "@/common/constants/api";
 import { cookies } from "next/headers";
 import { AUTHENTICATION_COOKIE } from "@/common/constants/auth-cookie";
 import { refreshAuthSession, ensureValidSession } from "@/lib/refresh-session";
+import { disabledApiFeature } from "@/lib/features-server";
 import { ApiResponse, toApiError } from "./api-response";
 
 const getHeaders = async () => {
@@ -77,6 +78,8 @@ const request = async <T>(
   options: RequestInit,
   allowRefresh = true
 ): Promise<ApiResponse<T>> => {
+  const disabled = await disabledApiFeature(path);
+  if (disabled) return { error: disabled, status: 403 };
   try {
     let res = await fetch(`${API_URL}/${path}`, options);
     let parsedBody = await parseResponseBody(res);

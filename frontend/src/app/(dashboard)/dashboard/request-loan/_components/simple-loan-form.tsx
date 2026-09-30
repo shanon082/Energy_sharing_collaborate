@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { Loader2, AlertTriangle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import { FormError } from "@/components/common/form-error";
 import { get } from "@/lib/fetch-client";
 import { submitLoanApplication } from "../action";
 import { getApiErrorMessage } from "@/lib/api-response";
+import { useSelectedMeter } from "@/contexts/selected-meter-context";
 
 const STEPS = [
   { label: "Amount" },
@@ -51,26 +52,39 @@ interface LoanEligibility {
 }
 
 function formatUGX(n: number) {
-  return `UGX ${Math.round(n).toLocaleString()}`;
+  return `UGX ${n.toLocaleString("en-UG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// Statutory compliant rates (Uganda Tier 4 MFI Act: ≤2.8%/month = ≤33.6%/year)
-const PROCESSING_FEE_PCT = 0.02;   // 2% of principal
+interface LoanStatsResponse {
+  has_blocking_loan?: boolean;
+  active_loans?: number;
+  pending_applications?: number;
+  outstanding_balance?: string | number;
+  credit_score?: number;
+  max_eligible_amount?: number;
+  platform_max_loan?: number;
+  min_credit_score?: number;
+  loan_tier?: string | null;
+  is_loan_eligible?: boolean;
+  profile_complete_for_scoring?: boolean;
+  interest_rate?: number | null;
+  trust_level?: string;
+  starter_max_loan?: number;
+  loans_completed_on_time?: number;
+}
 
 interface LoanBreakdown {
   principal: number;
   interestRate: number;   // annual %, from backend
   tenureMonths: number;
   interest: number;
-  processingFee: number;
   total: number;
   dueDate: string;
 }
 
 function computeBreakdown(amount: number, tenure: number, annualRate: number): LoanBreakdown {
   const interest = amount * (annualRate / 100) * (tenure / 12);
-  const processingFee = amount * PROCESSING_FEE_PCT;
-  const total = amount + interest + processingFee;
+  const total = amount + interest;
   const due = new Date();
   due.setDate(due.getDate() + tenure * LOAN_MONTH_DAYS);
   return {
@@ -78,7 +92,6 @@ function computeBreakdown(amount: number, tenure: number, annualRate: number): L
     interestRate: annualRate,
     tenureMonths: tenure,
     interest,
-    processingFee,
     total,
     dueDate: due.toLocaleDateString("en-UG", { day: "numeric", month: "short", year: "numeric" }),
   };
@@ -91,6 +104,7 @@ interface Props {
 
 export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
   const router = useRouter();
+  const { meters } = useSelectedMeter();
   const [step, setStep] = useState(0);
   const [error, setError] = useState("");
   const [isPending, setIsPending] = useState(false);
@@ -99,6 +113,7 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
 
   // Form state
   const [amount, setAmount] = useState<number | "">("");
+  const [meterNo, setMeterNo] = useState("");
   const [tenure, setTenure] = useState(1);
   const [purpose, setPurpose] = useState("ENERGY_RECHARGE");
   const [purposeNote, setPurposeNote] = useState("");
@@ -120,7 +135,7 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
 
   const loadEligibility = useCallback(async () => {
     try {
-      const statsRes = await get<any>("loans/stats/");
+      const statsRes = await get<LoanStatsResponse>("loans/stats/");
       if (statsRes.data) {
         const stats = statsRes.data;
         const hasBlocking =
@@ -184,13 +199,14 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
         value <= amountCap &&
         tenure >= LOAN_TENURE_MIN &&
         tenure <= LOAN_TENURE_MAX &&
+        !!meterNo &&
         eligibility.isEligible
       );
     }
     if (step === 1) return !!purpose;
     if (step === 2) return termsAccepted;
     return true;
-  }, [step, amount, tenure, purpose, termsAccepted, amountCap, eligibility.isEligible]);
+  }, [step, amount, tenure, meterNo, purpose, termsAccepted, amountCap, eligibility.isEligible]);
 
   const handleNext = () => {
     setError("");
@@ -201,7 +217,7 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
             `Your credit score is ${eligibility.creditScore}/100 (minimum ${eligibility.minCreditScore}). Complete your profile or improve your score before applying.`
           );
         } else {
-          setError(`Enter an amount between ${formatUGX(MIN_LOAN_AMOUNT)} and ${formatUGX(amountCap)} with tenure ${LOAN_TENURE_MIN}–${LOAN_TENURE_MAX} months.`);
+          setError(`Choose a meter and enter an amount between ${formatUGX(MIN_LOAN_AMOUNT)} and ${formatUGX(amountCap)} with tenure ${LOAN_TENURE_MIN}–${LOAN_TENURE_MAX} months.`);
         }
       }
       if (step === 2) setError("You must accept the terms to continue.");
@@ -221,6 +237,7 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
         purpose: purposeNote ? `${purposeText}: ${purposeNote}` : purposeText,
         amount_requested: Number(amount),
         tenure_months: tenure,
+        meter_no: meterNo,
       });
       if (result.data) {
         if (onSuccess) { onSuccess(); }
@@ -324,6 +341,23 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
           </div>
 
           <div className="space-y-2">
+            <Label htmlFor="loan-meter">Meter for this loan allocation</Label>
+            <select
+              id="loan-meter"
+              value={meterNo}
+              onChange={(e) => setMeterNo(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2"
+            >
+              <option value="">Choose a meter</option>
+              {meters.filter((m) => m.status === "ACTIVE").map((m) => (
+                <option key={m.meter_number} value={m.meter_number}>
+                  {m.label} ({m.meter_number})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="amount">Amount (UGX)</Label>
             <Input
               id="amount"
@@ -360,16 +394,15 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
               rows={[
                 { label: "Principal", value: formatUGX(breakdown.principal) },
                 { label: `Interest (${monthlyRate}%/month)`, value: formatUGX(breakdown.interest) },
-                { label: `Processing Fee (${(PROCESSING_FEE_PCT * 100).toFixed(0)}%)`, value: formatUGX(breakdown.processingFee) },
-                { label: "Due Date", value: breakdown.dueDate, muted: true },
+                { label: "Estimated Due Date", value: breakdown.dueDate, muted: true },
               ]}
-              totalLabel="Total Repayment"
+              totalLabel="Estimated Total Before Overdue Charges"
               totalValue={formatUGX(breakdown.total)}
             />
           )}
 
           <InfoBanner>
-            Interest rate: {monthlyRate}% per month ({annualRate}% per annum) — within Uganda&apos;s statutory cap of 2.8%/month.
+            This preview uses your current eligibility rate of {annualRate}% annually. Final approved terms are stored with the loan; financial policy is still under review.
           </InfoBanner>
         </div>
       )}
@@ -405,25 +438,23 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
         <div className="space-y-4">
           <div>
             <h2 className="text-xl font-bold">Terms & Conditions</h2>
-            <p className="text-muted-foreground text-sm mt-0.5">Review the loan policy before accepting.</p>
+            <p className="text-muted-foreground text-sm mt-0.5">Review the prototype calculation before submitting.</p>
           </div>
 
           <div className="rounded-xl border border-border p-4 space-y-2 text-sm text-muted-foreground bg-muted/30">
             <p>1. <strong>Interest:</strong> {monthlyRate}% per month ({annualRate}% per annum) on the principal sum, applied pro-rata over {tenure} month{tenure > 1 ? "s" : ""} ({tenure * LOAN_MONTH_DAYS} days).</p>
-            <p>2. <strong>Fees:</strong> {(PROCESSING_FEE_PCT * 100).toFixed(0)}% processing fee on principal, charged once at disbursement.</p>
-            <p>3. <strong>Arrears:</strong> Electricity Utility arrears are prioritised during disbursement (if purpose selected).</p>
-            <p>4. <strong>Late payments:</strong> A 0.1% per day penalty applies on overdue principal. Total charges (interest + penalties + fees) will never exceed 100% of the principal — as required by Uganda&apos;s Tier 4 Microfinance Institutions Act.</p>
-            <p>5. <strong>Data:</strong> Your repayment history may be shared with licensed Credit Reference Bureaus (gnuGrid, Metropol, Creditinfo, Armada) in future.</p>
+            <p>2. <strong>Fees:</strong> The current prototype does not post a processing fee. The final fee policy requires approval.</p>
+            <p>3. <strong>Late payments:</strong> The prototype calculates an overdue charge on principal after the due date. The final late-charge policy requires approval.</p>
+            <p>4. <strong>Repayment:</strong> Only provider-verified payments reduce debt. Whole-UGX payments above remaining debt are recorded for reconciliation.</p>
           </div>
 
           <BreakdownCard
             rows={[
               { label: "Principal", value: formatUGX(breakdown.principal) },
               { label: `Interest (${monthlyRate}%/month × ${tenure} mo)`, value: formatUGX(breakdown.interest) },
-              { label: `Processing Fee (${(PROCESSING_FEE_PCT * 100).toFixed(0)}%)`, value: formatUGX(breakdown.processingFee) },
-              { label: "Due Date", value: breakdown.dueDate, muted: true },
+              { label: "Estimated Due Date", value: breakdown.dueDate, muted: true },
             ]}
-            totalLabel="Total Repayment"
+            totalLabel="Estimated Total Before Overdue Charges"
             totalValue={formatUGX(breakdown.total)}
           />
 
@@ -434,7 +465,7 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
               onChange={(e) => setTermsAccepted(e.target.checked)}
               className="mt-1 accent-primary w-4 h-4"
             />
-            <span className="text-sm">I accept the legally binding loan terms above.</span>
+            <span className="text-sm">I understand this prototype estimate and request the electricity loan.</span>
           </label>
         </div>
       )}
@@ -453,10 +484,9 @@ export default function SimpleLoanForm({ onSuccess, onCancel }: Props) {
               { label: "Purpose", value: PURPOSE_OPTIONS.find(o => o.value === purpose)?.label ?? purpose },
               { label: "Tenure", value: `${tenure} month${tenure > 1 ? "s" : ""} (${tenure * LOAN_MONTH_DAYS} days)` },
               { label: `Interest (${monthlyRate}%/month)`, value: formatUGX(breakdown.interest) },
-              { label: "Processing Fee", value: formatUGX(breakdown.processingFee) },
-              { label: "Due Date", value: breakdown.dueDate, muted: true },
+              { label: "Estimated Due Date", value: breakdown.dueDate, muted: true },
             ]}
-            totalLabel="Total Repayment"
+            totalLabel="Estimated Total Before Overdue Charges"
             totalValue={formatUGX(breakdown.total)}
           />
 

@@ -184,6 +184,7 @@ export default function LoansManagementPage() {
   const [waiverReason, setWaiverReason] = useState('');
   const [waiverError, setWaiverError] = useState('');
   const [disburseDialog, setDisburseDialog] = useState<Loan | null>(null);
+  const [disburseMeterNo, setDisburseMeterNo] = useState("");
   const [disburseError, setDisburseError] = useState('');
   const limit = 10;
 
@@ -354,7 +355,7 @@ export default function LoansManagementPage() {
     try {
       const res = await post<{ success?: boolean; message?: string; units_disbursed?: number }>(
         `admin/loans/${loanPk}/disburse/`,
-        {}
+        { meter_no: disburseMeterNo.trim() || undefined }
       );
       if (res.error || !res.data?.success) {
         const message = getApiErrorMessage(res.error, "Failed to disburse loan");
@@ -367,7 +368,7 @@ export default function LoansManagementPage() {
         title: "Success",
         description:
           res.data.message +
-          (units != null ? ` (${units} kWh credited to wallet)` : ""),
+          (units != null ? ` (${units} kWh allocated; meter delivery not confirmed)` : ""),
       });
       setDisburseDialog(null);
       setDisburseError("");
@@ -1124,6 +1125,7 @@ export default function LoansManagementPage() {
           if (!open) {
             setDisburseDialog(null);
             setDisburseError("");
+            setDisburseMeterNo("");
           }
         }}
       >
@@ -1136,8 +1138,14 @@ export default function LoansManagementPage() {
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This credits electricity units to the customer&apos;s unit wallet and marks the loan as disbursed.
+            This creates a source-linked electricity allocation for the selected meter. Meter application is separate.
           </p>
+          <label htmlFor="legacy-loan-meter" className="text-sm font-medium">
+            Meter number for a historical loan without a saved selection
+          </label>
+          <Input id="legacy-loan-meter" value={disburseMeterNo}
+            onChange={(event) => setDisburseMeterNo(event.target.value)}
+            placeholder="Leave blank when the loan already has an intended meter" />
           {disburseError && <p className="text-sm text-destructive">{disburseError}</p>}
           <div className="flex justify-end gap-2">
             <Button
@@ -1146,6 +1154,7 @@ export default function LoansManagementPage() {
               onClick={() => {
                 setDisburseDialog(null);
                 setDisburseError("");
+                setDisburseMeterNo("");
               }}
             >
               Cancel

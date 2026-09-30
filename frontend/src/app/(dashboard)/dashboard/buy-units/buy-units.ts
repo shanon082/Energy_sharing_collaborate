@@ -1,36 +1,30 @@
 "use server";
 
-import { API_URL } from "@/common/constants/api";
-import { getErrorMessage } from "@/lib/errors";
-import { jwtDecode } from "jwt-decode";
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { BuyUnitSchema } from "@/lib/schema";
 import { post } from "@/lib/fetch";
 import { z } from "zod";
-import {
-  AUTHENTICATION_COOKIE,
-  AUTHENTICATION_REFRESH_COOKIE,
-} from "@/common/constants/auth-cookie";
 
 export const buyUnits = async (
   data: z.infer<typeof BuyUnitSchema>
 ) => {
   const res = await post<BuyUnitsResponse>("meter/buy-units/", data);
 
-  console.log("Buy units: ", res.data);
   return res;
 };
 
-// Add payment status check function
+export type PurchasePaymentStatus = {
+  status: "PENDING" | "FAILED" | "SUCCESS";
+  message: string;
+  units_purchased?: number;
+  amount_received_ugx?: string;
+  purchase_billed_ugx?: string | null;
+  purchase_residual_ugx?: string | null;
+  requires_reconciliation?: boolean;
+  transaction?: { amount: string; timestamp: string | null };
+};
+
 export const checkPaymentStatus = async (transactionId: string) => {
-  const res = await post<{
-    status: string;
-    message: string;
-    units_purchased?: number;
-    token?: string;
-    transaction?: any;
-  }>("meter/check-payment-status/", { transaction_id: transactionId });
+  const res = await post<PurchasePaymentStatus>("meter/check-payment-status/", { transaction_id: transactionId });
 
   return res;
 };

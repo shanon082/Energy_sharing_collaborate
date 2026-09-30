@@ -14,10 +14,12 @@ import { PersonIcon } from "@radix-ui/react-icons";
 import { IconMoneybag } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { useSelectedMeter } from "@/contexts/selected-meter-context";
+import { useFeatures } from "@/contexts/features-context";
 
 export default function DashboardNavLinks({ className }: { className?: string }) {
   const pathname = usePathname();
   const { meters, selectedMeter } = useSelectedMeter();
+  const { peer_sharing } = useFeatures();
 
   const hasStsMeter = meters.some((m) => m.architecture === "STS");
   const hasAmiMeter = meters.some((m) => m.architecture === "AMI");
@@ -49,7 +51,7 @@ export default function DashboardNavLinks({ className }: { className?: string })
       </Link>
       <Link href="/dashboard/share" className={linkClass(pathname === "/dashboard/share")}>
         <Forward className="h-4 w-4" />
-        Load / Share Units
+        {peer_sharing ? "Load / Share Units" : "Load My Meter"}
       </Link>
       {showTokensNav && (
         <Link href="/dashboard/tokens" className={linkClass(pathname === "/dashboard/tokens")}>

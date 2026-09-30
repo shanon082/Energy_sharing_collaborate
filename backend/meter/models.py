@@ -118,6 +118,107 @@ class Meter(TimestampMixin):
         return f"{self.meter_no} - {self.label} ({self.architecture}/{self.status})"
 
 
+class EnergyAllocation(models.Model):
+    """Authoritative, source-bound entitlement for new activity (0.01 kWh units)."""
+
+    owner = models.ForeignKey(User, on_delete=models.PROTECT, related_name="energy_allocations")
+    meter = models.ForeignKey(Meter, on_delete=models.PROTECT, related_name="energy_allocations")
+    amount_kwh = models.DecimalField(max_digits=20, decimal_places=2)
+    purchase_intent = models.OneToOneField(
+        "transactions.PaymentIntent", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="energy_allocation",
+    )
+    loan_disbursement = models.OneToOneField(
+        "loan.LoanDisbursement", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="energy_allocation",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount_kwh__gt=0), name="allocation_positive_kwh"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(purchase_intent__isnull=False, loan_disbursement__isnull=True)
+                    | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=False)
+                ),
+                name="allocation_one_source",
+            ),
+        ]
+
+
+class MeterDelivery(models.Model):
+    """Reserved allocation and durable command identity; timeout never releases it."""
+
+    QUEUED = "QUEUED"
+    DISPATCHED = "DISPATCHED"
+    APPLIED = "APPLIED"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+    OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+    STATUSES = [(value, value.title().replace("_", " ")) for value in (
+        QUEUED, DISPATCHED, APPLIED, FAILED, EXPIRED, OUTCOME_UNKNOWN,
+    )]
+
+    allocation = models.ForeignKey(EnergyAllocation, on_delete=models.PROTECT, related_name="deliveries")
+    command_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    amount_kwh = models.DecimalField(max_digits=20, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUSES, default=QUEUED, db_index=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(
+            condition=models.Q(amount_kwh__gt=0), name="delivery_positive_kwh",
+        )]
+
+
+class SimulatedMeter(models.Model):
+    """Database-backed simulator state, never a production meter credential."""
+
+    meter = models.OneToOneField(Meter, on_delete=models.PROTECT, related_name="simulator")
+    device_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    credential_hash = models.CharField(max_length=128)
+    applied_kwh = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal("0.00"))
+    consumed_wh = models.BigIntegerField(default=0)
+    boot_id = models.UUIDField(null=True, blank=True)
+    last_sequence = models.BigIntegerField(null=True, blank=True)
+    last_counter_wh = models.BigIntegerField(null=True, blank=True)
+    last_measured_at = models.DateTimeField(null=True, blank=True)
+    last_contact_at = models.DateTimeField(null=True, blank=True)
+    reported_relay_state = models.CharField(max_length=10, default="UNKNOWN")
+    requested_relay_state = models.CharField(max_length=10, default="UNKNOWN")
+    reset_count = models.PositiveIntegerField(default=0)
+
+
+class SimulatedCommand(models.Model):
+    device = models.ForeignKey(SimulatedMeter, on_delete=models.PROTECT, related_name="commands")
+    delivery = models.OneToOneField(MeterDelivery, on_delete=models.PROTECT, related_name="simulated_command")
+    command_id = models.UUIDField(unique=True)
+    amount_kwh = models.DecimalField(max_digits=20, decimal_places=2)
+    applied_at = models.DateTimeField(auto_now_add=True)
+
+
+class SimulatedTelemetry(models.Model):
+    device = models.ForeignKey(SimulatedMeter, on_delete=models.PROTECT, related_name="telemetry")
+    event_id = models.UUIDField()
+    boot_id = models.UUIDField()
+    sequence = models.BigIntegerField()
+    cumulative_wh = models.BigIntegerField()
+    measured_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True)
+    reported_relay_state = models.CharField(max_length=10)
+    classification = models.CharField(max_length=24)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["device", "event_id"], name="sim_telemetry_event_unique",
+        )]
+
+
 class DeletedMeterRecord(TimestampMixin):
     """
     Immutable audit row created when a meter is removed from a user account.

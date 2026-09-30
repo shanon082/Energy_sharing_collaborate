@@ -18,6 +18,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -185,6 +186,7 @@ export default function LoanDetailPage() {
     const [activeTab, setActiveTab] = useState('overview');
     const [showTokenDialog, setShowTokenDialog] = useState(false);
     const [disbursing, setDisbursing] = useState(false);
+    const [disburseMeterNo, setDisburseMeterNo] = useState('');
 
     const loanId = params.id;
 
@@ -233,7 +235,7 @@ export default function LoanDetailPage() {
         try {
             const res = await post<{ success?: boolean; message?: string; units_disbursed?: number }>(
                 `admin/loans/${loan.id}/disburse/`,
-                {}
+                { meter_no: disburseMeterNo.trim() || undefined }
             );
             if (res.error || !res.data?.success) {
                 toast({
@@ -386,15 +388,20 @@ export default function LoanDetailPage() {
                         </>
                     )}
                     {loan.status === 'APPROVED' && (
-                        <Button variant="default" onClick={() => void handleDisburse()} disabled={disbursing}>
-                            <CreditCard className="mr-2 h-4 w-4" />
-                            {disbursing ? "Disbursing…" : "Disburse Loan"}
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            <Input aria-label="Meter number for historical loan without saved selection"
+                                value={disburseMeterNo} onChange={(event) => setDisburseMeterNo(event.target.value)}
+                                placeholder="Meter no. if not saved" className="w-44" />
+                            <Button variant="default" onClick={() => void handleDisburse()} disabled={disbursing}>
+                                <CreditCard className="mr-2 h-4 w-4" />
+                                {disbursing ? "Disbursing…" : "Disburse Loan"}
+                            </Button>
+                        </div>
                     )}
                     {loan.status === 'DISBURSED' && loan.disbursement && (
                         <Button variant="outline" onClick={() => setShowTokenDialog(true)}>
                             <Zap className="mr-2 h-4 w-4" />
-                            View Token
+                            Token record
                         </Button>
                     )}
                     <Button variant="outline">
@@ -764,7 +771,7 @@ export default function LoanDetailPage() {
                                                 <p className="font-medium">{formatDate(loan.disbursement.disbursement_date)}</p>
                                             </div>
                                             <div>
-                                                <p className="text-sm text-muted-foreground">Units Disbursed</p>
+                                                <p className="text-sm text-muted-foreground">Energy allocated (meter application unconfirmed)</p>
                                                 <p className="font-medium text-2xl">{loan.disbursement.units_disbursed} kWh</p>
                                             </div>
                                             <div>
@@ -775,14 +782,11 @@ export default function LoanDetailPage() {
 
                                         <div className="space-y-4">
                                             <div>
-                                                <p className="text-sm text-muted-foreground">Token</p>
+                                                <p className="text-sm text-muted-foreground">Stored token record (not validated for keypad use)</p>
                                                 <div className="flex items-center gap-2">
                                                     <p className="font-mono font-bold text-xl bg-muted p-2 rounded">
                                                         {loan.disbursement.token}
                                                     </p>
-                                                    <Button variant="outline" size="sm" onClick={() => copyToClipboard(loan.disbursement!.token)}>
-                                                        <Copy className="h-4 w-4" />
-                                                    </Button>
                                                 </div>
                                             </div>
                                             <div>
@@ -795,12 +799,11 @@ export default function LoanDetailPage() {
                                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                                         <h4 className="font-medium text-yellow-800 mb-2 flex items-center gap-2">
                                             <Zap className="h-4 w-4" />
-                                            Token Information
+                                            Stored token record
                                         </h4>
                                         <p className="text-sm text-yellow-700">
-                                            This token was generated for the meter {loan.disbursement.meter.meter_no} and expires on{' '}
-                                            {formatDate(loan.disbursement.token_expiry)}. The token has been sent to the customer and
-                                            should be used to load units into their meter.
+                                            This historical field is not proof of meter application or a validated STS keypad command.
+                                            Check allocation and delivery records before making any loading claim.
                                         </p>
                                     </div>
                                 </div>
@@ -948,9 +951,9 @@ export default function LoanDetailPage() {
             <Dialog open={showTokenDialog} onOpenChange={setShowTokenDialog}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Disbursement Token</DialogTitle>
+                        <DialogTitle>Historical disbursement token record</DialogTitle>
                         <DialogDescription>
-                            Token for meter {loan.disbursement?.meter.meter_no}
+                            Stored record for meter {loan.disbursement?.meter.meter_no}. This is not a validated keypad command or proof of meter loading.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
@@ -969,10 +972,6 @@ export default function LoanDetailPage() {
                             </div>
                         </div>
                         <div className="flex gap-2">
-                            <Button className="flex-1" onClick={() => copyToClipboard(loan.disbursement?.token || '')}>
-                                <Copy className="mr-2 h-4 w-4" />
-                                Copy Token
-                            </Button>
                             <Button variant="outline" className="flex-1" onClick={() => setShowTokenDialog(false)}>
                                 Close
                             </Button>

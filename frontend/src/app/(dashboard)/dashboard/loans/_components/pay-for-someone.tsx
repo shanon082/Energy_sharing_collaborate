@@ -15,6 +15,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, Search, CheckCircle2, UserCheck, EyeOff } from "lucide-react";
 import { lookupLoanByPhone, payForSomeone } from "../actions";
+import { getApiErrorMessage } from "@/lib/api-response";
 
 interface LoanOwner {
   id: number;
@@ -67,11 +68,7 @@ export default function PayForSomeone() {
     try {
       const res = await lookupLoanByPhone(formatted);
       if (res.error || !res.data) {
-        setLookupError(
-          typeof res.error === "string"
-            ? res.error
-            : "No outstanding loan found for that number."
-        );
+        setLookupError(getApiErrorMessage(res.error, "No outstanding loan found for that number."));
         return;
       }
       setOwner(res.data.owner);
@@ -106,9 +103,7 @@ export default function PayForSomeone() {
         is_anonymous: identity === "anonymous",
       });
       if (res.error || !res.data) {
-        setPayError(
-          typeof res.error === "string" ? res.error : "Payment failed. Please try again."
-        );
+        setPayError(getApiErrorMessage(res.error, "Payment failed. Please try again."));
         return;
       }
       setSuccess(res.data.message);

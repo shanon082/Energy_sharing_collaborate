@@ -2,11 +2,10 @@
 
 import { useSelectedMeter } from "@/contexts/selected-meter-context";
 import MeterSelector from "./meter-selector";
-import GenerateTokenCard from "../tokens/_components/generate-token-card";
-import AmiStatusCard from "./ami-status-card";
+import EnergyStatusCard from "@/components/dashboard/energy-status-card";
 
 export default function MeterUnitsPanel() {
-  const { selectedMeter, meters, isLoading, walletBalance, refreshWallet } = useSelectedMeter();
+  const { selectedMeter, meters, isLoading } = useSelectedMeter();
 
   if (isLoading) {
     return (
@@ -24,21 +23,9 @@ export default function MeterUnitsPanel() {
     <div className="space-y-4">
       <MeterSelector />
       {selectedMeter.architecture === "STS" ? (
-        <GenerateTokenCard
-          architecture="STS"
-          walletBalance={walletBalance}
-          meterNo={selectedMeter.meter_number}
-          stsMeters={meters.filter((m) => m.architecture === "STS")}
-          onTokenGenerated={() => {
-            /* wallet balance will refresh on next navigation; optional future hook */
-          }}
-        />
+        <p className="rounded-md border p-4 text-sm">STS keypad loading awaits an authenticated, validated device protocol.</p>
       ) : (
-        <AmiStatusCard
-          meter={selectedMeter}
-          walletBalance={walletBalance}
-          onApplied={refreshWallet}
-        />
+        <EnergyStatusCard meterNo={selectedMeter.meter_number} />
       )}
     </div>
   );

@@ -3,6 +3,7 @@ from django.utils.dateparse import parse_datetime
 from datetime import date
 from decimal import Decimal, InvalidOperation
 import logging
+import secrets
 from utils.models import TokenValidator
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -34,6 +35,10 @@ class TokenDecryptionView(APIView):
         })
 
     def post(self, request, *args, **kwargs):
+        return Response({
+            "code": "DEVICE_PROTOCOL_UNAVAILABLE",
+            "message": "Token redemption requires authenticated meter identity and allocation binding.",
+        }, status=status.HTTP_410_GONE)
         token_info = request.data
         logger.info(f"Token Decryption function called")
 
@@ -103,10 +108,14 @@ class LoanTokenVerificationView(APIView):
         })
 
     def post(self, request, *args, **kwargs):
+        return Response({
+            "code": "DEVICE_PROTOCOL_UNAVAILABLE",
+            "message": "Loan token redemption requires authenticated meter identity and allocation binding.",
+        }, status=status.HTTP_410_GONE)
         token = request.data.get('token')
         meter_number = request.data.get('meter_number')
         
-        logger.info(f"Token verification request - Token: {token}, Meter: {meter_number}")
+        logger.info("Loan token verification request received")
         
         if not token or not meter_number:
             return Response({
@@ -197,13 +206,12 @@ class ThingsBoardLowUnitsWebhookView(APIView):
 
     def post(self, request, *args, **kwargs):
         configured_secret = (getattr(settings, "THINGSBOARD_WEBHOOK_SECRET", "") or "").strip()
-        if configured_secret:
-            header_secret = (request.headers.get("X-ThingsBoard-Webhook-Secret") or "").strip()
-            if header_secret != configured_secret:
-                return Response(
-                    {"success": False, "message": "Invalid webhook secret."},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+        header_secret = (request.headers.get("X-ThingsBoard-Webhook-Secret") or "").strip()
+        if not configured_secret or not secrets.compare_digest(header_secret, configured_secret):
+            return Response(
+                {"success": False, "message": "Webhook authentication is not configured or invalid."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         device_token = str(request.data.get("device_token", "")).strip()
         units_raw = request.data.get("units_kwh")
@@ -337,13 +345,12 @@ class ThingsBoardDailyUsageWebhookView(APIView):
         from meter.usage_service import upsert_daily_usage
 
         configured_secret = (getattr(settings, "THINGSBOARD_WEBHOOK_SECRET", "") or "").strip()
-        if configured_secret:
-            header_secret = (request.headers.get("X-ThingsBoard-Webhook-Secret") or "").strip()
-            if header_secret != configured_secret:
-                return Response(
-                    {"success": False, "message": "Invalid webhook secret."},
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
+        header_secret = (request.headers.get("X-ThingsBoard-Webhook-Secret") or "").strip()
+        if not configured_secret or not secrets.compare_digest(header_secret, configured_secret):
+            return Response(
+                {"success": False, "message": "Webhook authentication is not configured or invalid."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         device_token = str(request.data.get("device_token", "")).strip()
         usage_date_raw = request.data.get("usage_date")

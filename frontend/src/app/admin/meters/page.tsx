@@ -155,7 +155,7 @@ export default function MetersManagementPage() {
       if (res.data?.success) {
         toast({
           title: 'Account & meter created',
-          description: `${registerForm.owner_email} can log in with temporary password 1234 and will be asked to set a new password.`,
+          description: `${registerForm.owner_email} must use Forgot Password to set a private password before signing in.`,
         });
         setRegisterDialog(false);
         setRegisterForm(defaultRegisterForm);
@@ -401,7 +401,7 @@ export default function MetersManagementPage() {
           <DialogHeader>
             <DialogTitle>Register New Meter</DialogTitle>
             <DialogDescription>
-              Creates a new customer account and assigns this meter. The owner signs in with their email and temporary password <strong>1234</strong>, then sets their own password. For self-registration, customers can use the public sign-up page instead.
+              Creates a new customer account and assigns this meter. The owner uses Forgot Password to set a private password before signing in. For self-registration, customers can use the public sign-up page instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

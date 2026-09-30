@@ -6,6 +6,32 @@ from backend import celery_app as app
 from accounts.models import User
 from transactions.statements import build_statement_pdf_bytes
 from transactions.unified_history import filter_history, collect_unified_history, summarize_history
+import logging
+from datetime import timedelta
+from django.utils import timezone
+from transactions.models import PaymentIntent
+from transactions.payment_settlement import PaymentSettlementError, reconcile_payment
+
+logger = logging.getLogger(__name__)
+
+
+@app.task()
+def reconcile_pending_payments():
+    """Poll trusted provider status independently of any browser session."""
+    cutoff = timezone.now() - timedelta(minutes=1)
+    ids = list(PaymentIntent.objects.filter(
+        status=PaymentIntent.PENDING,
+        provider="MTN_PRODUCTION",
+        initiated_at__lte=cutoff,
+    ).order_by("initiated_at").values_list("pk", flat=True)[:100])
+    for intent_id in ids:
+        try:
+            reconcile_payment(intent_id)
+        except PaymentSettlementError as exc:
+            logger.warning("Payment intent %s requires review: %s", intent_id, exc)
+        except Exception:
+            logger.exception("Payment intent %s reconciliation failed", intent_id)
+    return len(ids)
 
 
 @app.task()

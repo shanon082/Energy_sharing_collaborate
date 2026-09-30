@@ -27,14 +27,19 @@ from .views import (
 )
 
 from meter.api import views
+from transactions.api.payment_views import VerifiedPurchaseView, VerifiedPurchaseStatusView
+from meter.api.delivery_views import (
+    AllocationStatusView, DeliveryRequestView,
+    SimulatorAcknowledgementView, SimulatorTelemetryView,
+)
 
 
 urlpatterns = [
     path('send-units/', SendUnitsView.as_view(), name="send-units"),
     path('receive-units/', ReceiveUnitsView.as_view(), name="receive-units"),
     path('token/', TokenView.as_view(), name="token"),
-    path('buy-units/', BuyUnitsView.as_view(), name="buy-units"),
-    path('check-payment-status/', CheckPaymentStatusView.as_view(), name="check-payment-status"),
+    path('buy-units/', VerifiedPurchaseView.as_view(), name="buy-units"),
+    path('check-payment-status/', VerifiedPurchaseStatusView.as_view(), name="check-payment-status"),
     path('test-meter-push/', MeterPushTestView.as_view(), name="test-meter-push"),
     path('admin-test-meter-push/', AdminMeterPushTestView.as_view(), name="admin-test-meter-push"),
     path('register/', MeterRegisterView.as_view(), name='register-meter'),
@@ -53,6 +58,10 @@ urlpatterns = [
     path('generate-token/', GenerateTokenFromWalletView.as_view(), name='generate-token'),
     # AMI: apply wallet kWh to networked meter (no token)
     path('apply-wallet-units/', ApplyWalletToMeterView.as_view(), name='apply-wallet-units'),
+    path('deliver/', DeliveryRequestView.as_view(), name='deliver-allocation'),
+    path('allocation-status/', AllocationStatusView.as_view(), name='allocation-status'),
+    path('simulator/ack/', SimulatorAcknowledgementView.as_view(), name='simulator-ack'),
+    path('simulator/telemetry/', SimulatorTelemetryView.as_view(), name='simulator-telemetry'),
     path('power-usage/', views.power_usage, name='power-usage'),
     # Estimate kWh yield for a given UGX amount (no side effects)
     path('estimate-units/', EstimateUnitsView.as_view(), name='estimate-units'),

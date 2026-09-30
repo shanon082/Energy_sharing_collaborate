@@ -1041,7 +1041,7 @@ class MeterManagementView(APIView, RBACMixin):
 
         return Response({
             "success": True,
-            "message": "Meter and owner account created. They can sign in with their email and temporary password 1234.",
+            "message": "Meter and owner account created. The owner must use Forgot Password to set a private password before signing in.",
             "meter_id": meter.id,
             "user_id": owner.id,
             "owner_email": owner.email,
@@ -1596,7 +1596,10 @@ class LoanDisburseView(APIView, RBACMixin):
         from loan.services import LoanOperationError, disburse_loan
 
         try:
-            result = disburse_loan(loan.user, loan.id, channel="ADMIN")
+            result = disburse_loan(
+                loan.user, loan.id, channel="ADMIN",
+                meter_no=str(request.data.get("meter_no") or "").strip() or None,
+            )
         except LoanOperationError as exc:
             return Response({"error": exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1608,6 +1611,7 @@ class LoanDisburseView(APIView, RBACMixin):
                 "loan_pk": loan.id,
                 "user_email": loan.user.email,
                 "units_disbursed": result.get("units_disbursed"),
+                "meter_no": result.get("meter_no"),
             },
             request=request,
         )

@@ -1,11 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
-import { clearAuthSession, verifyEmail } from '../../../../ck/verify/email/verify';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { CheckCircle2, XCircle, Loader2, Mail } from 'lucide-react';
-import { verifyEmail } from '../../../../ck/verify/email/verify';
+import { clearAuthSession, verifyEmail } from '../../../../ck/verify/email/verify';
 import { resendVerificationEmail } from '../../resend';
 import { Button } from '@/components/ui/button';
 import { GpawaLogo, LOGO_SIZES } from '@/components/common/gpawa-logo';
@@ -25,15 +23,9 @@ export default function VerifyEmail({ uid: propUid, token: propToken }: { uid?: 
   const [status, setStatus]   = useState<'idle' | 'verifying' | 'success' | 'error' | 'resending'>('idle');
   const [message, setMessage] = useState('');
   const [showResend, setShowResend] = useState(false);
+  const attemptedLink = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (uid && token) {
-      handleVerify();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function handleVerify() {
+  const handleVerify = useCallback(async () => {
     if (!uid || !token) {
       setStatus('error');
       setMessage('Missing verification parameters — please use the link from your email.');
@@ -47,9 +39,7 @@ export default function VerifyEmail({ uid: propUid, token: propToken }: { uid?: 
         setStatus('success');
         setMessage(result.message || 'Email verified successfully');
         // Redirect after a delay
-        setTimeout(() => {
-          window.location.href = '/auth/login?verified=1';
-        }, 3000);
+        setTimeout(() => router.replace('/auth/login?verified=1'), 3000);
       } else {
         setStatus('error');
         setMessage(result.error || 'Invalid or expired verification link.');
@@ -60,7 +50,19 @@ export default function VerifyEmail({ uid: propUid, token: propToken }: { uid?: 
       setMessage('An unexpected error occurred during verification.');
       setShowResend(true);
     }
-  }
+  }, [uid, token, router]);
+
+  useEffect(() => {
+    if (!uid || !token) return;
+    const link = `${uid}:${token}`;
+    if (attemptedLink.current === link) return;
+    const timer = window.setTimeout(() => {
+      if (attemptedLink.current === link) return;
+      attemptedLink.current = link;
+      void handleVerify();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [uid, token, handleVerify]);
 
   async function handleResend() {
     if (!email) {

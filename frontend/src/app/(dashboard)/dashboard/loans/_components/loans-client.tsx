@@ -6,6 +6,8 @@ import { FileTextIcon, PlusCircle, Heart } from "lucide-react";
 import LoanList from "../../myloans/_components/loan-list";
 import SimpleLoanForm from "../../request-loan/_components/simple-loan-form";
 import PayForSomeone from "./pay-for-someone";
+import { useFeatures } from "@/contexts/features-context";
+import FeatureUnavailable from "@/components/common/feature-unavailable";
 
 interface LoansClientProps {
   loans: any[];
@@ -15,7 +17,9 @@ interface LoansClientProps {
 export default function LoansClient({ loans, defaultTab }: LoansClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { third_party_repayment } = useFeatures();
   const tab = searchParams.get("tab") ?? defaultTab;
+  if (tab === "pay-for-someone" && !third_party_repayment) return <FeatureUnavailable />;
 
   const setTab = (value: string) => {
     router.push(`?tab=${value}`, { scroll: false });
@@ -23,7 +27,7 @@ export default function LoansClient({ loans, defaultTab }: LoansClientProps) {
 
   return (
     <Tabs value={tab} onValueChange={setTab} className="w-full">
-      <TabsList className="w-full max-w-md grid grid-cols-3 mb-6">
+      <TabsList className={`w-full max-w-md grid ${third_party_repayment ? "grid-cols-3" : "grid-cols-2"} mb-6`}>
         <TabsTrigger value="my-loans" className="gap-1.5 text-xs sm:text-sm">
           <FileTextIcon className="h-3.5 w-3.5" />
           My Loans
@@ -32,10 +36,10 @@ export default function LoansClient({ loans, defaultTab }: LoansClientProps) {
           <PlusCircle className="h-3.5 w-3.5" />
           Apply
         </TabsTrigger>
-        <TabsTrigger value="pay-for-someone" className="gap-1.5 text-xs sm:text-sm">
+        {third_party_repayment && <TabsTrigger value="pay-for-someone" className="gap-1.5 text-xs sm:text-sm">
           <Heart className="h-3.5 w-3.5" />
           Pay for Someone
-        </TabsTrigger>
+        </TabsTrigger>}
       </TabsList>
 
       <TabsContent value="my-loans">
@@ -54,9 +58,9 @@ export default function LoansClient({ loans, defaultTab }: LoansClientProps) {
         </div>
       </TabsContent>
 
-      <TabsContent value="pay-for-someone">
+      {third_party_repayment && <TabsContent value="pay-for-someone">
         <PayForSomeone />
-      </TabsContent>
+      </TabsContent>}
     </Tabs>
   );
 }

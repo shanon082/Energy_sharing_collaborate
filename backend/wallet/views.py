@@ -1,3 +1,4 @@
+from backend.features import requires_feature
 # from rest_framework.views import APIView
 # from rest_framework.response import Response
 # from rest_framework import status
@@ -540,6 +541,7 @@ class WalletDepositView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @requires_feature("wallet_deposits")
     def post(self, request):
         amount = request.data.get("amount")
         phone_number = request.data.get("phone_number", "")
@@ -622,6 +624,7 @@ class WalletWithdrawView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @requires_feature("wallet_withdrawals")
     def post(self, request):
         amount = request.data.get("amount")
         phone_number = request.data.get("phone_number", "")

@@ -8,6 +8,7 @@ import { get } from '@/lib/fetch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { History, Wallet as WalletIcon } from "lucide-react";
 import { WalletProvider } from '@/app/contexts/walletContext';
+import { getFeatureAvailability } from '@/lib/features-server';
 
 
 async function getWalletData() {
@@ -24,6 +25,7 @@ async function getWalletData() {
 
 const WalletsPage = async () => {
     const initialWalletData = await getWalletData();
+    const { wallet_deposits, wallet_withdrawals } = await getFeatureAvailability();
 
     return (
         <WalletProvider initialData={initialWalletData}>
@@ -40,10 +42,10 @@ const WalletsPage = async () => {
                         <BalanceCard />
                         
                         {/* Deposit and Withdraw Section */}
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <Deposit />
-                            <Withdraw />
-                        </div>
+                        {(wallet_deposits || wallet_withdrawals) && <div className="grid gap-4 md:grid-cols-2">
+                            {wallet_deposits && <Deposit />}
+                            {wallet_withdrawals && <Withdraw />}
+                        </div>}
                         
                         {/* Transaction History Section */}
                         {/* <Card>
@@ -67,7 +69,7 @@ const WalletsPage = async () => {
                         </Card> */}
                         
                         {/* Information Section */}
-                        <Card className="bg-blue-50 border-blue-200">
+                        {(wallet_deposits || wallet_withdrawals) && <Card className="bg-blue-50 border-blue-200">
                             <CardContent className="pt-6">
                                 <div className="flex items-start gap-3">
                                     <WalletIcon className="h-5 w-5 text-blue-600 mt-0.5" />
@@ -80,7 +82,7 @@ const WalletsPage = async () => {
                                     </div>
                                 </div>
                             </CardContent>
-                        </Card>
+                        </Card>}
                     </main>
                 </div>
             </div>

@@ -5,7 +5,7 @@ import { useState, useTransition, useEffect, useCallback, useRef } from "react";
 import PhoneInput from "react-phone-number-input";
 import "react-phone-number-input/style.css";
 import type { z } from "zod";
-import { Terminal, Loader2, CheckCircle2, XCircle, Wallet } from "lucide-react";
+import { Terminal, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Form,
@@ -25,9 +25,8 @@ import { Input as ShadInput } from "@/components/ui/input";
 import { BreakdownCard } from "@/components/ui/breakdown-card";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { BuyUnitSchema } from "@/lib/schema";
-import { formatCurrency } from "@/lib/utils";
 import { useForm } from "react-hook-form";
-import { buyUnits, checkPaymentStatus, type BuyUnitsResponse } from "../buy-units";
+import { buyUnits, checkPaymentStatus, type BuyUnitsResponse, type PurchasePaymentStatus } from "../buy-units";
 import { useAccount } from "@/hooks/use-account";
 import {
   Dialog,
@@ -36,13 +35,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import Link from "next/link";
 import { get } from "@/lib/fetch-client";
 import { getApiErrorMessage } from "@/lib/api-response";
 import { notifyWalletBalanceUpdated } from "@/lib/wallet-events";
+import { useSelectedMeter } from "@/contexts/selected-meter-context";
 
 function formatUGX(n: number) {
   return `UGX ${Math.round(n).toLocaleString()}`;
+}
+
+function formatExactUGX(value: string | null | undefined) {
+  return value == null ? "—" : `UGX ${value}`;
 }
 
 interface UnitEstimate {
@@ -101,23 +104,17 @@ function buildEstimateRows(estimate: UnitEstimate, grossAmount: number) {
 }
 
 export default function BuyUnitsForm() {
-  const formatter = formatCurrency("UGX");
   const [error, setError] = useState<string | undefined>("");
   const [success, setSuccess] = useState("");
-  const [token, setToken] = useState("");
   const [isPending, startTransition] = useTransition();
   const [paymentStatus, setPaymentStatus] = useState<
-    "idle" | "pending" | "success" | "failed"
+    "idle" | "pending" | "success" | "reconciliation" | "failed"
   >("idle");
-  const [loanBlocked, setLoanBlocked] = useState(false);
-  const [loanBlockMessage, setLoanBlockMessage] = useState<string | null>(null);
-  const [loadingLoans, setLoadingLoans] = useState(true);
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [unitsPurchased, setUnitsPurchased] = useState<number | null>(null);
-  const [transactionDetails, setTransactionDetails] = useState<any>(null);
+  const [transactionDetails, setTransactionDetails] = useState<PurchasePaymentStatus | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [pollingCount, setPollingCount] = useState(0);
-  const [paymentMode, setPaymentMode] = useState<"simulated" | "momo" | null>(null);
 
   // Estimate state
   const [estimate, setEstimate] = useState<UnitEstimate | null>(null);
@@ -125,7 +122,8 @@ export default function BuyUnitsForm() {
   const [showConfirm, setShowConfirm] = useState(false);
   const estimateTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  const { user, loading } = useAccount();
+  const { loading } = useAccount();
+  const { meters } = useSelectedMeter();
 
   const isPendingBuyUnitsResponse = (
     response: BuyUnitsResponse | undefined
@@ -137,9 +135,8 @@ export default function BuyUnitsForm() {
 
   const form = useForm<z.infer<typeof BuyUnitSchema>>({
     resolver: zodResolver(BuyUnitSchema),
-    defaultValues: { amount: 0, phone_number: "", payment_source: "PHONE" },
-  } as any);
-  const paymentSource = form.watch("payment_source");
+    defaultValues: { amount: 0, phone_number: "", payment_source: "PHONE", meter_no: "" },
+  });
 
   useEffect(() => {
     if (paymentStatus === "success") {
@@ -148,40 +145,9 @@ export default function BuyUnitsForm() {
     }
   }, [paymentStatus]);
 
-  // Block buying units when there is any pending/active/incomplete loan
-  useEffect(() => {
-    const checkLoans = async () => {
-      try {
-        setLoadingLoans(true);
-        const response = await get<any>("loans/stats/");
-        if (!response.error && response.data) {
-          const hasPending = (response.data.pending_applications ?? 0) > 0;
-          const hasActive = (response.data.active_loans ?? 0) > 0;
-          const hasOutstanding = Number(response.data.outstanding_balance ?? 0) > 0;
-          const hasBlocking = response.data.has_blocking_loan ?? (hasPending || hasActive || hasOutstanding);
-          if (hasBlocking) {
-            setLoanBlocked(true);
-            setLoanBlockMessage(
-              "You have a pending or unpaid loan. Please clear your loan before purchasing units."
-            );
-          } else {
-            setLoanBlocked(false);
-            setLoanBlockMessage(null);
-          }
-        }
-      } catch (err) {
-        console.error("Error checking loan status:", err);
-      } finally {
-        setLoadingLoans(false);
-      }
-    };
-
-    checkLoans();
-  }, []);
-
   // Debounced estimate on amount change
   const fetchEstimate = useCallback(async (amount: number) => {
-    if (amount < 100) {
+    if (!Number.isInteger(amount) || amount < 100) {
       setEstimate(null);
       return;
     }
@@ -210,11 +176,10 @@ export default function BuyUnitsForm() {
       const result = await checkPaymentStatus(id);
 
       if (result.data?.status === "SUCCESS") {
-        setPaymentStatus("success");
+        setPaymentStatus((result.data.units_purchased ?? 0) > 0 ? "success" : "reconciliation");
         setUnitsPurchased(result.data.units_purchased || 0);
-        setToken(result.data.token || "");
-        setTransactionDetails(result.data.transaction || null);
-        setSuccess("Payment completed successfully!");
+        setTransactionDetails(result.data);
+        setSuccess(result.data.message);
         notifyWalletBalanceUpdated();
         return true;
       } else if (result.data?.status === "FAILED") {
@@ -241,9 +206,9 @@ export default function BuyUnitsForm() {
         if (!mounted) return;
 
         if (attempts >= MAX_POLL_ATTEMPTS) {
-          setPaymentStatus("failed");
+          setPaymentStatus("idle");
           setError(
-            "Payment is taking longer than expected. If your phone received a MoMo prompt and you approved it, please contact support with your transaction reference."
+            "Payment remains unverified. Reconciliation continues after you leave this page; no units have been credited yet."
           );
           return;
         }
@@ -276,7 +241,6 @@ export default function BuyUnitsForm() {
     setPaymentStatus("pending");
     setTransactionId(null);
     setPollingCount(0);
-    setPaymentMode(null);
     setShowConfirm(false);
 
     startTransition(async () => {
@@ -298,14 +262,14 @@ export default function BuyUnitsForm() {
                 message: Array.isArray(data.error.phone_number) ? data.error.phone_number[0] : "Invalid phone number",
               });
             }
-          } else setError(getApiErrorMessage(data.error, "Failed to process payment"));
+          }
+          setError(getApiErrorMessage(data.error, "Failed to process payment"));
           return;
         }
 
         const responseData = data.data;
 
         if (isPendingBuyUnitsResponse(responseData)) {
-          setPaymentMode(responseData.payment_mode ?? "momo");
           setTransactionId(
             responseData.transaction_id !== undefined
               ? String(responseData.transaction_id)
@@ -314,14 +278,9 @@ export default function BuyUnitsForm() {
           setSuccess(
             responseData.user_prompt || responseData.message || "Processing payment..."
           );
-        } else if (responseData?.token) {
-          setPaymentStatus("success");
-          setUnitsPurchased(parseFloat(responseData["Units purchased"]) || 0);
-          setToken(responseData.token || "");
-          setTransactionDetails(responseData.transaction || responseData || null);
-          setSuccess(
-            responseData.message || "Payment completed and token generated."
-          );
+        } else {
+          setPaymentStatus("failed");
+          setError("Payment initiation was not confirmed. No units have been credited.");
         }
       } catch {
         setPaymentStatus("failed");
@@ -340,11 +299,11 @@ export default function BuyUnitsForm() {
     setShowConfirm(true);
   };
 
-  if (loading || loadingLoans) return null;
+  if (loading) return null;
 
   return (
     <>
-      <CardWrapper title="TopUp Wallet">
+      <CardWrapper title="Buy Electricity">
         {/* --- SUCCESS MODAL --- */}
         <Dialog open={showSuccessModal} onOpenChange={setShowSuccessModal}>
           <DialogContent className="sm:max-w-md bg-background border-border">
@@ -354,35 +313,26 @@ export default function BuyUnitsForm() {
                 Payment Successful!
               </DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                A meter token has been generated for your purchase
+                Verified electricity units have been added to your unit balance.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
               <BreakdownCard
                 rows={[
-                  { label: "Amount Paid", value: formatUGX(transactionDetails?.amount ?? 0) },
+                  { label: "Amount Received", value: formatExactUGX(transactionDetails?.amount_received_ugx) },
+                  { label: "Energy Billed", value: formatExactUGX(transactionDetails?.purchase_billed_ugx) },
+                  { label: "UGX for Reconciliation", value: formatExactUGX(transactionDetails?.purchase_residual_ugx) },
                   { label: "Units Purchased", value: `${unitsPurchased ?? 0} kWh` },
-                  { label: "Status", value: "Completed" },
-                  ...(transactionDetails?.timestamp
-                    ? [{ label: "Date", value: new Date(transactionDetails.timestamp).toLocaleString(), muted: true }]
+                  { label: "Status", value: "Payment verified; meter delivery pending" },
+                  ...(transactionDetails?.transaction?.timestamp
+                    ? [{ label: "Date", value: new Date(transactionDetails.transaction.timestamp).toLocaleString(), muted: true }]
                     : []),
                 ]}
                 totalLabel="Units Added"
                 totalValue={`${unitsPurchased ?? 0} kWh`}
               />
 
-              {token && (
-                <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
-                  <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                  <AlertTitle className="text-blue-800 dark:text-blue-300">
-                    STS Token — enter on meter keypad
-                  </AlertTitle>
-                  <AlertDescription className="text-blue-700 dark:text-blue-400 break-all font-mono text-lg tracking-widest">
-                    {token}
-                  </AlertDescription>
-                </Alert>
-              )}
 
               <div className="flex gap-3">
                 <Button
@@ -455,10 +405,7 @@ export default function BuyUnitsForm() {
             <AlertDescription className="text-blue-700 dark:text-blue-400">
               <div className="space-y-2">
                 <p>
-                  {success ||
-                    (paymentMode === "simulated"
-                      ? "Dev mode: simulating payment..."
-                      : "Check your phone and enter your Mobile Money PIN to approve the payment.")}
+                  {success || "Check your phone and approve the Mobile Money payment."}
                 </p>
                 <div className="flex items-center gap-2 text-sm">
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -479,9 +426,21 @@ export default function BuyUnitsForm() {
           <Alert className="mb-4 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20">
             <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
             <AlertTitle className="text-green-800 dark:text-green-300">
-              Payment Initiated Successfully!
+              Payment Verified
             </AlertTitle>
-            <AlertDescription className="text-green-700 dark:text-green-400" />
+            <AlertDescription className="text-green-700 dark:text-green-400">
+              {success} Meter delivery is tracked separately from payment settlement.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {paymentStatus === "reconciliation" && (
+          <Alert className="mb-4 border-amber-300 bg-amber-50 dark:bg-amber-900/20">
+            <AlertTitle>Payment received; energy requires reconciliation</AlertTitle>
+            <AlertDescription>
+              {success} {formatExactUGX(transactionDetails?.amount_received_ugx)} was received;
+              no electricity was allocated. Keep your payment reference for support.
+            </AlertDescription>
           </Alert>
         )}
 
@@ -497,16 +456,6 @@ export default function BuyUnitsForm() {
           </Alert>
         )}
 
-        {/* --- ACCOUNT BALANCE --- */}
-        {user?.wallet && (
-          <div className="flex justify-center items-center mb-6">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border-2 border-border bg-card text-card-foreground text-lg font-light">
-              <Wallet className="h-4 w-4" />
-              Account Balance: {formatter.format(Number(user.wallet.balance))}
-            </div>
-          </div>
-        )}
-
         {/* --- FORM --- */}
         <div>
           <Form {...form}>
@@ -514,12 +463,36 @@ export default function BuyUnitsForm() {
               <div className="space-y-4">
                 <FormField
                   control={form.control}
+                  name="meter_no"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Meter to receive this allocation</FormLabel>
+                      <FormControl>
+                        <select
+                          {...field}
+                          disabled={isPending || paymentStatus === "pending"}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2"
+                        >
+                          <option value="">Choose a meter</option>
+                          {meters.filter((m) => m.status === "ACTIVE").map((m) => (
+                            <option key={m.meter_number} value={m.meter_number}>
+                              {m.label} ({m.meter_number})
+                            </option>
+                          ))}
+                        </select>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
                   name="payment_source"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-foreground">Pay From</FormLabel>
                       <FormControl>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 gap-2">
                           <Button
                             type="button"
                             variant={field.value === "PHONE" ? "default" : "outline"}
@@ -527,14 +500,6 @@ export default function BuyUnitsForm() {
                             disabled={isPending || paymentStatus === "pending"}
                           >
                             Phone
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={field.value === "WALLET" ? "default" : "outline"}
-                            onClick={() => field.onChange("WALLET")}
-                            disabled={isPending || paymentStatus === "pending"}
-                          >
-                            Wallet
                           </Button>
                         </div>
                       </FormControl>
@@ -553,10 +518,11 @@ export default function BuyUnitsForm() {
                         <Input
                           disabled={isPending || paymentStatus === "pending"}
                           type="number"
+                          step="1"
                           placeholder="5000"
                           {...field}
                           onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
+                            const val = Number(e.target.value) || 0;
                             field.onChange(val);
                             handleAmountChange(val);
                           }}
@@ -594,8 +560,7 @@ export default function BuyUnitsForm() {
                             : ``}
                           Enter at least{" "}
                           <strong>{formatUGX(Math.ceil(estimate.minimum_payment))}</strong> to
-                          receive any units. STS mode uses the same ERA tariff — only the
-                          token delivery method differs.
+                          receive any units. Units are credited to your account after verified payment.
                         </p>
                       )}
                     {!estimating &&

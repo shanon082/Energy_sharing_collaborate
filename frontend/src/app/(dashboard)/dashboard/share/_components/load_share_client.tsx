@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
   Cpu,
   Forward,
   KeyRound,
-  Wallet,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,64 +19,24 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import LoadUnitsForm from "./load_units_form";
+import AllocationLoadClient from "./allocation-load-client";
 import ShareForm from "./share_form";
 import { useSelectedMeter } from "@/contexts/selected-meter-context";
-import { get } from "@/lib/fetch";
+import { useFeatures } from "@/contexts/features-context";
 
 type Mode = "choose" | "load" | "share";
 
 export default function LoadShareClient() {
   const [mode, setMode] = useState<Mode>("choose");
-  const { meters, refreshWallet } = useSelectedMeter();
+  const { meters } = useSelectedMeter();
+  const { peer_sharing } = useFeatures();
   const hasMeters = meters.length > 0;
-  const [unitBalance, setUnitBalance] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Function to fetch unit balance
-  const fetchUnitBalance = async () => {
-    setIsLoading(true);
-    try {
-      const response = await get<any>("wallet/balance/");
-      if (!response.error && response.data?.success) {
-        // Get the unit balance from the response
-        const balance = Number(response.data.unit_balance?.balance || 0);
-        setUnitBalance(balance);
-        return balance;
-      } else {
-        console.error("Failed to fetch unit balance:", response.error);
-        setUnitBalance(0);
-        return 0;
-      }
-    } catch (error) {
-      console.error("Error fetching unit balance:", error);
-      setUnitBalance(0);
-      return 0;
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (mode === "choose") {
-      void fetchUnitBalance();
-      // Also refresh wallet context in the background
-      void refreshWallet();
-    }
-  }, [mode, refreshWallet]);
-
-  // Refresh balance when returning from load/share
-  useEffect(() => {
-    if (mode === "choose") {
-      void fetchUnitBalance();
-    }
-  }, [mode]);
 
   if (mode === "load") {
-    return <LoadUnitsForm onBack={() => setMode("choose")} />;
+    return <AllocationLoadClient onBack={() => setMode("choose")} />;
   }
 
-  if (mode === "share") {
+  if (mode === "share" && peer_sharing) {
     return <ShareForm onBack={() => setMode("choose")} />;
   }
 
@@ -92,40 +50,34 @@ export default function LoadShareClient() {
           What would you like to do?
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
-          Load kWh onto your own meter, or share from your wallet to someone
-          else&apos;s meter.
+          {peer_sharing
+            ? "Load kWh onto your own meter, or share from your wallet to someone else's meter."
+            : "Load kWh from your wallet onto your own meter."}
         </p>
-        <div className="mt-5 inline-flex items-center gap-2 rounded-full border bg-muted/40 px-4 py-2 text-sm">
-          <Wallet className="h-4 w-4 text-primary" />
-          <span className="text-muted-foreground">Available in wallet</span>
-          <span className="font-semibold tabular-nums">
-            {isLoading ? "..." : (unitBalance !== null ? unitBalance.toFixed(2) : "0.00")} kWh
-          </span>
-        </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 md:gap-8">
+      <div className={cn("grid gap-6", peer_sharing && "md:grid-cols-2 md:gap-8")}>
         <OptionCard
           disabled={!hasMeters}
           accent="sky"
           icon={ArrowDownToLine}
           title="Load Units"
           badge="Your meters"
-          description="Move kWh from your wallet onto one of your registered meters. AMI meters update over the network; STS meters receive a keypad token."
+          description="View source-linked electricity entitlement, reserve it for the isolated AMI simulator when enabled, and track confirmed application."
           bullets={[
-            { icon: Cpu, text: "AMI → direct ThingsBoard top-up" },
-            { icon: KeyRound, text: "STS → keypad token for your CIU" },
+            { icon: Cpu, text: "AMI → simulated delivery after reservation" },
+            { icon: KeyRound, text: "STS → keypad loading awaiting hardware review" },
           ]}
           footerNote={
             hasMeters
               ? `${meters.length} meter${meters.length === 1 ? "" : "s"} on your account`
               : "Register a meter under My Meters first"
           }
-          buttonLabel="Load to my meter"
+          buttonLabel="View my allocation"
           onSelect={() => setMode("load")}
         />
 
-        <OptionCard
+        {peer_sharing && <OptionCard
           accent="emerald"
           icon={Forward}
           title="Share Units"
@@ -139,7 +91,7 @@ export default function LoadShareClient() {
           buttonLabel="Share to another meter"
           buttonVariant="outline"
           onSelect={() => setMode("share")}
-        />
+        />}
       </div>
     </div>
   );

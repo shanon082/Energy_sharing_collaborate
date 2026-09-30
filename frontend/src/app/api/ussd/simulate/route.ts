@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { API_URL } from "@/common/constants/api";
 import { requireUssdAuthHeaders } from "@/lib/ussd-api-auth";
+import { disabledFeature } from "@/lib/features-server";
 
 type UssdPayload = {
   sessionId: string;
@@ -10,6 +11,8 @@ type UssdPayload = {
 };
 
 export async function POST(request: NextRequest) {
+  const disabled = await disabledFeature("ussd");
+  if (disabled) return NextResponse.json(disabled, { status: 403 });
   const authHeaders = await requireUssdAuthHeaders();
   if (!authHeaders) {
     return NextResponse.json(
@@ -30,6 +33,16 @@ export async function POST(request: NextRequest) {
     });
 
     const raw = await backendResponse.text();
+    if (backendResponse.status === 403) {
+      try {
+        const body = JSON.parse(raw);
+        if (body?.code === "FEATURE_DISABLED") {
+          return NextResponse.json(body, { status: 403 });
+        }
+      } catch {
+        // The USSD gateway can also return plain text; preserve that below.
+      }
+    }
     let normalized = raw.trim();
 
     if (normalized.startsWith('"') && normalized.endsWith('"')) {

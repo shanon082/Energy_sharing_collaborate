@@ -1190,7 +1190,7 @@ class CreateUserAPIView(CreateAPIView):
     serializer_class = CreateUserSerializer
 
     def post(self, request, *args, **kwargs):
-        logger.info(f"[REGISTRATION] Starting registration with data: {request.data}")
+        logger.info("Registration request received")
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
@@ -1201,7 +1201,7 @@ class CreateUserAPIView(CreateAPIView):
         try:
             from loan.scoring import get_or_create_dummy_credit_signal
             credit_signal = get_or_create_dummy_credit_signal(user)
-            logger.info(f"[REGISTRATION] Created credit signal for user {user.id}: {credit_signal.payment_history}, {credit_signal.energy_consumption}, {credit_signal.financial_capacity}")
+            logger.info("Registration credit signal initialized for user %s", user.id)
         except Exception as e:
             logger.error(f"[REGISTRATION] Failed to create credit signal: {str(e)}")
 
@@ -1275,14 +1275,14 @@ class VerifyEmailAPIView(GenericAPIView):
         user_hash = request.query_params.get("uid")
         token = request.query_params.get("token")
         
-        logger.info(f"[EMAIL VERIFICATION] Starting verification with uid: {user_hash}, token: {token}")
+        logger.info("[EMAIL VERIFICATION] Verification request received")
         
         try:
             _, user_id = b64decode_hash(user_hash)
             user = User.objects.get(pk=user_id)
-            logger.info(f"[EMAIL VERIFICATION] Found user: {user.id}, email: {user.email}")
+            logger.info("[EMAIL VERIFICATION] Found user id %s", user.id)
         except User.DoesNotExist:
-            logger.error(f"[EMAIL VERIFICATION] User not found for hash: {user_hash}")
+            logger.error("[EMAIL VERIFICATION] User not found for activation link")
             raise CustomAPIException(message=error_msg)
         except Exception as e:
             logger.exception(
@@ -1619,8 +1619,7 @@ class UpdateAccountDetailsAPIView(GenericAPIView):
     def patch(self, request):
         try:
             logger.info(f"=== UPDATE ACCOUNT DETAILS REQUEST ===")
-            logger.info(f"User: {request.user.id} - {request.user.email}")
-            logger.info(f"Request data: {request.data}")
+            logger.info("Account details update requested by user %s", request.user.id)
             
             # Get or create account details for the user
             account_details = UserAccountDetails.objects.filter(user=request.user).order_by("-create_date").first()
