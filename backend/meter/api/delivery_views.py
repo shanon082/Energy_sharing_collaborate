@@ -44,6 +44,7 @@ def reserve_delivery_response(request):
         deliveries = reserve_for_delivery(
             owner=request.user, meter_no=meter_no,
             amount_kwh=request.data.get("amount"),
+            request_id=request.data.get("request_id"),
         )
     except AllocationError as exc:
         return Response({"code": "ENTITLEMENT_UNAVAILABLE", "message": str(exc)}, status=409)
@@ -51,6 +52,7 @@ def reserve_delivery_response(request):
         "status": "QUEUED",
         "message": "Energy reserved for simulated delivery. Meter application is not confirmed yet.",
         "meter_no": meter_no,
+        "request_id": str(deliveries[0].request_id) if deliveries[0].request_id else None,
         "deliveries": [
             {"id": row.pk, "command_id": str(row.command_id),
              "amount_kwh": str(row.amount_kwh), "status": row.status}

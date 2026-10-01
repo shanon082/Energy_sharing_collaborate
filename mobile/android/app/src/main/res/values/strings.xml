@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">gPawa Consumer Prototype</string>
+    <string name="title_activity_main">gPawa Consumer Prototype</string>
+    <string name="package_name">org.gpawa.consumer.prototype</string>
+    <string name="custom_url_scheme">org.gpawa.consumer.prototype</string>
+</resources>

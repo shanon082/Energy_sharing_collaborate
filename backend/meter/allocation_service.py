@@ -6,6 +6,7 @@ new meter delivery. All energy amounts use exact 0.01 kWh (10 Wh) increments.
 """
 
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import uuid
 
 from django.db import transaction
 from django.db.models import Sum
@@ -77,9 +78,14 @@ def authorize_loan_allocation(disbursement, units):
     return allocation
 
 
-def reserve_for_delivery(*, owner, meter_no, amount_kwh):
+def reserve_for_delivery(*, owner, meter_no, amount_kwh, request_id=None):
     """Reserve exact new entitlement, split across source rows if needed."""
     amount = parse_requested_kwh(amount_kwh)
+    if request_id is not None:
+        try:
+            request_id = uuid.UUID(str(request_id))
+        except (TypeError, ValueError, AttributeError):
+            raise AllocationError("Provide a valid delivery request ID.") from None
     with transaction.atomic():
         meter = Meter.objects.filter(
             user=owner, meter_no=meter_no, status=Meter.STATUS_ACTIVE,
@@ -92,6 +98,16 @@ def reserve_for_delivery(*, owner, meter_no, amount_kwh):
         ).order_by("pk"))
         if not allocations:
             raise AllocationError("No attributable new entitlement exists for this meter; legacy balance needs reconciliation.")
+        if request_id is not None:
+            prior = list(MeterDelivery.objects.filter(request_id=request_id).select_related(
+                "allocation", "allocation__meter",
+            ).order_by("pk"))
+            if prior:
+                if (any(row.allocation.owner_id != owner.pk or row.allocation.meter_id != meter.pk
+                        for row in prior) or
+                        sum((row.amount_kwh for row in prior), Decimal("0.00")) != amount):
+                    raise AllocationError("Delivery request ID is already bound to another selection or amount.")
+                return prior
         reserved = {
             row["allocation_id"]: row["total"]
             for row in MeterDelivery.objects.filter(allocation__in=allocations)
@@ -111,7 +127,7 @@ def reserve_for_delivery(*, owner, meter_no, amount_kwh):
         if remaining != 0:
             raise AllocationError("Insufficient attributable entitlement for this meter.")
         return [MeterDelivery.objects.create(
-            allocation=allocation, amount_kwh=take,
+            allocation=allocation, amount_kwh=take, request_id=request_id,
         ) for allocation, take in planned]
 
 

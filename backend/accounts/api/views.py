@@ -1425,10 +1425,7 @@ class ForgotPasswordAPIView(GenericAPIView):
             message=message,
             reply_to=[settings.DEFAULT_EMAIL_SENDER],
         )
-        logger.info(
-            f"[ACCOUNTS] Password reset. Sent: {sent}, message: {message},"
-            f" user: {user.pk}"
-        )
+        logger.info("[ACCOUNTS] Password reset email attempted for user %s; sent=%s", user.pk, sent)
         message = (
             "Thanks! If there's an account associated with this email, "
             "we'll send password reset instructions immediately."
@@ -1564,7 +1561,7 @@ class ResendVerificationEmailAPIView(GenericAPIView):
     @required_fields(["email"])
     def get(self, request):
         email = request.query_params.get("email")
-        logger.info(request.query_params)
+        logger.info("Verification resend requested")
         error_msg = "We have encountered an error resending the verification link"
         try:
             user = User.objects.get(email=email)
@@ -1645,7 +1642,7 @@ class UpdateAccountDetailsAPIView(GenericAPIView):
                 
             logger.info("Serializer is valid, saving data...")
             instance = serializer.save()
-            logger.info(f"Successfully saved: {instance.__dict__}")
+            logger.info("Account details saved for user %s", request.user.id)
             
             return Response(
                 {"message": "Account details updated successfully"},

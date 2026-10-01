@@ -64,7 +64,7 @@ FRONTEND_URL = get_env_variable("FRONTEND_URL", "http://localhost:3000")
 # ALLOWED_HOSTS — read from env (comma-separated) or use dev defaults
 # =============================
 _extra_hosts = [h.strip() for h in get_env_variable("EXTRA_ALLOWED_HOSTS", "").split(',') if h.strip()]
-ALLOWED_HOSTS = ['0.0.0.0', 'nginx', 'localhost', '127.0.0.1'] + _extra_hosts
+ALLOWED_HOSTS = ['0.0.0.0', 'nginx', 'localhost', '127.0.0.1', '192.168.97.107'] + _extra_hosts
 
 AUTH_USER_MODEL = 'accounts.User'
 
@@ -76,11 +76,16 @@ _prod_origin = get_env_variable("PRODUCTION_ORIGIN", "")  # e.g. https://energy-
 _base_origins = ['http://localhost:3000', 'http://localhost:3030']
 if _prod_origin:
     _base_origins.append(_prod_origin)
+_mobile_origin = get_env_variable("MOBILE_APP_ORIGIN", "")
+if _mobile_origin:
+    _base_origins.append(_mobile_origin)
 
 CSRF_TRUSTED_ORIGINS = _base_origins
 CORS_ALLOWED_ORIGINS = _base_origins
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_METHODS = ['GET', 'POST', 'PATCH', 'OPTIONS']
+CORS_ALLOW_HEADERS = ['authorization', 'content-type']
 
 # =============================
 from mtn_momo.config import MTN_MOMO_CONFIG, should_simulate_payments  # noqa: E402
@@ -121,6 +126,7 @@ INSTALLED_APPS = [
     'transactions',
     'meter',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'cities_light',
     'drf_yasg',
     'corsheaders',
@@ -205,7 +211,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': get_env_variable('DB_NAME', 'energy_share'),
         'USER': get_env_variable('DB_USER', 'energy_user'),
-        'PASSWORD': get_env_variable('DB_PASSWORD', ''),
+        'PASSWORD': get_env_variable('DB_PASSWORD', 'postgres'),
         'HOST': get_env_variable('DB_HOST', 'localhost'),
         'PORT': get_env_variable('DB_PORT', 5432, cast=int),
         "ATOMIC_REQUESTS": True,
@@ -277,9 +283,9 @@ EMAIL_HOST = get_env_variable("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = get_env_variable("EMAIL_PORT", 587, cast=int)
 EMAIL_USE_TLS = get_env_variable("EMAIL_USE_TLS", "True") == "True"
 EMAIL_USE_SSL = get_env_variable("EMAIL_USE_SSL", "False") == "True"
-EMAIL_HOST_USER = get_env_variable("EMAIL_HOST_USER", "gpawateam@gmail.com")
-EMAIL_HOST_PASSWORD = get_env_variable("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL = get_env_variable("DEFAULT_EMAIL_SENDER", "gpawateam@gmail.com")
+EMAIL_HOST_USER = get_env_variable("EMAIL_HOST_USER", "shanonsimon082@gmail.com")
+EMAIL_HOST_PASSWORD = get_env_variable("EMAIL_HOST_PASSWORD", "fzwkxrgmbbzvwlbd")
+DEFAULT_FROM_EMAIL = get_env_variable("DEFAULT_EMAIL_SENDER", "shanonsimon082@gmail.com")
 DEFAULT_EMAIL_SENDER = DEFAULT_FROM_EMAIL
 
 # =============================

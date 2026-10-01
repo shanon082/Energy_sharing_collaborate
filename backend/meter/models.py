@@ -162,6 +162,7 @@ class MeterDelivery(models.Model):
 
     allocation = models.ForeignKey(EnergyAllocation, on_delete=models.PROTECT, related_name="deliveries")
     command_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    request_id = models.UUIDField(null=True, blank=True, db_index=True)
     amount_kwh = models.DecimalField(max_digits=20, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUSES, default=QUEUED, db_index=True)
     attempt_count = models.PositiveIntegerField(default=0)
@@ -171,9 +172,14 @@ class MeterDelivery(models.Model):
     last_error = models.CharField(max_length=120, blank=True)
 
     class Meta:
-        constraints = [models.CheckConstraint(
-            condition=models.Q(amount_kwh__gt=0), name="delivery_positive_kwh",
-        )]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount_kwh__gt=0), name="delivery_positive_kwh"),
+            models.UniqueConstraint(
+                fields=["allocation", "request_id"],
+                condition=models.Q(request_id__isnull=False),
+                name="delivery_request_allocation_unique",
+            ),
+        ]
 
 
 class SimulatedMeter(models.Model):

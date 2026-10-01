@@ -129,6 +129,49 @@ class AllocationDeliveryTests(TransactionTestCase):
         )
         self.assertEqual(entitlement_summary(self.user, self.meter)["available_kwh"], Decimal("0.50"))
 
+    def test_delivery_request_id_reuses_existing_reservation_and_rejects_changes(self):
+        self.allocation("1.00")
+        request_id = uuid.uuid4()
+        first = reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                     amount_kwh="0.25", request_id=request_id)
+        again = reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                     amount_kwh="0.25", request_id=request_id)
+        self.assertEqual([row.pk for row in first], [row.pk for row in again])
+        with self.assertRaises(AllocationError):
+            reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                 amount_kwh="0.50", request_id=request_id)
+        self.assertEqual(MeterDelivery.objects.count(), 1)
+        self.assertEqual(entitlement_summary(self.user, self.meter)["available_kwh"], Decimal("0.75"))
+
+    def test_concurrent_same_delivery_request_id_reserves_once(self):
+        self.allocation("1.00")
+        request_id = uuid.uuid4()
+        barrier = Barrier(2)
+
+        def request_reservation():
+            close_old_connections()
+            barrier.wait(timeout=10)
+            try:
+                return reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                            amount_kwh="0.50", request_id=request_id)[0].pk
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            ids = list(executor.map(lambda _: request_reservation(), range(2)))
+        self.assertEqual(ids[0], ids[1])
+        self.assertEqual(MeterDelivery.objects.count(), 1)
+
+    def test_delivery_history_is_owner_bound(self):
+        self.allocation("1.00")
+        reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                             amount_kwh="0.25", request_id=uuid.uuid4())
+        own = self.client.get("/api/v1/meter/mobile-deliveries/?meter_no=SIM-OWN-1")
+        self.assertEqual(own.status_code, 200)
+        self.assertEqual(len(own.data["deliveries"]), 1)
+        other = self.client.get("/api/v1/meter/mobile-deliveries/?meter_no=SIM-OTHER-1")
+        self.assertEqual(other.status_code, 404)
+
     def test_duplicate_dispatch_and_acknowledgement_apply_once(self):
         self.allocation()
         delivery = reserve_for_delivery(

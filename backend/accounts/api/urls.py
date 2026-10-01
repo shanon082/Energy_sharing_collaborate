@@ -20,8 +20,13 @@ from django.urls import path, include
 from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
+from accounts.api.mobile_views import MobileAccountView, MobileLogoutView, MobileProfileView, MobilePasswordView
 
 urlpatterns = [
+    path("mobile-account/", MobileAccountView.as_view(), name="mobile-account"),
+    path("mobile-logout/", MobileLogoutView.as_view(), name="mobile-logout"),
+    path("mobile-profile/", MobileProfileView.as_view(), name="mobile-profile"),
+    path("mobile-password/", MobilePasswordView.as_view(), name="mobile-password"),
     path("register/", CreateUserAPIView.as_view(), name="register"),
     path(
         "verify-email/",

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env.local
+.env.production.local
+.env.android-debug.local
+android/.gradle/
+.gradle-user/
+android/build/
+android/app/build/
+android/local.properties
+*.jks
+*.keystore

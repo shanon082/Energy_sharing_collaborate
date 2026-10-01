@@ -42,7 +42,7 @@ def handle_send_email_verification(user_id):
         frontend_url = settings.FRONTEND_URL.rstrip('/')
         url = f"{frontend_url}/auth/verify-email?uid={user_hash}&token={token}"
         
-        logger.info(f"[EMAIL VERIFICATION] Generated verification URL: {url}")
+        logger.info("[EMAIL VERIFICATION] Generated verification URL for user %s", user.pk)
         
         message = (
             "You're almost there. Please click the link below to verify "
