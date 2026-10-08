@@ -28,6 +28,9 @@ class MobileApiTests(TestCase):
     def setUp(self):
         self.owner = User.objects.create_user(email="mobile-owner@example.invalid", password="test-only")
         self.other = User.objects.create_user(email="mobile-other@example.invalid", password="test-only")
+        for user in (self.owner, self.other):
+            user.profile.email_verified = True
+            user.profile.save(update_fields=["email_verified"])
         self.meter = Meter.objects.create(user=self.owner, meter_no="MOBILE-OWN", architecture=Meter.ARCH_AMI)
         self.other_meter = Meter.objects.create(user=self.other, meter_no="MOBILE-OTHER", architecture=Meter.ARCH_AMI)
         self.client = APIClient()
@@ -111,6 +114,9 @@ class MobileApiTests(TestCase):
         self.assertEqual(self.client.get("/api/v1/auth/mobile-account/").status_code, 403)
         self.assertEqual(self.client.get("/api/v1/loans/mobile-overview/").status_code, 403)
         self.assertEqual(self.client.get("/api/v1/meter/mobile-consumption/?meter_no=MOBILE-OWN").status_code, 403)
+        self.assertEqual(self.client.post("/api/v1/meter/mobile-consumption/?meter_no=MOBILE-OWN").status_code, 403)
+        self.owner.user_role = User.CLIENT
+        self.owner.save(update_fields=["user_role"])
         self.assertEqual(self.client.post("/api/v1/meter/mobile-consumption/?meter_no=MOBILE-OWN").status_code, 405)
 
     def test_profile_choices_and_role_fields_cannot_be_changed(self):

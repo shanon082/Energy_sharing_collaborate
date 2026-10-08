@@ -39,6 +39,9 @@ class AllocationDeliveryTests(TransactionTestCase):
     def setUp(self):
         self.user = User.objects.create_user(email="allocated@example.invalid", password="test-only")
         self.other = User.objects.create_user(email="other@example.invalid", password="test-only")
+        for user in (self.user, self.other):
+            user.profile.email_verified = True
+            user.profile.save(update_fields=["email_verified"])
         self.meter = Meter.objects.create(
             user=self.user, meter_no="SIM-OWN-1", architecture=Meter.ARCH_AMI,
         )

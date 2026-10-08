@@ -10,6 +10,6 @@ def validate_password(password):
     )
     regex = r"(?P<password>((?=\S*[A-Z])(?=\S*[a-z])(?=\S*\d)\S))"
 
-    if re.compile(regex).search(password) is None:
+    if password != password.strip() or re.compile(regex).search(password) is None:
         raise ValidationError(error)
     return None

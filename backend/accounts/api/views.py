@@ -45,7 +45,8 @@ from utils.decorators import (
 from utils.exceptions import CustomAPIException
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import connections
+from django.db import connections, transaction
+from django.db import IntegrityError
 from django.db.utils import OperationalError
 from django.db.models import Q
 from rest_framework import status
@@ -1104,9 +1105,9 @@ class LoginAPIView(TokenObtainPairView):
         get_or_create_credit_signal(user)
 
         # Staff members with 2FA enabled → issue a challenge token instead of full JWT
-        if (user.is_staff_member or user.is_superuser) and user.totp_enabled:
+        if (user.is_staff_member or user.is_staff or user.is_superuser) and user.totp_enabled:
             from django.core import signing
-            remember_me = bool(request.data.get("remember_me"))
+            remember_me = serializer.remember_me
             challenge_token = signing.dumps(
                 {'user_id': user.id, 'remember_me': remember_me},
                 salt='2fa_login_challenge',
@@ -1123,12 +1124,12 @@ class LoginAPIView(TokenObtainPairView):
                 },
             }, status=status.HTTP_200_OK)
 
-        # Normal flow — call parent to issue tokens
-        response = super().post(request, *args, **kwargs)
+        # Reuse the single validated token pair; do not authenticate/issue twice.
+        response = Response(serializer.validated_data, status=status.HTTP_200_OK)
 
         if response.status_code == 200:
-            redirect = '/admin/dashboard' if (user.is_staff_member or user.is_superuser) else '/dashboard'
-            if getattr(user, 'must_change_password', False) and not (user.is_staff_member or user.is_superuser):
+            redirect = '/admin/dashboard' if (user.is_staff_member or user.is_staff or user.is_superuser) else '/dashboard'
+            if getattr(user, 'must_change_password', False) and not (user.is_staff_member or user.is_staff or user.is_superuser):
                 redirect = '/change-password'
             response.data.update({
                 'user': {
@@ -1193,7 +1194,14 @@ class CreateUserAPIView(CreateAPIView):
         logger.info("Registration request received")
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+        except IntegrityError as exc:
+            constraint = getattr(getattr(exc.__cause__, "diag", None), "constraint_name", "")
+            if constraint not in {"accounts_user_email_key", "accounts_user_phone_number_key"}:
+                raise
+            return Response({"error": "Email or phone number already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
         logger.info(f"[REGISTRATION] User {user.id} created successfully")
         
@@ -1319,8 +1327,7 @@ class UserConfigAPIView(GenericAPIView):
     serializer_class = UserConfigSerializer
 
     def get(self, request):
-        print(f"[USER CONFIG] User: {request.user}, Authenticated: {request.user.is_authenticated}")
-        print(f"[USER CONFIG] User ID: {request.user.id if request.user.is_authenticated else 'None'}")
+        logger.info("Account configuration requested by user %s", request.user.pk)
         user = request.user
         serializer = self.serializer_class(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1386,7 +1393,7 @@ class ForgotPasswordAPIView(GenericAPIView):
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        email = request.data.get("email")
+        email = serializer.validated_data["email"]
         message = (
             "Thanks! If there's an account associated with this email. "
             " We'll send password reset instructions immediately."
@@ -1395,11 +1402,8 @@ class ForgotPasswordAPIView(GenericAPIView):
 
         try:
             user = User.objects.get(email=email)
-        except User.DoesNotExist as e:
-            logger.exception(
-                f"[FORGOT PASSWORD]] User with email {email} does not exist.\n"
-                f"Error: {text_type(e)}"
-            )
+        except User.DoesNotExist:
+            logger.info("Password recovery requested for an unavailable account")
             return Response(response_data, status=status.HTTP_200_OK)
 
         token = reset_password_token_generator.make_token(user)
@@ -1482,6 +1486,7 @@ class ResetPasswordAPIView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         user.set_password(serializer.validated_data["password"])
+        user.must_change_password = False
         user.save()
 
         profile = user.profile

@@ -5,11 +5,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from accounts.permissions import ConsumerAccountPermission
 from transactions.models import PaymentIntent
 
 
 class MobilePaymentReceiptsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         if request.user.user_role != User.CLIENT:

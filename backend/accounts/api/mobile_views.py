@@ -9,12 +9,14 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
 from accounts.models import User
+from accounts.permissions import ConsumerAccountPermission
 from accounts.api.serializers import UpdateUserProfileSerializer
 from loan.scoring import profile_scoring_fields_complete, sync_credit_signal_from_profile
 
 
 class MobileAccountView(APIView):
-    permission_classes = [IsAuthenticated]
+    allow_required_password_change = True
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         user = request.user
@@ -32,7 +34,9 @@ class MobileAccountView(APIView):
 
 
 class MobileLogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    allow_required_password_change = True
+    allow_unverified_account = True
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def post(self, request):
         raw_refresh = request.data.get("refresh")
@@ -50,7 +54,7 @@ class MobileLogoutView(APIView):
 
 class MobileProfileView(APIView):
     """Only the existing consumer assessment fields are editable here."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def _consumer(self, request):
         return request.user.user_role == User.CLIENT
@@ -90,7 +94,8 @@ class MobileProfileView(APIView):
 
 
 class MobilePasswordView(APIView):
-    permission_classes = [IsAuthenticated]
+    allow_required_password_change = True
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def post(self, request):
         user = request.user

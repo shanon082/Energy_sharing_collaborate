@@ -5,7 +5,9 @@ from django.conf import settings
 from rest_framework import serializers
 from cities_light.models import Country
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+from rest_framework_simplejwt.utils import datetime_from_epoch
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenObtainSerializer
 from rest_framework.validators import UniqueValidator
 from accounts.models import (
     Profile,
@@ -428,11 +430,11 @@ class CreateUserSerializer(serializers.ModelSerializer):
             'blank': 'Phone number cannot be blank'
         }
     )
-    gender = serializers.CharField(required=True)
+    gender = serializers.ChoiceField(choices=User.USER_GENDER, required=True)
     password = serializers.CharField(
-        validators=[validate_password], required=True
+        validators=[validate_password], required=True, write_only=True, trim_whitespace=False
     )
-    confirm_password = serializers.CharField(required=True)
+    confirm_password = serializers.CharField(required=True, write_only=True, trim_whitespace=False)
 
     class Meta:
         model = User
@@ -616,46 +618,36 @@ class LoginSerializer(EmailTokenObtainSerializer):
         'invalid_credentials': 'Invalid email or password. Please try again.',
     }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["password"].trim_whitespace = False
+
     @classmethod
     def get_token(cls, user, *, remember_me=False):
         refresh = RefreshToken.for_user(user)
         if remember_me:
             days = getattr(settings, "REMEMBER_ME_REFRESH_DAYS", 30)
             refresh.set_exp(lifetime=timedelta(days=days))
+            OutstandingToken.objects.filter(jti=refresh["jti"]).update(
+                expires_at=datetime_from_epoch(refresh["exp"]), token=str(refresh),
+            )
         return refresh
 
     def validate(self, attrs):
-        remember_me = bool(attrs.pop("remember_me", False))
-        try:
-            data = super().validate(attrs)
-        except serializers.ValidationError:
-            raise
-        except Exception as e:
-            logger.error(f"Login authentication error: {str(e)}")
-            raise serializers.ValidationError({
-                'non_field_errors': ['Invalid email or password. Please try again.']
-            })
-
-        if remember_me:
-            refresh = self.get_token(self.user, remember_me=True)
-            data["refresh"] = str(refresh)
-            data["access"] = str(refresh.access_token)
-
+        self.remember_me = attrs.pop("remember_me", False)
+        # Authenticate once without generating an outstanding refresh token.
+        data = TokenObtainSerializer.validate(self, attrs)
         user = self.user
-        if not user.profile.email_verified:
+        profile = getattr(user, "profile", None)
+        if profile is None or not profile.email_verified:
             raise serializers.ValidationError({
                 "email": ["Please verify your email address before logging in."]
             })
-
-        data['user'] = {
-            'id': user.id,
-            'email': user.email,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'user_role': user.user_role,
-            'is_admin': user.user_role == User.ADMIN,
-            'redirect_to': '/admin/dashboard' if user.user_role == User.ADMIN else '/dashboard'
-        }
+        if (user.is_staff_member or user.is_staff or user.is_superuser) and user.totp_enabled:
+            return data  # The view returns the existing staff challenge contract.
+        refresh = self.get_token(user, remember_me=self.remember_me)
+        data["refresh"] = str(refresh)
+        data["access"] = str(refresh.access_token)
         return data
 
 
@@ -779,10 +771,10 @@ class ResetPasswordConfirmSerializer(serializers.Serializer):
         validators=[validate_password],
         max_length=128,
         min_length=8,
-        required=True,
+        required=True, write_only=True, trim_whitespace=False,
     )
     confirm_password = serializers.CharField(
-        max_length=128, min_length=8, required=True
+        max_length=128, min_length=8, required=True, write_only=True, trim_whitespace=False
     )
 
     def validate(self, data):

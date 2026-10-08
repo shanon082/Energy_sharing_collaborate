@@ -5,13 +5,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from accounts.permissions import ConsumerAccountPermission
 from meter.models import Meter, MeterDelivery, MeterUsageDaily, SimulatedTelemetry
 from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 
 
 class MobileConsumptionHistoryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         if request.user.user_role != User.CLIENT:
@@ -40,7 +41,7 @@ class MobileConsumptionHistoryView(APIView):
 
 
 class MobileDeliveryHistoryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         if request.user.user_role != User.CLIENT:
@@ -64,7 +65,7 @@ class MobileDeliveryHistoryView(APIView):
 
 class MobilePurchaseQuoteView(APIView):
     """Current tariff preview, never a payment or promised allocation."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def post(self, request):
         if request.user.user_role != User.CLIENT:

@@ -361,7 +361,10 @@ class VerifiedSettlementTests(TransactionTestCase):
         self.assertEqual(PaymentIntent.objects.filter(status=PaymentIntent.PENDING).count(), 2)
         self.assertEqual(UnitBalance.objects.get(user=self.owner).balance, 0)
         self.assertEqual(loan.amount_paid, 0)
-        self.assertEqual(self.client.get(f"/api/v1/loans/payment-status/{repayment.data['external_id']}/").data["payment_status"], "PENDING")
+        pending = PaymentIntent.objects.get(purpose=PaymentIntent.LOAN_REPAYMENT)
+        with patch("transactions.payment_settlement.MTNMoMoService") as provider:
+            provider.return_value.get_payment_status.return_value = self.evidence(pending, status="PENDING")
+            self.assertEqual(self.client.get(f"/api/v1/loans/payment-status/{repayment.data['external_id']}/").data["payment_status"], "PENDING")
 
     def test_purchase_request_id_prevents_duplicate_collection_and_cross_purpose_reuse(self):
         request_id = str(uuid.uuid4())

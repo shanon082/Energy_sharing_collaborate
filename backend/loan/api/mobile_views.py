@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
+from accounts.permissions import ConsumerAccountPermission
 from loan.models import LoanApplication
 from loan.services import get_loan_eligibility, user_can_apply_for_loan
 from loan.scoring import profile_scoring_fields_complete
@@ -18,7 +19,7 @@ from django.utils import timezone
 
 
 class MobileLoanOverviewView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         if request.user.user_role != User.CLIENT:
@@ -49,7 +50,7 @@ class MobileLoanOverviewView(APIView):
 
 
 class MobileLoanEligibilityView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         if request.user.user_role != User.CLIENT:
@@ -77,7 +78,7 @@ class MobileLoanEligibilityView(APIView):
 
 class MobileLoanQuoteView(APIView):
     """Informational quote using the same tariff and stored-rate calculation paths."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def post(self, request):
         eligibility = MobileLoanEligibilityView().get(request)
