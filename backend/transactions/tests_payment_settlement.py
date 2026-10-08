@@ -363,6 +363,141 @@ class VerifiedSettlementTests(TransactionTestCase):
         self.assertEqual(loan.amount_paid, 0)
         self.assertEqual(self.client.get(f"/api/v1/loans/payment-status/{repayment.data['external_id']}/").data["payment_status"], "PENDING")
 
+    def test_purchase_request_id_prevents_duplicate_collection_and_cross_purpose_reuse(self):
+        request_id = str(uuid.uuid4())
+        payload = {"amount": "10000", "phone_number": "256700000001",
+                   "meter_no": self.meter.meter_no, "client_request_id": request_id}
+        with patch("transactions.api.payment_views.request_payment", return_value={"status": "PENDING"}) as provider:
+            first = self.client.post("/api/v1/meter/buy-units/", payload, format="json")
+            second = self.client.post("/api/v1/meter/buy-units/", payload, format="json")
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertTrue(second.data["reused"])
+            self.assertEqual(first.data["external_id"], second.data["external_id"])
+            self.assertEqual(provider.call_count, 1)
+            changed = self.client.post("/api/v1/meter/buy-units/", {**payload, "amount": "10001"}, format="json")
+            self.assertEqual(changed.status_code, 409)
+            loan = self.loan()
+            wrong_purpose = self.client.post(f"/api/v1/loans/repay/momo/{loan.pk}/", {
+                "amount": "1000", "phone_number": "256700000001", "client_request_id": request_id,
+            }, format="json")
+            self.assertEqual(wrong_purpose.status_code, 409)
+            self.assertEqual(provider.call_count, 1)
+        self.assertEqual(PaymentIntent.objects.count(), 1)
+
+    def test_repayment_request_id_reuses_one_pending_intent(self):
+        loan = self.loan()
+        request_id = str(uuid.uuid4())
+        payload = {"amount": "1000", "phone_number": "256700000001", "client_request_id": request_id}
+        with patch("transactions.api.payment_views.request_payment", return_value={"status": "PENDING"}) as provider:
+            first = self.client.post(f"/api/v1/loans/repay/momo/{loan.pk}/", payload, format="json")
+            second = self.client.post(f"/api/v1/loans/repay/momo/{loan.pk}/", payload, format="json")
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertTrue(second.data["reused"])
+            self.assertEqual(provider.call_count, 1)
+        self.assertEqual(PaymentIntent.objects.filter(purpose=PaymentIntent.LOAN_REPAYMENT).count(), 1)
+        self.assertEqual(LoanRepayment.objects.filter(loan=loan).count(), 1)
+        self.assertEqual(loan.amount_paid, 0)
+
+    def test_interrupted_initiation_keeps_intent_and_manual_retry_does_not_recollect(self):
+        request_id = str(uuid.uuid4())
+        payload = {"amount": "10000", "phone_number": "256700000001",
+                   "meter_no": self.meter.meter_no, "client_request_id": request_id}
+        with patch("transactions.api.payment_views.request_payment", side_effect=ConnectionError("test interruption")) as provider:
+            interrupted = self.client.post("/api/v1/meter/buy-units/", payload, format="json")
+        self.assertEqual(interrupted.status_code, 502)
+        self.assertEqual(interrupted.data["code"], "PAYMENT_INITIATION_UNCONFIRMED")
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(PaymentIntent.objects.count(), 1)
+        with patch("transactions.api.payment_views.request_payment") as provider:
+            retry = self.client.post("/api/v1/meter/buy-units/", payload, format="json")
+            self.assertEqual(retry.status_code, 200)
+            self.assertTrue(retry.data["reused"])
+            provider.assert_not_called()
+
+    def test_concurrent_same_purchase_request_id_starts_one_collection(self):
+        request_id = str(uuid.uuid4())
+        payload = {"amount": "10000", "phone_number": "256700000001",
+                   "meter_no": self.meter.meter_no, "client_request_id": request_id}
+        barrier = Barrier(2)
+
+        def initiate():
+            close_old_connections()
+            client = APIClient()
+            client.force_authenticate(user=self.owner)
+            barrier.wait(timeout=10)
+            try:
+                return client.post("/api/v1/meter/buy-units/", payload, format="json").status_code
+            finally:
+                connection.close()
+
+        with patch("transactions.api.payment_views.request_payment", return_value={"status": "PENDING"}) as provider:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                codes = list(executor.map(lambda _: initiate(), range(2)))
+        self.assertEqual(codes, [200, 200])
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(PaymentIntent.objects.count(), 1)
+
+    @override_settings(MOBILE_PAYMENT_ACTIONS_ENABLED=True)
+    def test_mobile_payment_pending_guard_and_other_account_are_closed(self):
+        self.owner.profile.email_verified = True
+        self.owner.profile.save(update_fields=["email_verified"])
+        self.other.profile.email_verified = True
+        self.other.profile.save(update_fields=["email_verified"])
+        base = {"amount": "10000", "phone_number": "256700000001",
+                "meter_no": self.meter.meter_no, "client_request_id": str(uuid.uuid4())}
+        with patch("transactions.api.payment_views.request_payment", return_value={"status": "PENDING"}) as provider:
+            first = self.client.post("/api/v1/meter/mobile-buy-units/", base, format="json")
+            blocked = self.client.post("/api/v1/meter/mobile-buy-units/", {
+                **base, "client_request_id": str(uuid.uuid4()),
+            }, format="json")
+            self.client.force_authenticate(user=self.other)
+            other_meter = self.client.post("/api/v1/meter/mobile-buy-units/", {
+                **base, "client_request_id": str(uuid.uuid4()),
+            }, format="json")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.data["code"], "PAYMENT_PENDING_RECONCILIATION")
+        self.assertEqual(other_meter.status_code, 400)
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(PaymentIntent.objects.count(), 1)
+
+    def test_mobile_payment_routes_are_closed_by_default_before_provider_or_intent(self):
+        loan = self.loan()
+        with patch("transactions.api.payment_views.request_payment") as provider:
+            purchase = self.client.post("/api/v1/meter/mobile-buy-units/", {
+                "amount": "10000", "phone_number": "256700000001",
+                "meter_no": self.meter.meter_no, "client_request_id": str(uuid.uuid4()),
+                "MOBILE_PAYMENT_ACTIONS_ENABLED": True,
+            }, format="json")
+            repayment = self.client.post(f"/api/v1/loans/mobile-repay/momo/{loan.pk}/", {
+                "amount": "1000", "phone_number": "256700000001",
+                "client_request_id": str(uuid.uuid4()),
+            }, format="json")
+        self.assertEqual(purchase.status_code, 403)
+        self.assertEqual(repayment.status_code, 403)
+        self.assertEqual(PaymentIntent.objects.count(), 0)
+        provider.assert_not_called()
+
+    @override_settings(MOBILE_PAYMENT_ACTIONS_ENABLED=True)
+    def test_mobile_payment_route_requires_verified_consumer_and_uses_verified_intent(self):
+        payload = {"amount": "10000", "phone_number": "256700000001",
+                   "meter_no": self.meter.meter_no, "client_request_id": str(uuid.uuid4())}
+        with patch("transactions.api.payment_views.request_payment") as provider:
+            denied = self.client.post("/api/v1/meter/mobile-buy-units/", payload, format="json")
+        self.assertEqual(denied.status_code, 403)
+        provider.assert_not_called()
+        self.owner.profile.email_verified = True
+        self.owner.profile.save(update_fields=["email_verified"])
+        with patch("transactions.api.payment_views.request_payment", return_value={"status": "PENDING"}) as provider:
+            allowed = self.client.post("/api/v1/meter/mobile-buy-units/", payload, format="json")
+            retry = self.client.post("/api/v1/meter/mobile-buy-units/", payload, format="json")
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(retry.data["external_id"], allowed.data["external_id"])
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(PaymentIntent.objects.count(), 1)
+
     def test_background_reconciliation_settles_after_browser_is_closed(self):
         intent = self.purchase_intent()
         PaymentIntent.objects.filter(pk=intent.pk).update(

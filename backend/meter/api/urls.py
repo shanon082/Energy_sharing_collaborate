@@ -1,7 +1,7 @@
 # meter/urls.py - Add the new endpoint
 
 from django.urls import path
-from meter.api.mobile_views import MobileConsumptionHistoryView, MobileDeliveryHistoryView
+from meter.api.mobile_views import MobileConsumptionHistoryView, MobileDeliveryHistoryView, MobilePurchaseQuoteView
 from .views import (
     BuyUnitsView, 
     CheckPaymentStatusView, 
@@ -28,7 +28,7 @@ from .views import (
 )
 
 from meter.api import views
-from transactions.api.payment_views import VerifiedPurchaseView, VerifiedPurchaseStatusView
+from transactions.api.payment_views import VerifiedPurchaseView, VerifiedPurchaseStatusView, MobileVerifiedPurchaseView
 from meter.api.delivery_views import (
     AllocationStatusView, DeliveryRequestView,
     SimulatorAcknowledgementView, SimulatorTelemetryView,
@@ -38,10 +38,12 @@ from meter.api.delivery_views import (
 urlpatterns = [
     path('mobile-consumption/', MobileConsumptionHistoryView.as_view(), name='mobile-consumption'),
     path('mobile-deliveries/', MobileDeliveryHistoryView.as_view(), name='mobile-deliveries'),
+    path('mobile-purchase-quote/', MobilePurchaseQuoteView.as_view(), name='mobile-purchase-quote'),
     path('send-units/', SendUnitsView.as_view(), name="send-units"),
     path('receive-units/', ReceiveUnitsView.as_view(), name="receive-units"),
     path('token/', TokenView.as_view(), name="token"),
     path('buy-units/', VerifiedPurchaseView.as_view(), name="buy-units"),
+    path('mobile-buy-units/', MobileVerifiedPurchaseView.as_view(), name="mobile-buy-units"),
     path('check-payment-status/', VerifiedPurchaseStatusView.as_view(), name="check-payment-status"),
     path('test-meter-push/', MeterPushTestView.as_view(), name="test-meter-push"),
     path('admin-test-meter-push/', AdminMeterPushTestView.as_view(), name="admin-test-meter-push"),

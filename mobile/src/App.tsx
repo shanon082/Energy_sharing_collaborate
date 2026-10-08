@@ -3,11 +3,16 @@ import { Capacitor } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
 import { DISABLED_FEATURES, parseFeatureAvailability, type FeatureAvailability } from "../../frontend/src/lib/features.ts";
 import { API_BASE_URL } from "./api/config.ts";
+import { DISABLED_MOBILE_ACTIONS, parseMobileActions, type MobileActions } from "./api/mobile-actions.ts";
 import { Access } from "./Access.tsx";
 import { ProfileEditor } from "./Profile.tsx";
 import { DeliveryPanel } from "./Delivery.tsx";
 import { Activity } from "./Activity.tsx";
 import { LoanQuote } from "./LoanQuote.tsx";
+import { PurchasePanel, RepaymentPanel } from "./PaymentActions.tsx";
+import { PreviewApp } from "./PreviewApp.tsx";
+import { Brand, Icon } from "./ui.tsx";
+import { CONSUMER_TABS, type ConsumerTab } from "./consumer-navigation.ts";
 import { parseAllocation, parseConsumption, parseLoans, parseMeters,
   type AllocationStatus, type ConsumptionHistory, type Loan, type MeterInfo } from "./api/contracts.ts";
 import { SessionExpired, SessionManager, TransportError, type ConsumerIdentity } from "./auth/session.ts";
@@ -15,7 +20,7 @@ import { AndroidSecureStore } from "./auth/secure-store.ts";
 import { dateTime, energy, ugx } from "./format.ts";
 
 const session = new SessionManager(API_BASE_URL, new AndroidSecureStore());
-type Tab = "dashboard" | "meters" | "consumption" | "loans" | "activity" | "account";
+type Tab = ConsumerTab;
 type Resource<T> = { value: T | null; loading: boolean; error: string | null; fetchedAt: string | null };
 const empty = <T,>(): Resource<T> => ({ value: null, loading: false, error: null, fetchedAt: null });
 
@@ -80,7 +85,7 @@ function PasswordChange({ required, onDone, onCancel }: {
 }
 
 export default function App() {
-  const [phase, setPhase] = useState<"checking" | "signed_out" | "password_required" | "signed_in">("checking");
+  const [phase, setPhase] = useState<"checking" | "signed_out" | "password_required" | "signed_in" | "preview">("checking");
   const [account, setAccount] = useState<ConsumerIdentity | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -94,6 +99,7 @@ export default function App() {
   const [consumption, setConsumption] = useState<Resource<ConsumptionHistory>>(empty);
   const [features, setFeatures] = useState<FeatureAvailability>(DISABLED_FEATURES);
   const [featuresVerified, setFeaturesVerified] = useState(false);
+  const [mobileActions, setMobileActions] = useState<MobileActions>(DISABLED_MOBILE_ACTIONS);
   const booted = useRef(false);
   const selectedRef = useRef<string | null>(null);
 
@@ -110,12 +116,14 @@ export default function App() {
 
   const loadFeatures = useCallback(async () => {
     try {
-      const data = await session.publicGet<{ features?: unknown }>("features/");
+      const data = await session.publicGet<{ features?: unknown; mobile_actions?: unknown }>("features/");
       setOffline(false);
       setFeatures(parseFeatureAvailability(data.features)); setFeaturesVerified(true);
+      setMobileActions(parseMobileActions(data.mobile_actions));
     } catch (error) {
       if (error instanceof TransportError) setOffline(true);
       setFeatures(DISABLED_FEATURES); setFeaturesVerified(false);
+      setMobileActions(DISABLED_MOBILE_ACTIONS);
     }
   }, []);
 
@@ -190,7 +198,6 @@ export default function App() {
   useEffect(() => {
     if (booted.current) return;
     booted.current = true;
-    void loadFeatures();
     void (async () => {
       let restoreStage: "refresh" | "account" = "refresh";
       try {
@@ -200,7 +207,7 @@ export default function App() {
         const user = await session.getAccount();
         setOffline(false);
         setAccount(user); setPhase(user.must_change_password ? "password_required" : "signed_in");
-        if (!user.must_change_password) { void loadMeters(); void loadLoans(); }
+        if (!user.must_change_password) { void loadFeatures(); void loadMeters(); void loadLoans(); }
       } catch (error) {
         if (error instanceof TransportError) setOffline(true);
         setAuthError(error instanceof TransportError
@@ -214,7 +221,7 @@ export default function App() {
   }, [loadFeatures, loadMeters, loadLoans]);
 
   useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
+    if (!Capacitor.isNativePlatform() || phase === "signed_out" || phase === "preview") return;
     let removed = false;
     let listener: { remove: () => Promise<void> } | undefined;
     void NativeApp.addListener("backButton", () => {
@@ -253,21 +260,27 @@ export default function App() {
     finally { setBusy(false); }
   };
 
-  if (phase === "checking") return <main className="loading" role="status">Opening gPawa…</main>;
-  if (phase === "signed_out") return <Access session={session} onLogin={login} loginBusy={busy} loginError={authError} />;
+  if (phase === "checking") return <main className="loading" role="status"><Brand /><span className="loading-spinner" /><p>Opening your energy account…</p></main>;
+  if (phase === "preview") return <PreviewApp onExit={() => setPhase("signed_out")} />;
+  if (phase === "signed_out") return <Access session={session} onLogin={login} loginBusy={busy} loginError={authError}
+    onPreview={() => { clearView(); setPhase("preview"); }} />;
   if (phase === "password_required") return <PasswordChange required onDone={() => void logout()} />;
   if (changingPassword) return <PasswordChange required={false} onDone={() => void logout()}
     onCancel={() => setChangingPassword(false)} />;
 
   const meter = meters.value?.find((item) => item.meter_number === selectedMeter) ?? null;
   return <div className="app-shell">
-    <header className="topbar"><div><strong>gPawa</strong><span>Consumer prototype</span></div>
-      <button className="quiet" onClick={refresh}>Refresh</button></header>
+    <header className="topbar"><Brand /><div className="header-actions">
+      <button className="icon-button" aria-label="Refresh account" onClick={refresh}><Icon name="refresh" /></button>
+      <button className="icon-button" aria-label="Activity and notifications" onClick={() => setTab("activity")}><Icon name="bell" /></button>
+      <button className="avatar-button" aria-label="Your account" onClick={() => setTab("account")}>{account?.first_name?.charAt(0) || "U"}</button>
+    </div></header>
     {offline && <div className="offline" role="status">A request could not reach the API. Displayed values may be stale; tap Refresh to retry.</div>}
     <main className="content">
       {tab === "dashboard" && <>
-        <h1>Dashboard</h1>
-        <p className="muted">Hello, {account?.first_name || account?.email || "consumer"}.</p>
+        <div className="page-heading"><span className="eyebrow">YOUR ENERGY AT A GLANCE</span>
+          <h1>Hello, {account?.first_name || "there"}.</h1>
+          <p className="muted">Your electricity account, in one place.</p></div>
         <Panel title="Selected meter">
           {meter ? <p><strong>{meter.label}</strong><br /><span className="muted">{meter.meter_number} · {meter.architecture}</span></p>
             : <p className="muted">Choose a meter on the Meters tab to view its entitlement.</p>}
@@ -290,6 +303,9 @@ export default function App() {
         </Panel>}
         {meter && <DeliveryPanel key={meter.meter_number} session={session} meterNo={meter.meter_number}
           allocation={allocation.value} onReserved={() => void loadSelected(meter.meter_number)} />}
+        {meter && <PurchasePanel key={`purchase-${meter.meter_number}`} session={session}
+          meterNo={meter.meter_number} enabled={mobileActions.purchase}
+          onActivity={() => setTab("activity")} />}
         <Panel title="Loan position"><StateLine data={loans} offline={offline} />
           {loans.value && (loans.value.length ? loans.value.map((loan) =>
             <div className="list-row" key={loan.id}><span>{loan.loan_id} · {loan.status}</span>
@@ -337,6 +353,8 @@ export default function App() {
             <div className="list-row" key={row.id}><span>{dateTime(row.paid_at)}<small>{row.status} · Applied {ugx(row.applied_ugx)}
               {row.excess_ugx && <> · Excess {ugx(row.excess_ugx)}</>}</small></span><strong>{ugx(row.received_ugx)}</strong></div>)
             : <p className="muted">No repayments recorded.</p>}
+          <RepaymentPanel session={session} loan={loan} enabled={mobileActions.repayment}
+            onActivity={() => setTab("activity")} />
         </Panel>) : <Panel title="No loans"><p className="muted">No loan records are available.</p></Panel>)}
       </>}
 
@@ -350,14 +368,14 @@ export default function App() {
         <button className="secondary" onClick={() => setChangingPassword(true)}>Change password</button>
       </Panel><Panel title="Feature availability">
         <p className="muted">{featuresVerified ? "Supplied by Django" : "Could not verify; deferred features remain hidden."}</p>
-        <p className="muted">{Object.values(features).filter(Boolean).length} optional features enabled on the server; this read-only app offers none of their actions.</p>
+        <p className="muted">{Object.values(features).filter(Boolean).length} deferred features enabled on the server. Mobile purchase and repayment requests are {mobileActions.purchase || mobileActions.repayment ? "available only through verified provider flow" : "disabled pending policy approval and provider setup"}; loan applications remain unavailable.</p>
       </Panel><Panel title="Session"><button className="danger" onClick={() => void logout()}>Log out</button>
         <p className="muted small">Offline logout clears this device; server revocation needs a connection.</p></Panel></>}
     </main>
     <nav className="bottom-nav" aria-label="Main navigation">
-      {(["dashboard", "meters", "consumption", "loans", "activity", "account"] as const).map((item) =>
-        <button key={item} aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>
-          {item[0].toUpperCase() + item.slice(1)}</button>)}
+      {CONSUMER_TABS.map((item) =>
+        <button key={item.id} aria-current={tab === item.id ? "page" : undefined} onClick={() => setTab(item.id)}>
+          <Icon name={item.icon} /><span>{item.label}</span></button>)}
     </nav>
   </div>;
 }

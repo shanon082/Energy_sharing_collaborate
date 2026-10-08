@@ -108,6 +108,8 @@ class PaymentIntent(models.Model):
     currency = models.CharField(max_length=3, default="UGX")
     provider = models.CharField(max_length=20, default="MTN_PRODUCTION")
     provider_reference = models.UUIDField(unique=True)
+    # Optional for legacy web callers; mobile supplies it for retry-safe initiation.
+    client_request_id = models.UUIDField(null=True, blank=True, unique=True)
     provider_external_id = models.CharField(max_length=100, unique=True)
     purchase = models.OneToOneField(
         Transaction, on_delete=models.PROTECT, null=True, blank=True,

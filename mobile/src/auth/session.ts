@@ -1,4 +1,5 @@
 import type { SessionStore } from "./secure-store.ts";
+import { clearOwnerRequestIds } from "../api/request-id.ts";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -36,6 +37,12 @@ function errorMessage(body: unknown, fallback: string): string {
     if (typeof data[key] === "string") return data[key] as string;
   }
   return fallback;
+}
+
+function errorCode(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const code = (body as Record<string, unknown>).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 export class SessionManager {
@@ -82,6 +89,7 @@ export class SessionManager {
   private async clear(): Promise<void> {
     this.epoch += 1;
     this.access = null;
+    clearOwnerRequestIds(this.userId);
     this.userId = null;
     await this.store.clear();
   }
@@ -182,7 +190,8 @@ export class SessionManager {
 
   private async publicRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
     const response = await this.call(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (response.status >= 400) throw new ApiError(errorMessage(response.body, "Request failed."), response.status);
+    if (response.status >= 400) throw new ApiError(errorMessage(response.body, "Request failed."),
+      response.status, errorCode(response.body));
     return response.body as T;
   }
 
@@ -203,7 +212,8 @@ export class SessionManager {
       response = await this.call(path, options, this.access);
     }
     if (epoch !== this.epoch) throw new SessionExpired();
-    if (response.status >= 400) throw new ApiError(errorMessage(response.body, "Request failed."), response.status);
+    if (response.status >= 400) throw new ApiError(errorMessage(response.body, "Request failed."),
+      response.status, errorCode(response.body));
     return response.body as T;
   }
 

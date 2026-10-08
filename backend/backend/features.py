@@ -50,8 +50,20 @@ class FeatureAvailabilityView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        from transactions.payment_settlement import PaymentSettlementError, require_real_ugx_provider
+        provider_ready = False
+        try:
+            require_real_ugx_provider()
+            provider_ready = True
+        except PaymentSettlementError:
+            pass
         response = Response({
             "features": {key: feature_enabled(key) for key in FEATURE_ENV_VARS},
+            "mobile_actions": {
+                "purchase": bool(getattr(settings, "MOBILE_PAYMENT_ACTIONS_ENABLED", False) and provider_ready),
+                "repayment": bool(getattr(settings, "MOBILE_PAYMENT_ACTIONS_ENABLED", False) and provider_ready),
+                "loan_application": False,
+            },
         })
         response["Cache-Control"] = "no-store"
         return response

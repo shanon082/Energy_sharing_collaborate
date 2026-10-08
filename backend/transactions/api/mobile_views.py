@@ -19,6 +19,7 @@ class MobilePaymentReceiptsView(APIView):
         ).order_by("-initiated_at")[:50]
         return Response({"receipts": [{
             "external_id": str(intent.provider_reference),
+            "client_request_id": str(intent.client_request_id) if intent.client_request_id else None,
             "purpose": intent.purpose, "status": intent.status,
             "amount_ugx": str(intent.amount), "currency": intent.currency,
             "meter_no": intent.meter.meter_no if intent.meter else None,

@@ -43,6 +43,14 @@ class FeatureConfigurationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["features"], OFF)
 
+    @override_settings(MOBILE_PAYMENT_ACTIONS_ENABLED=False)
+    def test_mobile_actions_are_server_controlled_and_disabled_by_default(self):
+        with patch("transactions.payment_settlement.require_real_ugx_provider"):
+            response = call_view("get", "/api/v1/features/?mobile_actions=true&purchase=true")
+        self.assertEqual(response.data["mobile_actions"], {
+            "purchase": False, "repayment": False, "loan_application": False,
+        })
+
 
 @override_settings(FEATURE_FLAGS=OFF)
 class DeferredRouteTests(SimpleTestCase):

@@ -4,6 +4,7 @@ import { dateTime, ugx } from "./format.ts";
 
 type Receipt = { external_id: string; purpose: string; status: string; amount_ugx: string;
   currency: string; meter_no: string | null; loan_id: string | null;
+  client_request_id: string | null; purchase_id: number | null;
   purchase_billed_ugx: string | null; purchase_residual_ugx: string | null;
   initiated_at: string; settled_at: string | null };
 type Notice = { id: number; message: string; occurred_at: string; is_read: boolean; meter_no: string | null };
@@ -17,6 +18,7 @@ export function Activity({ session }: { session: SessionManager }) {
   const [history, setHistory] = useState<HistoryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const owner = session.identity;
@@ -46,6 +48,19 @@ export function Activity({ session }: { session: SessionManager }) {
     finally { setBusy(false); }
   };
 
+  const checkStatus = async (receipt: Receipt) => {
+    setCheckingId(receipt.external_id); setError(null);
+    try {
+      if (receipt.purpose === "PURCHASE" && receipt.purchase_id !== null) {
+        await session.post("meter/check-payment-status/", { transaction_id: receipt.purchase_id });
+      } else if (receipt.purpose === "LOAN_REPAYMENT") {
+        await session.get(`loans/payment-status/${encodeURIComponent(receipt.external_id)}/`);
+      } else { throw new Error("This legacy payment needs manual reconciliation."); }
+      await reload();
+    } catch (cause) { setError(failure(cause)); }
+    finally { setCheckingId(null); }
+  };
+
   return <>
     <h1>Activity</h1>
     <p className="muted">Your payment receipts, alerts and historical transactions.</p>
@@ -59,6 +74,9 @@ export function Activity({ session }: { session: SessionManager }) {
             {row.purpose === "PURCHASE" ? `Purchase · ${row.meter_no || "meter unavailable"}` :
               `Loan repayment · ${row.loan_id || "loan unavailable"}`}
             <small>{row.status} · {dateTime(row.initiated_at)}</small>
+            {row.status === "PENDING" && <button type="button" className="secondary" disabled={checkingId !== null}
+              onClick={() => void checkStatus(row)}>
+              {checkingId === row.external_id ? "Checking…" : "Check provider status"}</button>}
             {row.status === "SETTLED" && row.purchase_residual_ugx !== null &&
               row.purchase_residual_ugx !== "0.00" &&
               <small>Residual {ugx(row.purchase_residual_ugx)} requires reconciliation</small>}

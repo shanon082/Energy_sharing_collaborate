@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { TransportError, type SessionManager } from "./auth/session.ts";
+import { clearRequestId, savedRequestId, saveRequestId } from "./api/request-id.ts";
 import type { AllocationStatus } from "./api/contracts.ts";
 import { dateTime, energy } from "./format.ts";
 
@@ -14,7 +15,8 @@ export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
   const [amount, setAmount] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [history, setHistory] = useState<Delivery[] | null>(null);
-  const [requestId, setRequestId] = useState<string | null>(null);
+  const [requestId, setRequestId] = useState<string | null>(() =>
+    savedRequestId(session.identity, "delivery", meterNo));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -26,6 +28,10 @@ export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
       const result = await session.get<History>(`meter/mobile-deliveries/?meter_no=${encodeURIComponent(meterNo)}`);
       if (owner === session.identity && result.meter_no === meterNo) {
         setHistory(result.deliveries);
+        const saved = savedRequestId(owner, "delivery", meterNo);
+        if (saved && result.deliveries.some((row) => row.request_id === saved)) {
+          clearRequestId(owner, "delivery", meterNo); setRequestId(null);
+        }
       }
     } catch (cause) {
       if (owner === session.identity) setError(cause instanceof Error ? cause.message : "Delivery history unavailable.");
@@ -40,17 +46,20 @@ export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
       setError("Use a positive amount in 0.01 kWh increments."); return;
     }
     const id = requestId || crypto.randomUUID();
+    const owner = session.identity;
+    saveRequestId(owner, "delivery", meterNo, id);
     setRequestId(id); inFlight.current = true; setBusy(true); setError(null); setNotice(null);
     try {
       await session.post("meter/deliver/", { meter_no: meterNo, amount, request_id: id });
       setNotice("Energy reserved for simulated delivery. Meter application is not confirmed yet.");
+      clearRequestId(owner, "delivery", meterNo);
       setConfirmed(false); setAmount(""); setRequestId(null);
       await loadHistory(); onReserved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Delivery request outcome is unknown.");
       if (cause instanceof TransportError) {
         setNotice("The request outcome is unknown. Check delivery history before a manual retry; it will use the same request ID.");
-      } else { setRequestId(null); }
+      } else { clearRequestId(owner, "delivery", meterNo); setRequestId(null); }
       await loadHistory();
     } finally { inFlight.current = false; setBusy(false); }
   };
@@ -74,6 +83,7 @@ export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
     </>}
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="tag" role="status">{notice}</p>}
+    {requestId && <p className="muted small">A request ID is saved for manual retry after checking history. Use the same meter and amount; nothing is replayed automatically.</p>}
     <h3>Delivery history</h3>
     <button className="secondary" onClick={() => void loadHistory()}>Refresh status</button>
     {history === null && <p className="muted">Loading delivery history…</p>}

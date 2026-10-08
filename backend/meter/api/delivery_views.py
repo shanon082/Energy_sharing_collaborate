@@ -85,12 +85,13 @@ class AllocationStatusView(APIView):
         last_contact = devices.filter(last_contact_at__isnull=False).order_by("-last_contact_at").values_list(
             "last_contact_at", flat=True,
         ).first()
+        simulated_meter_available = require_simulation_available() and devices.exists()
         return Response({
             "unit": "kWh", "quantum_kwh": "0.01",
             "meter_no": meter_no or None,
             **{key: str(value) for key, value in summary.items()},
             "last_meter_contact": last_contact.isoformat() if last_contact else None,
-            "delivery_environment": "SIMULATOR" if require_simulation_available() else "UNAVAILABLE",
+            "delivery_environment": "SIMULATOR" if simulated_meter_available else "UNAVAILABLE",
         })
 
 

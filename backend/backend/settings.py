@@ -50,6 +50,10 @@ FEATURE_FLAGS = load_feature_flags(os.environ)
 SIMULATED_METER_ENABLED = parse_feature_bool(
     os.environ.get("SIMULATED_METER_ENABLED", "false"), name="SIMULATED_METER_ENABLED",
 )
+MOBILE_PAYMENT_ACTIONS_ENABLED = parse_feature_bool(
+    os.environ.get("MOBILE_PAYMENT_ACTIONS_ENABLED", "false"),
+    name="MOBILE_PAYMENT_ACTIONS_ENABLED",
+)
 # SECURITY WARNING: keep the secret key used in production secret!
 DEBUG = get_env_variable("DEBUG", "True") == "True"
 SECRET_KEY = get_env_variable("SECRET_KEY", "development-only-unsafe-key" if DEBUG else None)
@@ -64,7 +68,7 @@ FRONTEND_URL = get_env_variable("FRONTEND_URL", "http://localhost:3000")
 # ALLOWED_HOSTS — read from env (comma-separated) or use dev defaults
 # =============================
 _extra_hosts = [h.strip() for h in get_env_variable("EXTRA_ALLOWED_HOSTS", "").split(',') if h.strip()]
-ALLOWED_HOSTS = ['0.0.0.0', 'nginx', 'localhost', '127.0.0.1', '192.168.97.107'] + _extra_hosts
+ALLOWED_HOSTS = ['0.0.0.0', 'nginx', 'localhost', '127.0.0.1', '192.168.193.107'] + _extra_hosts
 
 AUTH_USER_MODEL = 'accounts.User'
 

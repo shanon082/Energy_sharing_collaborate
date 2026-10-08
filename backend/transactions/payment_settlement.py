@@ -45,7 +45,7 @@ def require_real_ugx_provider():
         )
 
 
-def create_purchase_intent(*, owner, meter, transaction, amount, reference):
+def create_purchase_intent(*, owner, meter, transaction, amount, reference, client_request_id=None):
     if meter.user_id != owner.pk or transaction.wallet.user_id != owner.pk:
         raise PaymentSettlementError("Purchase owner and meter must match.")
     try:
@@ -57,13 +57,14 @@ def create_purchase_intent(*, owner, meter, transaction, amount, reference):
     intent = PaymentIntent.objects.create(
         owner=owner, purpose=PaymentIntent.PURCHASE, amount=amount,
         currency="UGX", provider="MTN_PRODUCTION", provider_reference=reference,
+        client_request_id=client_request_id,
         provider_external_id=f"gpawa-purchase-{reference}",
         purchase=transaction, meter=meter,
     )
     return intent
 
 
-def create_repayment_intent(*, owner, repayment):
+def create_repayment_intent(*, owner, repayment, client_request_id=None):
     if repayment.loan.user_id != owner.pk or repayment.payment_status != "PENDING":
         raise PaymentSettlementError("Repayment owner or state is invalid.")
     if repayment.amount_paid <= 0 or repayment.amount_paid != repayment.amount_paid.to_integral_value():
@@ -72,6 +73,7 @@ def create_repayment_intent(*, owner, repayment):
     return PaymentIntent.objects.create(
         owner=owner, purpose=PaymentIntent.LOAN_REPAYMENT,
         amount=repayment.amount_paid, currency="UGX", provider="MTN_PRODUCTION",
+        client_request_id=client_request_id,
         provider_reference=reference,
         provider_external_id=f"gpawa-repayment-{reference}", repayment=repayment,
     )

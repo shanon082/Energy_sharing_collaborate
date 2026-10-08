@@ -1,6 +1,7 @@
 """Mobile read endpoints and refresh revocation on isolated test data."""
 
 from decimal import Decimal
+from datetime import datetime, timedelta
 import uuid
 
 from django.test import TestCase, override_settings
@@ -170,6 +171,33 @@ class MobileApiTests(TestCase):
         self.assertNotEqual(public.patch(reset_url, {
             "password": "Third-test-only-123", "confirm_password": "Third-test-only-123",
         }).status_code, 200)
+
+    @override_settings(PASSWORD_RESET_TIMEOUT=1)
+    def test_verification_and_reset_links_expire_under_django_token_policy(self):
+        public = APIClient()
+        now = datetime.now()
+        uid = b64encode_user(str(self.owner.pk))
+        with patch.object(token_generator, "_now", return_value=now), patch.object(
+            reset_password_token_generator, "_now", return_value=now,
+        ):
+            verify = token_generator.make_token(self.owner)
+            reset = reset_password_token_generator.make_token(self.owner)
+        later = now + timedelta(seconds=2)
+        with patch.object(token_generator, "_now", return_value=later), patch.object(
+            reset_password_token_generator, "_now", return_value=later,
+        ):
+            self.assertNotEqual(public.get(
+                f"/api/v1/auth/verify-email/?uid={uid}&token={verify}",
+            ).status_code, 200)
+            self.assertNotEqual(public.get(
+                f"/api/v1/auth/reset-password/?uid={uid}&token={reset}",
+            ).status_code, 200)
+            self.assertNotEqual(public.patch(
+                f"/api/v1/auth/reset-password/?uid={uid}&token={reset}",
+                {"password": "Expiry-test-only-123", "confirm_password": "Expiry-test-only-123"},
+            ).status_code, 200)
+        self.owner.refresh_from_db()
+        self.assertTrue(self.owner.check_password("test-only"))
 
     def test_eligibility_hides_default_score_and_quote_needs_tariff(self):
         absent = self.client.get("/api/v1/loans/mobile-eligibility/")

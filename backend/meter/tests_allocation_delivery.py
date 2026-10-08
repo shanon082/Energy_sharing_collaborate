@@ -83,6 +83,9 @@ class AllocationDeliveryTests(TransactionTestCase):
     def test_unenrolled_simulator_does_not_reserve_allocation(self):
         self.allocation()
         self.device.delete()
+        status = self.client.get("/api/v1/meter/allocation-status/?meter_no=SIM-OWN-1")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.data["delivery_environment"], "UNAVAILABLE")
         response = self.client.post("/api/v1/meter/deliver/", {
             "meter_no": self.meter.meter_no, "amount": "0.25",
         }, format="json")

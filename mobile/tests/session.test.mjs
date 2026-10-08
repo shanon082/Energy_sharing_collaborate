@@ -5,6 +5,10 @@ import { parseFeatureAvailability, DISABLED_FEATURES } from "../../frontend/src/
 import { apiBaseUrl } from "../src/api/url-policy.ts";
 import { parseAllocation, parseMeters } from "../src/api/contracts.ts";
 import { probeConnection } from "../src/api/diagnostics.ts";
+import { parseMobileActions, DISABLED_MOBILE_ACTIONS } from "../src/api/mobile-actions.ts";
+import { isPositiveWholeUgx, wholeUgxWithinDebt } from "../src/api/payment-guards.ts";
+import { parseAccountLink, accountTokenQuery } from "../src/auth/account-links.ts";
+import { clearOwnerRequestIds, saveRequestId, savedRequestId } from "../src/api/request-id.ts";
 
 const base = "https://api.example.invalid/api/v1";
 const user = { id: 1, email: "owner@example.invalid", first_name: "A", last_name: "B",
@@ -191,4 +195,72 @@ test("feature availability fails closed and release API requires HTTPS", () => {
   assert.throws(() => apiBaseUrl("http://api.example.invalid/api/v1", "production"), /HTTPS/);
   assert.equal(apiBaseUrl("http://10.0.2.2:8000/api/v1", "android-debug"), "http://10.0.2.2:8000/api/v1");
   assert.throws(() => apiBaseUrl("http://public.example.invalid/api/v1", "android-debug"), /private LAN/);
+});
+
+test("mobile action availability and payment amounts fail closed", () => {
+  assert.deepEqual(parseMobileActions(null), DISABLED_MOBILE_ACTIONS);
+  assert.deepEqual(parseMobileActions({ purchase: "true", repayment: 1, loan_application: null }),
+    DISABLED_MOBILE_ACTIONS);
+  assert.deepEqual(parseMobileActions({ purchase: true, repayment: false, loan_application: false }),
+    { purchase: true, repayment: false, loan_application: false });
+  for (const bad of ["0", "0.01", "1.5", "-1", "01", "1e3", " 100 "]) {
+    assert.equal(isPositiveWholeUgx(bad), false);
+  }
+  assert.equal(isPositiveWholeUgx("1000"), true);
+  assert.equal(wholeUgxWithinDebt("10", "10.25"), true);
+  assert.equal(wholeUgxWithinDebt("11", "10.25"), false);
+  assert.equal(wholeUgxWithinDebt("1", null), false);
+});
+
+test("email links are parsed locally and never treated as valid without Django", () => {
+  const verify = parseAccountLink("https://example.invalid/auth/verify-email?uid=abc&token=x-y");
+  assert.deepEqual(verify, { kind: "verify", uid: "abc", token: "x-y" });
+  assert.equal(accountTokenQuery(verify), "uid=abc&token=x-y");
+  assert.equal(parseAccountLink("https://example.invalid/auth/reset-password/?uid=a&token=b").kind, "reset");
+  assert.throws(() => parseAccountLink("javascript:alert(1)"), /web link/);
+  assert.throws(() => parseAccountLink("https://example.invalid/auth/verify-email?uid=a"), /complete/);
+});
+
+test("a mutation 401 clears the session without replaying the POST", async () => {
+  const saved = store();
+  let refreshes = 0;
+  let posts = 0;
+  const session = new SessionManager(base, saved, route((path) => {
+    if (path.endsWith("auth/login/")) return json({ access: "access", refresh: "refresh", user });
+    if (path.endsWith("auth/refresh/token/")) { refreshes++; return json({ access: "new", refresh: "rotated" }); }
+    if (path.endsWith("mobile-buy-units/")) { posts++; return json({ detail: "expired" }, 401); }
+    return json({});
+  }));
+  await session.login(user.email, "test-only");
+  await assert.rejects(session.post("meter/mobile-buy-units/", { amount: "100" }), SessionExpired);
+  assert.equal(posts, 1);
+  assert.equal(refreshes, 0);
+  assert.equal(await saved.load(), null);
+});
+
+test("interrupted request handles survive restart, stay account-bound and clear on logout", async () => {
+  const oldStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const values = new Map();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    get length() { return values.size; },
+    key(index) { return [...values.keys()][index] ?? null; },
+    getItem(name) { return values.get(name) ?? null; },
+    setItem(name, value) { values.set(name, value); },
+    removeItem(name) { values.delete(name); },
+  } });
+  try {
+    const id = "11111111-1111-4111-8111-111111111111";
+    saveRequestId(1, "purchase", "METER-1", id);
+    saveRequestId(1, "delivery", "METER-1", id);
+    assert.equal(savedRequestId(1, "purchase", "METER-1"), id);
+    assert.equal(savedRequestId(1, "delivery", "METER-1"), id);
+    assert.equal(savedRequestId(2, "purchase", "METER-1"), null);
+    assert.equal(savedRequestId(1, "repayment", "METER-1"), null);
+    clearOwnerRequestIds(1);
+    assert.equal(savedRequestId(1, "purchase", "METER-1"), null);
+    assert.equal(savedRequestId(1, "delivery", "METER-1"), null);
+  } finally {
+    if (oldStorage) Object.defineProperty(globalThis, "localStorage", oldStorage);
+    else delete globalThis.localStorage;
+  }
 });

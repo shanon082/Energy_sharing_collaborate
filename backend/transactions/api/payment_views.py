@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import uuid
 
 from django.db import transaction as db_transaction
+from django.db import IntegrityError
 from django.db.models import Sum
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -11,8 +12,10 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from phonenumber_field.phonenumber import PhoneNumber
 
 from accounts.models import Wallet as AccountWallet
+from accounts.models import User
 from loan.models import LoanApplication, LoanRepayment
 from meter.models import Meter
 from transactions.models import PaymentIntent, Transaction
@@ -39,9 +42,58 @@ def _unavailable(exc):
     return Response({"code": "VERIFIED_PAYMENT_UNAVAILABLE", "message": str(exc)}, status=503)
 
 
+def _request_id(raw):
+    if raw in (None, ""):
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except (TypeError, ValueError, AttributeError):
+        raise ValueError("client_request_id must be a UUID.") from None
+
+
+def _phone_identity(value):
+    # PhoneNumberField reads back as E.164; compare a retry in the same form.
+    return str(PhoneNumber.from_string(str(value).strip(), region="UG"))
+
+
+def _existing_request(request_id, *, owner, purpose, amount, phone, meter=None, loan=None):
+    if request_id is None:
+        return None
+    intent = PaymentIntent.objects.filter(client_request_id=request_id).select_related(
+        "purchase", "repayment",
+    ).first()
+    if intent is None:
+        return None
+    same = (intent.owner_id == owner.pk and intent.purpose == purpose and
+            intent.amount == amount and
+            (intent.meter_id == meter.pk if meter is not None else
+             intent.repayment_id is not None and intent.repayment.loan_id == loan.pk))
+    if same:
+        recorded_phone = (intent.purchase.phone_number if purpose == PaymentIntent.PURCHASE
+                          else intent.repayment.momo_phone_number)
+        same = _phone_identity(recorded_phone or "") == _phone_identity(phone)
+    if not same:
+        return Response({"code": "REQUEST_ID_CONFLICT",
+                         "message": "This request ID is already bound to another payment."}, status=409)
+    return Response({
+        "status": intent.status, "external_id": str(intent.provider_reference),
+        "transaction_id": intent.purchase_id, "reused": True,
+        "message": "Existing payment request. Check provider status; no second collection was started.",
+    })
+
+
 def _request_result(intent, phone):
     # The request to the payment provider must run after the intent is committed.
-    result = request_payment(intent, phone)
+    try:
+        result = request_payment(intent, phone)
+    except Exception:
+        # The request may have reached the provider. Keep the intent and its
+        # reference for trusted reconciliation; never attempt collection again.
+        return Response({
+            "code": "PAYMENT_INITIATION_UNCONFIRMED",
+            "message": "Payment request outcome is unknown. Check status before retrying.",
+            "external_id": str(intent.provider_reference),
+        }, status=502)
     if result.get("status") != "PENDING":
         return Response({
             "code": "PAYMENT_INITIATION_UNCONFIRMED",
@@ -73,10 +125,10 @@ class VerifiedPurchaseView(APIView):
         phone = str(request.data.get("phone_number") or "").strip()
         if amount is None or not phone:
             return Response({"error": "A positive UGX amount and phone number are required."}, status=400)
-        from loan.services import user_can_purchase_units
-        can_buy, reason = user_can_purchase_units(request.user)
-        if not can_buy:
-            return Response({"error": reason}, status=409)
+        try:
+            client_request_id = _request_id(request.data.get("client_request_id"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
         meter_no = str(request.data.get("meter_no") or "").strip()
         if not meter_no:
             return Response({"error": "Select the intended meter explicitly."}, status=400)
@@ -86,21 +138,69 @@ class VerifiedPurchaseView(APIView):
         ).first()
         if meter is None:
             return Response({"error": "Select one active meter assigned to your account."}, status=400)
-        with db_transaction.atomic():
-            wallet = AccountWallet.objects.filter(user=request.user).order_by("-create_date").first()
-            if wallet is None:
-                wallet = AccountWallet.objects.create(user=request.user)
-            reference = uuid.uuid4()
-            purchase = Transaction.objects.create(
-                wallet=wallet, amount=amount, phone_number=phone,
-                status="PENDING", transaction_reference=str(reference),
-                message="Pending verified Mobile Money electricity purchase",
-            )
-            intent = create_purchase_intent(
-                owner=request.user, meter=meter, transaction=purchase, amount=amount,
-                reference=reference,
-            )
+        replay = _existing_request(client_request_id, owner=request.user,
+                                   purpose=PaymentIntent.PURCHASE, amount=amount,
+                                   phone=phone, meter=meter)
+        if replay is not None:
+            return replay
+        from loan.services import user_can_purchase_units
+        can_buy, reason = user_can_purchase_units(request.user)
+        if not can_buy:
+            return Response({"error": reason}, status=409)
+        try:
+            with db_transaction.atomic():
+                User.objects.select_for_update().get(pk=request.user.pk)
+                replay = _existing_request(client_request_id, owner=request.user,
+                                           purpose=PaymentIntent.PURCHASE, amount=amount,
+                                           phone=phone, meter=meter)
+                if replay is not None:
+                    return replay
+                if getattr(request, "_mobile_payment_flow", False) and PaymentIntent.objects.filter(
+                    owner=request.user, purpose=PaymentIntent.PURCHASE,
+                    status=PaymentIntent.PENDING,
+                ).exclude(client_request_id=client_request_id).exists():
+                    return Response({"code": "PAYMENT_PENDING_RECONCILIATION"}, status=409)
+                wallet = AccountWallet.objects.filter(user=request.user).order_by("-create_date").first()
+                if wallet is None:
+                    wallet = AccountWallet.objects.create(user=request.user)
+                reference = uuid.uuid4()
+                purchase = Transaction.objects.create(
+                    wallet=wallet, amount=amount, phone_number=phone,
+                    status="PENDING", transaction_reference=str(reference),
+                    message="Pending verified Mobile Money electricity purchase",
+                )
+                intent = create_purchase_intent(
+                    owner=request.user, meter=meter, transaction=purchase, amount=amount,
+                    reference=reference, client_request_id=client_request_id,
+                )
+        except IntegrityError:
+            return Response({"code": "REQUEST_ID_CONFLICT"}, status=409)
         return _request_result(intent, phone)
+
+
+class MobileVerifiedPurchaseView(VerifiedPurchaseView):
+    def post(self, request):
+        from django.conf import settings
+        if not getattr(settings, "MOBILE_PAYMENT_ACTIONS_ENABLED", False):
+            return Response({"code": "MOBILE_ACTION_DISABLED",
+                             "message": "Mobile payment initiation awaits financial-policy approval."}, status=403)
+        if (request.user.user_role != User.CLIENT or
+                not request.user.profile.email_verified or request.user.must_change_password):
+            return Response({"code": "CONSUMER_VERIFICATION_REQUIRED"}, status=403)
+        pending = PaymentIntent.objects.filter(owner=request.user,
+                                               purpose=PaymentIntent.PURCHASE,
+                                               status=PaymentIntent.PENDING)
+        try:
+            request_id = _request_id(request.data.get("client_request_id"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+        if request_id is None:
+            return Response({"code": "REQUEST_ID_REQUIRED"}, status=400)
+        if pending.exclude(client_request_id=request_id).exists():
+            return Response({"code": "PAYMENT_PENDING_RECONCILIATION",
+                             "message": "Resolve the earlier pending purchase before starting another."}, status=409)
+        request._mobile_payment_flow = True
+        return super().post(request)
 
 
 @method_decorator(db_transaction.non_atomic_requests, name="dispatch")
@@ -164,32 +264,83 @@ class VerifiedLoanRepaymentView(APIView):
             loan = get_repayable_loan(request.user)
         else:
             loan = LoanApplication.objects.filter(pk=loan_id, user=request.user).first()
-        if loan is None or loan.status not in {"DISBURSED", "DEFAULTED"}:
+        if loan is None:
             return Response({"error": "No repayable loan belonging to your account was found."}, status=404)
         amount = _positive_amount(request.data.get("amount"))
         phone = str(request.data.get("phone_number") or "").strip()
-        if amount is None or not phone or loan.outstanding_balance <= 0 or amount > loan.outstanding_balance.to_integral_value(rounding=ROUND_CEILING):
+        if amount is None or not phone:
+            return Response({"error": "A positive whole-UGX amount and phone number are required."}, status=400)
+        try:
+            client_request_id = _request_id(request.data.get("client_request_id"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+        replay = _existing_request(client_request_id, owner=request.user,
+                                   purpose=PaymentIntent.LOAN_REPAYMENT,
+                                   amount=amount, phone=phone, loan=loan)
+        if replay is not None:
+            return replay
+        if loan.status not in {"DISBURSED", "DEFAULTED"} or loan.outstanding_balance <= 0 or amount > loan.outstanding_balance.to_integral_value(rounding=ROUND_CEILING):
             return Response({"error": "A valid UGX amount within your outstanding debt and a phone number are required."}, status=400)
-        with db_transaction.atomic():
-            loan = LoanApplication.objects.select_for_update().get(pk=loan.pk)
-            pending = PaymentIntent.objects.filter(
-                repayment__loan=loan, purpose=PaymentIntent.LOAN_REPAYMENT,
-                status=PaymentIntent.PENDING,
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-            available = loan.outstanding_balance - pending
-            if loan.status not in {"DISBURSED", "DEFAULTED"} or available <= 0 or amount > available.to_integral_value(rounding=ROUND_CEILING):
-                return Response({"error": "Amount exceeds debt available after pending repayments."}, status=409)
-            repayment = LoanRepayment.objects.create(
-                loan=loan, amount_paid=amount, units_paid=0,
-                payment_reference=f"REPAY-{uuid.uuid4().hex[:32]}",
-                payment_method="MOBILE_MONEY", payment_status="PENDING",
-                momo_phone_number=phone,
-                is_on_time=not loan.due_date or timezone.now() <= loan.due_date,
-            )
-            intent = create_repayment_intent(owner=request.user, repayment=repayment)
-            repayment.momo_external_id = str(intent.provider_reference)
-            repayment.save(update_fields=["momo_external_id"])
+        try:
+            with db_transaction.atomic():
+                loan = LoanApplication.objects.select_for_update().get(pk=loan.pk)
+                replay = _existing_request(client_request_id, owner=request.user,
+                                           purpose=PaymentIntent.LOAN_REPAYMENT,
+                                           amount=amount, phone=phone, loan=loan)
+                if replay is not None:
+                    return replay
+                if getattr(request, "_mobile_payment_flow", False) and PaymentIntent.objects.filter(
+                    owner=request.user, purpose=PaymentIntent.LOAN_REPAYMENT,
+                    repayment__loan=loan, status=PaymentIntent.PENDING,
+                ).exclude(client_request_id=client_request_id).exists():
+                    return Response({"code": "PAYMENT_PENDING_RECONCILIATION"}, status=409)
+                pending = PaymentIntent.objects.filter(
+                    repayment__loan=loan, purpose=PaymentIntent.LOAN_REPAYMENT,
+                    status=PaymentIntent.PENDING,
+                ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+                available = loan.outstanding_balance - pending
+                if loan.status not in {"DISBURSED", "DEFAULTED"} or available <= 0 or amount > available.to_integral_value(rounding=ROUND_CEILING):
+                    return Response({"error": "Amount exceeds debt available after pending repayments."}, status=409)
+                repayment = LoanRepayment.objects.create(
+                    loan=loan, amount_paid=amount, units_paid=0,
+                    payment_reference=f"REPAY-{uuid.uuid4().hex[:32]}",
+                    payment_method="MOBILE_MONEY", payment_status="PENDING",
+                    momo_phone_number=phone,
+                    is_on_time=not loan.due_date or timezone.now() <= loan.due_date,
+                )
+                intent = create_repayment_intent(owner=request.user, repayment=repayment,
+                                                 client_request_id=client_request_id)
+                repayment.momo_external_id = str(intent.provider_reference)
+                repayment.save(update_fields=["momo_external_id"])
+        except IntegrityError:
+            return Response({"code": "REQUEST_ID_CONFLICT"}, status=409)
         return _request_result(intent, phone)
+
+
+class MobileVerifiedLoanRepaymentView(VerifiedLoanRepaymentView):
+    def post(self, request, loan_id=None):
+        from django.conf import settings
+        if not getattr(settings, "MOBILE_PAYMENT_ACTIONS_ENABLED", False):
+            return Response({"code": "MOBILE_ACTION_DISABLED",
+                             "message": "Mobile payment initiation awaits financial-policy approval."}, status=403)
+        if (request.user.user_role != User.CLIENT or
+                not request.user.profile.email_verified or request.user.must_change_password):
+            return Response({"code": "CONSUMER_VERIFICATION_REQUIRED"}, status=403)
+        pending = PaymentIntent.objects.filter(owner=request.user,
+                                               purpose=PaymentIntent.LOAN_REPAYMENT,
+                                               repayment__loan_id=loan_id,
+                                               status=PaymentIntent.PENDING)
+        try:
+            request_id = _request_id(request.data.get("client_request_id"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+        if request_id is None:
+            return Response({"code": "REQUEST_ID_REQUIRED"}, status=400)
+        if pending.exclude(client_request_id=request_id).exists():
+            return Response({"code": "PAYMENT_PENDING_RECONCILIATION",
+                             "message": "Resolve the earlier pending repayment before starting another."}, status=409)
+        request._mobile_payment_flow = True
+        return super().post(request, loan_id=loan_id)
 
 
 @method_decorator(db_transaction.non_atomic_requests, name="dispatch")
