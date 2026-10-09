@@ -12,9 +12,14 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from backend.feature_config import load_feature_flags, parse_feature_bool
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Hosted profiles opt out; local environment is loaded before any env reads.
+if parse_feature_bool(os.environ.get("DJANGO_LOAD_LOCAL_ENV", "true"), name="DJANGO_LOAD_LOCAL_ENV"):
+    load_dotenv(BASE_DIR / ".env", override=False)
 
 
 # =============================
@@ -43,9 +48,7 @@ BASE_URL = get_env_variable("BASE_URL", "http://localhost:8000/api/v1")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
-load_dotenv(BASE_DIR / ".env")
 
-from backend.feature_config import load_feature_flags, parse_feature_bool
 FEATURE_FLAGS = load_feature_flags(os.environ)
 SIMULATED_METER_ENABLED = parse_feature_bool(
     os.environ.get("SIMULATED_METER_ENABLED", "false"), name="SIMULATED_METER_ENABLED",
@@ -288,7 +291,7 @@ EMAIL_PORT = get_env_variable("EMAIL_PORT", 587, cast=int)
 EMAIL_USE_TLS = get_env_variable("EMAIL_USE_TLS", "True") == "True"
 EMAIL_USE_SSL = get_env_variable("EMAIL_USE_SSL", "False") == "True"
 EMAIL_HOST_USER = get_env_variable("EMAIL_HOST_USER", "shanonsimon082@gmail.com")
-EMAIL_HOST_PASSWORD = get_env_variable("EMAIL_HOST_PASSWORD", "fzwkxrgmbbzvwlbd")
+EMAIL_HOST_PASSWORD = get_env_variable("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = get_env_variable("DEFAULT_EMAIL_SENDER", "shanonsimon082@gmail.com")
 DEFAULT_EMAIL_SENDER = DEFAULT_FROM_EMAIL
 

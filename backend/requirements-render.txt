@@ -1,0 +1,4 @@
+# Keep the existing backend dependency pins; add only deployment dependencies.
+-r requirements.txt
+gunicorn==26.2.0
+whitenoise==6.12.0

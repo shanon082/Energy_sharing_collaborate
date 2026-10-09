@@ -4,11 +4,13 @@ URL configuration for backend project.
 
 from django.contrib import admin
 from django.http import HttpResponse
+from django.db import transaction
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from webhooks.api.views import ThingsBoardLowUnitsWebhookView, ThingsBoardDailyUsageWebhookView
 
+@transaction.non_atomic_requests
 def home(request):
     return HttpResponse("Welcome to the Metering API! Visit /api/v1/ for API endpoints or /admin/ for the admin interface.")
 
