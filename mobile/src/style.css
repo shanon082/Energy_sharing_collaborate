@@ -326,3 +326,5 @@ p { line-height: 1.6; }
   .topbar { padding-left: max(24px, calc((100vw - 672px) / 2)); padding-right: max(24px, calc((100vw - 672px) / 2)); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+.form-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }

@@ -7,10 +7,13 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
-from accounts.models import User
+from accounts.models import User, UserAccountDetails
 from accounts.permissions import ConsumerAccountPermission
-from accounts.api.serializers import UpdateUserProfileSerializer
+from accounts.api.serializers import (
+    UpdateUserProfileSerializer, UpdateAccountDetailsSerializer, UserAccountDetailsSerializer,
+)
 from loan.scoring import profile_scoring_fields_complete, sync_credit_signal_from_profile
 
 
@@ -75,22 +78,61 @@ class MobileProfileView(APIView):
         if not self._consumer(request):
             return Response({"code": "CONSUMER_ONLY"}, status=403)
         serializer = UpdateUserProfileSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         unknown = set(request.data) - set(serializer.fields)
         if unknown:
             return Response({"code": "PROFILE_FIELD_FORBIDDEN"}, status=400)
-        serializer.is_valid(raise_exception=True)
         if not serializer.validated_data:
             return Response({"code": "NO_PROFILE_FIELDS"}, status=400)
         for field, value in serializer.validated_data.items():
             allowed = {choice for choice, _ in User._meta.get_field(field).choices}
             if value not in (None, "") and value not in allowed:
                 return Response({"error": {field: "Choose a listed value."}}, status=400)
-        user = request.user
-        for field, value in serializer.validated_data.items():
-            setattr(user, field, value)
-        user.save(update_fields=[*serializer.validated_data.keys(), "modify_date"])
-        sync_credit_signal_from_profile(user)
+        with transaction.atomic():
+            # Serialize profile edits and signal synchronization on this owner.
+            user = User.objects.select_for_update().get(pk=request.user.pk)
+            for field, value in serializer.validated_data.items():
+                setattr(user, field, value)
+            user.save(update_fields=[*serializer.validated_data.keys(), "modify_date"])
+            sync_credit_signal_from_profile(user)
+            request.user = user
         return self.get(request)
+
+
+class MobileAccountDetailsView(APIView):
+    """Explicit owner-bound profile data; reads never repair missing records."""
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def _response(self, details):
+        return Response({
+            "values": UserAccountDetailsSerializer(details).data if details else None,
+            "choices": {
+                name: [{"value": value, "label": str(label)} for value, label in
+                       UserAccountDetails._meta.get_field(name).choices]
+                for name in ("energy_preference", "payment_method")
+            },
+            "details_available": details is not None,
+        })
+
+    def get(self, request):
+        return self._response(UserAccountDetails.objects.filter(user=request.user).first())
+
+    def patch(self, request):
+        serializer = UpdateAccountDetailsSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        if set(request.data) - set(serializer.fields):
+            return Response({"code": "PROFILE_FIELD_FORBIDDEN"}, status=400)
+        if not serializer.validated_data:
+            return Response({"code": "NO_PROFILE_FIELDS"}, status=400)
+        with transaction.atomic():
+            User.objects.select_for_update().get(pk=request.user.pk)
+            details = UserAccountDetails.objects.select_for_update().filter(user=request.user).first()
+            if details is None:
+                return Response({"code": "ACCOUNT_DETAILS_MISSING",
+                                 "detail": "Account details are unavailable. Ask support to review your account."},
+                                status=409)
+            serializer.update(details, serializer.validated_data)
+        return self._response(details)
 
 
 class MobilePasswordView(APIView):

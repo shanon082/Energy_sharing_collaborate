@@ -1,7 +1,7 @@
 # meter/urls.py - Add the new endpoint
 
 from django.urls import path
-from meter.api.mobile_views import MobileConsumptionHistoryView, MobileDeliveryHistoryView, MobilePurchaseQuoteView
+from meter.api.mobile_views import MobileConsumptionHistoryView, MobileDeliveryHistoryView, MobilePurchaseQuoteView, MobileMeterListView, MobileMeterDashboardView
 from .views import (
     BuyUnitsView, 
     CheckPaymentStatusView, 
@@ -36,6 +36,8 @@ from meter.api.delivery_views import (
 
 
 urlpatterns = [
+    path('mobile-meters/', MobileMeterListView.as_view(), name='mobile-meters'),
+    path('mobile-meters/<int:meter_id>/', MobileMeterDashboardView.as_view(), name='mobile-meter-dashboard'),
     path('mobile-consumption/', MobileConsumptionHistoryView.as_view(), name='mobile-consumption'),
     path('mobile-deliveries/', MobileDeliveryHistoryView.as_view(), name='mobile-deliveries'),
     path('mobile-purchase-quote/', MobilePurchaseQuoteView.as_view(), name='mobile-purchase-quote'),

@@ -13,9 +13,10 @@ import { PurchasePanel, RepaymentPanel } from "./PaymentActions.tsx";
 import { PreviewApp } from "./PreviewApp.tsx";
 import { Brand, Icon } from "./ui.tsx";
 import { CONSUMER_TABS, type ConsumerTab } from "./consumer-navigation.ts";
-import { parseAllocation, parseConsumption, parseLoans, parseMeters,
+import { LatestRead } from "./api/read-scope.ts";
+import { parseMeterDashboard, selectedMeterStillAssigned, parseConsumption, parseLoans, parseMeters,
   type AllocationStatus, type ConsumptionHistory, type Loan, type MeterInfo } from "./api/contracts.ts";
-import { SessionExpired, SessionManager, TransportError, type ConsumerIdentity } from "./auth/session.ts";
+import { ApiError, SessionExpired, SessionManager, TransportError, type ConsumerIdentity } from "./auth/session.ts";
 import { AndroidSecureStore } from "./auth/secure-store.ts";
 import { dateTime, energy, ugx } from "./format.ts";
 
@@ -37,8 +38,8 @@ function StateLine<T>({ data, offline }: { data: Resource<T>; offline: boolean }
   if (data.loading && data.value === null) return <p className="muted" role="status">Loading…</p>;
   if (data.error || data.fetchedAt) return <>
     {data.error && <p className="error" role="alert">{data.error}</p>}
-    {data.fetchedAt && <p className={data.error ? "stale" : "muted"}>
-      {data.error ? "Stale — " : "Fetched "}{dateTime(data.fetchedAt)}
+    {data.fetchedAt && <p className={data.error || data.loading ? "stale" : "muted"}>
+      {data.error || data.loading ? "Stale — last fetched " : "Fetched "}{dateTime(data.fetchedAt)}
     </p>}
   </>;
   if (offline && data.value === null) return <p className="muted">The API could not be reached. No account data is stored on this device.</p>;
@@ -101,11 +102,15 @@ export default function App() {
   const [featuresVerified, setFeaturesVerified] = useState(false);
   const [mobileActions, setMobileActions] = useState<MobileActions>(DISABLED_MOBILE_ACTIONS);
   const booted = useRef(false);
-  const selectedRef = useRef<string | null>(null);
+  const selectedRef = useRef<MeterInfo | null>(null);
+  const meterReads = useRef(new LatestRead());
+  const selectedReads = useRef(new LatestRead());
+  const [meterNotice, setMeterNotice] = useState<string | null>(null);
 
   const clearView = useCallback(() => {
     setAccount(null); setMeters(empty()); setLoans(empty()); setAllocation(empty());
     setConsumption(empty()); setSelectedMeter(null); selectedRef.current = null;
+    meterReads.current.invalidate(); selectedReads.current.invalidate(); setMeterNotice(null);
     setChangingPassword(false);
     setTab("dashboard");
   }, []);
@@ -129,12 +134,20 @@ export default function App() {
 
   const loadMeters = useCallback(async () => {
     const owner = session.identity;
+    const ticket = meterReads.current.begin();
     setMeters((old) => ({ ...old, loading: true, error: null }));
     try {
-      const value = parseMeters(await session.get<unknown>("meter/my-meter/"));
+      const value = parseMeters(await session.get<unknown>("meter/mobile-meters/"));
+      if (owner !== session.identity || !meterReads.current.current(ticket)) return;
       setOffline(false);
-      if (owner === session.identity) setMeters({ value, loading: false, error: null, fetchedAt: new Date().toISOString() });
+      if (selectedRef.current && !selectedMeterStillAssigned(selectedRef.current, value)) {
+        selectedRef.current = null; setSelectedMeter(null); selectedReads.current.invalidate();
+        setAllocation(empty()); setConsumption(empty());
+        setMeterNotice("Your meter assignment changed. Select an assigned meter again.");
+      }
+      setMeters({ value, loading: false, error: null, fetchedAt: new Date().toISOString() });
     } catch (error) {
+      if (owner !== session.identity || !meterReads.current.current(ticket)) return;
       if (error instanceof SessionExpired) { expire(); return; }
       if (error instanceof TransportError) setOffline(true);
       if (owner === session.identity) setMeters((old) => ({ ...old, loading: false, error: message(error) }));
@@ -155,16 +168,26 @@ export default function App() {
     }
   }, [expire]);
 
-  const loadSelected = useCallback(async (meterNo: string) => {
+  const loadSelected = useCallback(async (selected: MeterInfo) => {
+    const meterNo = selected.meter_number;
     const owner = session.identity;
+    const ticket = selectedReads.current.begin();
     setAllocation((old) => ({ ...old, loading: true, error: null }));
     setConsumption((old) => ({ ...old, loading: true, error: null }));
     const path = encodeURIComponent(meterNo);
     const [allocationResult, consumptionResult] = await Promise.allSettled([
-      session.get<unknown>(`meter/allocation-status/?meter_no=${path}`).then(parseAllocation),
+      session.get<unknown>(`meter/mobile-meters/${selected.id}/`).then((data) => parseMeterDashboard(data, selected)),
       session.get<unknown>(`meter/mobile-consumption/?meter_no=${path}`).then(parseConsumption),
     ]);
-    if (owner !== session.identity || selectedRef.current !== meterNo) return;
+    if (owner !== session.identity || selectedRef.current?.id !== selected.id ||
+        selectedRef.current.meter_number !== meterNo || !selectedReads.current.current(ticket)) return;
+    if (allocationResult.status === "rejected" && allocationResult.reason instanceof ApiError &&
+        allocationResult.reason.status === 404) {
+      selectedRef.current = null; setSelectedMeter(null); selectedReads.current.invalidate();
+      setAllocation(empty()); setConsumption(empty());
+      setMeterNotice("This meter is no longer assigned to your account. Refresh and select a meter again.");
+      return;
+    }
     if (allocationResult.status === "fulfilled") {
       setOffline(false);
       setAllocation({ value: allocationResult.value, loading: false, error: null, fetchedAt: new Date().toISOString() });
@@ -183,10 +206,10 @@ export default function App() {
     }
   }, [expire]);
 
-  const chooseMeter = (meterNo: string) => {
-    selectedRef.current = meterNo; setSelectedMeter(meterNo);
+  const chooseMeter = (selected: MeterInfo) => {
+    selectedRef.current = selected; setSelectedMeter(selected.meter_number); setMeterNotice(null);
     setAllocation(empty()); setConsumption(empty());
-    void loadSelected(meterNo);
+    void loadSelected(selected);
   };
 
   const refresh = () => {
@@ -277,6 +300,7 @@ export default function App() {
     </div></header>
     {offline && <div className="offline" role="status">A request could not reach the API. Displayed values may be stale; tap Refresh to retry.</div>}
     <main className="content">
+      {meterNotice && <p className="tag" role="status">{meterNotice}</p>}
       {tab === "dashboard" && <>
         <div className="page-heading"><span className="eyebrow">YOUR ENERGY AT A GLANCE</span>
           <h1>Hello, {account?.first_name || "there"}.</h1>
@@ -294,7 +318,7 @@ export default function App() {
               <div><span>Reserved / unresolved</span><strong>{energy(allocation.value.pending_kwh)}</strong></div>
               <div><span>Confirmed applied</span><strong>{energy(allocation.value.confirmed_kwh)}</strong></div>
             </div>
-            <p className="muted">Last meter contact: {dateTime(allocation.value.last_meter_contact)}</p>
+            <p className="muted">Last {allocation.value.contact_source === "SIMULATOR" ? "simulator" : "meter"} contact: {dateTime(allocation.value.last_meter_contact)}</p>
             {allocation.value.delivery_environment === "SIMULATOR" &&
               <p className="tag">Simulation only — no physical meter accuracy is established.</p>}
             {allocation.value.delivery_environment === "UNAVAILABLE" &&
@@ -302,7 +326,7 @@ export default function App() {
           </>}
         </Panel>}
         {meter && <DeliveryPanel key={meter.meter_number} session={session} meterNo={meter.meter_number}
-          allocation={allocation.value} onReserved={() => void loadSelected(meter.meter_number)} />}
+          allocation={allocation.value} onReserved={() => void loadSelected(meter)} />}
         {meter && <PurchasePanel key={`purchase-${meter.meter_number}`} session={session}
           meterNo={meter.meter_number} enabled={mobileActions.purchase}
           onActivity={() => setTab("activity")} />}
@@ -317,7 +341,7 @@ export default function App() {
         <StateLine data={meters} offline={offline} />
         {meters.value && (meters.value.length ? meters.value.map((item) =>
           <button className={`meter-choice ${selectedMeter === item.meter_number ? "chosen" : ""}`}
-            key={item.meter_number} onClick={() => chooseMeter(item.meter_number)}>
+            key={item.id} onClick={() => chooseMeter(item)}>
             <strong>{item.label}</strong><span>{item.meter_number} · {item.architecture} · {item.status}</span>
             <small>{selectedMeter === item.meter_number ? "Selected" : "Tap to select"}</small>
           </button>) : <Panel title="No meters"><p className="muted">No meter is assigned to this account.</p></Panel>)}
@@ -364,7 +388,7 @@ export default function App() {
         <p><strong>{account?.first_name} {account?.last_name}</strong><br />{account?.email}</p>
         <p className="muted">Role: {account?.user_role}</p>
         <p className="muted">Email: {account?.email_verified ? "Verified" : "Verification status unavailable"}</p>
-      </Panel><ProfileEditor session={session} /><Panel title="Security">
+      </Panel><ProfileEditor session={session} onExpired={expire} /><Panel title="Security">
         <button className="secondary" onClick={() => setChangingPassword(true)}>Change password</button>
       </Panel><Panel title="Feature availability">
         <p className="muted">{featuresVerified ? "Supplied by Django" : "Could not verify; deferred features remain hidden."}</p>

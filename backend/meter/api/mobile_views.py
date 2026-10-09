@@ -9,6 +9,43 @@ from accounts.permissions import ConsumerAccountPermission
 from meter.models import Meter, MeterDelivery, MeterUsageDaily, SimulatedTelemetry
 from decimal import Decimal, InvalidOperation
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
+from meter.allocation_service import entitlement_summary
+from meter.models import SimulatedMeter
+from meter.api.delivery_views import require_simulation_available
+
+
+def mobile_meter_record(meter):
+    # Legacy units, IP addresses and device credentials are deliberately absent.
+    return {"id": meter.pk, "meter_number": meter.meter_no, "label": meter.label,
+            "architecture": meter.architecture, "status": meter.status}
+
+
+class MobileMeterListView(APIView):
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def get(self, request):
+        rows = Meter.objects.filter(user=request.user, is_deleted=False).order_by("create_date", "pk")
+        meters = [mobile_meter_record(row) for row in rows]
+        return Response({"success": True, "data": {"has_meter": bool(meters), "meters": meters}})
+
+
+class MobileMeterDashboardView(APIView):
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def get(self, request, meter_id):
+        meter = get_object_or_404(Meter, pk=meter_id, user=request.user, is_deleted=False)
+        device = SimulatedMeter.objects.filter(meter=meter).first()
+        simulated = device is not None and require_simulation_available()
+        return Response({
+            "meter": mobile_meter_record(meter),
+            "unit": "kWh", "quantum_kwh": "0.01",
+            **{key: str(value) for key, value in entitlement_summary(request.user, meter).items()},
+            "last_meter_contact": device.last_contact_at.isoformat()
+                if device is not None and device.last_contact_at else None,
+            "delivery_environment": "SIMULATOR" if simulated else "UNAVAILABLE",
+            "contact_source": "SIMULATOR" if device is not None else "UNAVAILABLE",
+        })
 
 
 class MobileConsumptionHistoryView(APIView):

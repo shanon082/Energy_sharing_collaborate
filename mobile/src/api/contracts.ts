@@ -1,4 +1,5 @@
 export type MeterInfo = {
+  id: number;
   meter_number: string;
   label: string;
   architecture: string;
@@ -12,6 +13,7 @@ export type AllocationStatus = {
   confirmed_kwh: string;
   last_meter_contact: string | null;
   delivery_environment: "SIMULATOR" | "UNAVAILABLE";
+  contact_source?: "SIMULATOR" | "UNAVAILABLE";
 };
 
 export type DailyUsage = { date: string; kwh: string; source: string };
@@ -49,19 +51,42 @@ export function parseMeters(payload: unknown): MeterInfo[] {
   const data = record(outer.data);
   if (data.has_meter === false) return [];
   if (!Array.isArray(data.meters)) throw new Error("Meter list is unavailable.");
+  const identifiers = new Set<number>();
+  const numbers = new Set<string>();
   return data.meters.map((item) => {
     const meter = record(item);
-    if (typeof meter.meter_number !== "string" || !meter.meter_number ||
+    if (typeof meter.id !== "number" || !Number.isSafeInteger(meter.id) || meter.id <= 0 ||
+        typeof meter.meter_number !== "string" || !meter.meter_number ||
         typeof meter.architecture !== "string" || typeof meter.status !== "string") {
       throw new Error("Invalid meter record.");
     }
+    if (identifiers.has(meter.id) || numbers.has(meter.meter_number)) throw new Error("Duplicate meter identity.");
+    identifiers.add(meter.id); numbers.add(meter.meter_number);
     return {
+      id: meter.id,
       meter_number: meter.meter_number,
       label: typeof meter.label === "string" && meter.label ? meter.label : meter.meter_number,
       architecture: meter.architecture,
       status: meter.status,
     };
   });
+}
+
+export function selectedMeterStillAssigned(selected: MeterInfo, meters: MeterInfo[]): boolean {
+  return meters.some((meter) => meter.id === selected.id && meter.meter_number === selected.meter_number);
+}
+
+export function parseMeterDashboard(payload: unknown, selected: MeterInfo): AllocationStatus {
+  const data = record(payload);
+  const meter = record(data.meter);
+  if (meter.id !== selected.id || meter.meter_number !== selected.meter_number) {
+    throw new Error("Meter assignment changed. Select an assigned meter again.");
+  }
+  if (data.quantum_kwh !== "0.01" ||
+      !["SIMULATOR", "UNAVAILABLE"].includes(String(data.contact_source))) {
+    throw new Error("Meter dashboard is unavailable.");
+  }
+  return { ...parseAllocation(data), contact_source: data.contact_source as AllocationStatus["contact_source"] };
 }
 
 export function parseAllocation(payload: unknown): AllocationStatus {
