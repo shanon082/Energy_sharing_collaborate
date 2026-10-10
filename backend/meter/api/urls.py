@@ -2,6 +2,7 @@
 
 from django.urls import path
 from meter.api.mobile_views import MobileConsumptionHistoryView, MobileDeliveryHistoryView, MobilePurchaseQuoteView, MobileMeterListView, MobileMeterDashboardView
+from meter.api.mobile_views import MobileNotificationView
 from .views import (
     BuyUnitsView, 
     CheckPaymentStatusView, 
@@ -36,6 +37,7 @@ from meter.api.delivery_views import (
 
 
 urlpatterns = [
+    path('mobile-notifications/', MobileNotificationView.as_view(), name='mobile-notifications'),
     path('mobile-meters/', MobileMeterListView.as_view(), name='mobile-meters'),
     path('mobile-meters/<int:meter_id>/', MobileMeterDashboardView.as_view(), name='mobile-meter-dashboard'),
     path('mobile-consumption/', MobileConsumptionHistoryView.as_view(), name='mobile-consumption'),

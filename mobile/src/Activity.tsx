@@ -1,104 +1,109 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionManager } from "./auth/session.ts";
 import { dateTime, ugx } from "./format.ts";
+import { LatestRead } from "./api/read-scope.ts";
+import { parseReceipts, parseReceipt, parseNotices, parseHistory, type Page, type Receipt } from "./api/activity-contracts.ts";
 
-type Receipt = { external_id: string; purpose: string; status: string; amount_ugx: string;
-  currency: string; meter_no: string | null; loan_id: string | null;
-  client_request_id: string | null; purchase_id: number | null;
-  purchase_billed_ugx: string | null; purchase_residual_ugx: string | null;
-  initiated_at: string; settled_at: string | null };
-type Notice = { id: number; message: string; occurred_at: string; is_read: boolean; meter_no: string | null };
-type HistoryRow = { id: string; transaction_type_display: string; status: string;
-  amount: number | null; created_at: string | null };
 const failure = (cause: unknown) => cause instanceof Error ? cause.message : "Activity is unavailable.";
-
-export function Activity({ session }: { session: SessionManager }) {
-  const [receipts, setReceipts] = useState<Receipt[] | null>(null);
-  const [notices, setNotices] = useState<Notice[] | null>(null);
-  const [history, setHistory] = useState<HistoryRow[] | null>(null);
+function useFeed<T>(session: SessionManager, path: string, parse: (data: unknown) => Page<T>) {
+  const [data, setData] = useState<Page<T> | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [checkingId, setCheckingId] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    const owner = session.identity;
+  const scope = useRef(new LatestRead());
+  const load = useCallback(async (before?: number | null) => {
+    const owner = session.identity, ticket = scope.current.begin();
     setBusy(true); setError(null);
-    const results = await Promise.allSettled([
-      session.get<{ receipts: Receipt[] }>("transactions/mobile-receipts/"),
-      session.get<{ notifications: Notice[] }>("meter/notifications/"),
-      session.get<{ transactions: HistoryRow[] }>("transactions/history/?page=1&page_size=30"),
-    ]);
-    if (owner !== session.identity) return;
-    const [payments, alerts, activity] = results;
-    if (payments.status === "fulfilled") setReceipts(payments.value.receipts);
-    if (alerts.status === "fulfilled") setNotices(alerts.value.notifications);
-    if (activity.status === "fulfilled") setHistory(activity.value.transactions);
-    const failed = results.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") setError(failure(failed.reason));
-    setBusy(false);
-  }, [session]);
-  useEffect(() => { void reload(); }, [reload]);
+    try {
+      const page = parse(await session.get<unknown>(`${path}${before ? `?before_id=${before}` : ""}`));
+      if (owner !== session.identity || !scope.current.current(ticket)) return;
+      setData((old) => ({ ...page, rows: before ? [...(old?.rows ?? []), ...page.rows] : page.rows }));
+      if (!before) setFetchedAt(new Date().toISOString());
+    } catch (cause) {
+      if (owner === session.identity && scope.current.current(ticket)) setError(failure(cause));
+    } finally { if (owner === session.identity && scope.current.current(ticket)) setBusy(false); }
+  }, [session, path, parse]);
+  useEffect(() => { void load(); const reads = scope.current; return () => reads.invalidate(); }, [load]);
+  return { data, fetchedAt, error, busy, load };
+}
+function Freshness({ feed }: { feed: { fetchedAt: string | null; error: string | null } }) {
+  return <>{feed.error && <p className="error" role="alert">{feed.error} {feed.fetchedAt && "Displayed records are stale."}</p>}
+    {feed.fetchedAt && <p className="muted small">Fetched {dateTime(feed.fetchedAt)}</p>}</>;
+}
 
+export function Activity({ session }: { session: SessionManager }) {
+  const receipts = useFeed(session, "transactions/mobile-receipts/", parseReceipts);
+  const notices = useFeed(session, "meter/mobile-notifications/", parseNotices);
+  const history = useFeed(session, "transactions/mobile-history/", parseHistory);
+  const [error, setError] = useState<string | null>(null);
+  const [marking, setMarking] = useState(false);
+  const [detail, setDetail] = useState<Receipt | null>(null);
+  const detailReads = useRef(new LatestRead());
+  useEffect(() => { const reads = detailReads.current; return () => reads.invalidate(); }, []);
+  const busy = receipts.busy || notices.busy || history.busy || marking;
+  const reload = () => {
+    detailReads.current.invalidate(); setDetail(null); setError(null);
+    void receipts.load(); void notices.load(); void history.load();
+  };
   const markRead = async () => {
-    setBusy(true); setError(null);
-    try {
-      await session.patch("meter/notifications/", { all: true });
-      await reload();
-    } catch (cause) { setError(failure(cause)); }
-    finally { setBusy(false); }
+    const owner = session.identity;
+    const ids = notices.data?.rows.filter((row) => !row.is_read).slice(0, 50).map((row) => row.id) ?? [];
+    if (!ids.length) return;
+    setMarking(true); setError(null);
+    try { await session.patch("meter/mobile-notifications/", { ids }); if (owner === session.identity) await notices.load(); }
+    catch (cause) { if (owner === session.identity) setError(failure(cause)); }
+    finally { if (owner === session.identity) setMarking(false); }
   };
-
-  const checkStatus = async (receipt: Receipt) => {
-    setCheckingId(receipt.external_id); setError(null);
+  const showReceipt = async (receipt: Receipt) => {
+    const owner = session.identity, ticket = detailReads.current.begin();
+    setDetail(null); setError(null);
     try {
-      if (receipt.purpose === "PURCHASE" && receipt.purchase_id !== null) {
-        await session.post("meter/check-payment-status/", { transaction_id: receipt.purchase_id });
-      } else if (receipt.purpose === "LOAN_REPAYMENT") {
-        await session.get(`loans/payment-status/${encodeURIComponent(receipt.external_id)}/`);
-      } else { throw new Error("This legacy payment needs manual reconciliation."); }
-      await reload();
-    } catch (cause) { setError(failure(cause)); }
-    finally { setCheckingId(null); }
+      const data = await session.get<{ receipt: unknown }>(`transactions/mobile-receipts/${encodeURIComponent(receipt.external_id)}/`);
+      const parsed = parseReceipt(data.receipt);
+      if (parsed.external_id !== receipt.external_id) throw new Error("Receipt identity changed.");
+      if (owner === session.identity && detailReads.current.current(ticket)) setDetail(parsed);
+    } catch (cause) { if (owner === session.identity && detailReads.current.current(ticket)) setError(failure(cause)); }
   };
-
   return <>
-    <h1>Activity</h1>
-    <p className="muted">Your payment receipts, alerts and historical transactions.</p>
-    <button className="secondary" disabled={busy} onClick={() => void reload()}>
-      {busy ? "Refreshing…" : "Refresh activity"}</button>
-    {error && <p className="error" role="alert">{error} Previously shown records may be stale.</p>}
-    <section className="panel"><h2>Verified payment intents</h2>
-      {receipts === null ? <p className="muted">Loading receipts…</p> : receipts.length === 0 ?
-        <p className="muted">No payment intents recorded.</p> : receipts.map((row) =>
+    <h1>Activity</h1><p className="muted">Stored payment records, alerts and historical events.</p>
+    <button className="secondary" disabled={busy} onClick={reload}>{busy ? "Refreshing…" : "Refresh activity"}</button>
+    {error && <p className="error" role="alert">{error}</p>}
+    {detail && <section className="panel"><h2>Receipt details</h2>
+      <p>{detail.purpose} · {detail.status}</p><p>Recorded amount: {ugx(detail.amount_ugx)}</p>
+      <p>{detail.environment === "SIMULATOR" ? "Simulation only" : "Stored payment record"} ·
+        {detail.settlement_recorded ? ` Settlement recorded ${dateTime(detail.settled_at)}` : " Settlement not confirmed"}</p>
+      {detail.purchase_billed_ugx !== null && <p>Billed {ugx(detail.purchase_billed_ugx)} · Residual {ugx(detail.purchase_residual_ugx)}</p>}
+      {detail.repayment_applied_ugx !== null && <p>Applied to debt {ugx(detail.repayment_applied_ugx)} · Excess {ugx(detail.repayment_excess_ugx)}</p>}
+      <p className="muted small">Residuals and excess remain recorded for reconciliation. This read does not contact a provider.</p>
+      <button className="secondary" onClick={() => { detailReads.current.invalidate(); setDetail(null); }}>Close receipt</button>
+    </section>}
+    <section className="panel"><h2>Payment requests and receipts</h2><Freshness feed={receipts} />
+      {!receipts.data ? <p className="muted">{receipts.busy ? "Loading receipts…" : "Receipts unavailable."}</p> : !receipts.data.rows.length ?
+        <p className="muted">No payment intents recorded.</p> : receipts.data.rows.map((row) =>
           <div className="list-row" key={row.external_id}><span>
-            {row.purpose === "PURCHASE" ? `Purchase · ${row.meter_no || "meter unavailable"}` :
-              `Loan repayment · ${row.loan_id || "loan unavailable"}`}
-            <small>{row.status} · {dateTime(row.initiated_at)}</small>
-            {row.status === "PENDING" && <button type="button" className="secondary" disabled={checkingId !== null}
-              onClick={() => void checkStatus(row)}>
-              {checkingId === row.external_id ? "Checking…" : "Check provider status"}</button>}
-            {row.status === "SETTLED" && row.purchase_residual_ugx !== null &&
-              row.purchase_residual_ugx !== "0.00" &&
-              <small>Residual {ugx(row.purchase_residual_ugx)} requires reconciliation</small>}
+            {row.purpose === "PURCHASE" ? `Purchase · ${row.meter_no || "meter unavailable"}` : `Loan repayment · ${row.loan_id || "loan unavailable"}`}
+            <small>{row.status} · {dateTime(row.initiated_at)}{row.environment === "SIMULATOR" && " · Simulation only"}</small>
+            <button className="secondary" onClick={() => void showReceipt(row)}>View receipt</button>
           </span><strong>{ugx(row.amount_ugx)}</strong></div>)}
-      <p className="muted small">Only Django provider verification establishes settlement. Pending requests are not paid electricity.</p>
+      {receipts.data?.next && <button disabled={receipts.busy} onClick={() => void receipts.load(receipts.data?.next)}>More receipts</button>}
+      <p className="muted small">Pending requests are not paid electricity. Refresh reads stored status; verified settlement runs independently of this screen.</p>
     </section>
-    <section className="panel"><h2>Alerts</h2>
-      {notices?.some((row) => !row.is_read) && <button className="secondary" disabled={busy}
-        onClick={() => void markRead()}>Mark all read</button>}
-      {notices === null ? <p className="muted">Loading alerts…</p> : notices.length === 0 ?
-        <p className="muted">No alerts.</p> : notices.map((row) =>
-          <div className="list-row" key={row.id}><span>{row.message}
-            <small>{dateTime(row.occurred_at)} · {row.is_read ? "Read" : "Unread"}</small>
-          </span></div>)}
+    <section className="panel"><h2>Alerts</h2><Freshness feed={notices} />
+      {notices.data?.rows.some((row) => !row.is_read) && <button className="secondary" disabled={notices.busy || marking || Boolean(notices.error)}
+        onClick={() => void markRead()}>Mark displayed alerts read</button>}
+      {!notices.data ? <p className="muted">{notices.busy ? "Loading alerts…" : "Alerts unavailable."}</p> : !notices.data.rows.length ?
+        <p className="muted">No alerts.</p> : notices.data.rows.map((row) =>
+          <div className="list-row" key={row.id}><span>{row.message}<small>{dateTime(row.occurred_at)} · {row.is_read ? "Read" : "Unread"}</small></span></div>)}
+      {notices.data?.next && <button disabled={notices.busy} onClick={() => void notices.load(notices.data?.next)}>More alerts</button>}
     </section>
-    <section className="panel"><h2>Transaction history</h2>
-      {history === null ? <p className="muted">Loading history…</p> : history.length === 0 ?
-        <p className="muted">No transactions.</p> : history.map((row) =>
-          <div className="list-row" key={row.id}><span>{row.transaction_type_display}
-            <small>{row.status} · {row.created_at || "Date unavailable"}</small></span>
-            <strong>{row.amount == null ? "Amount unavailable" : ugx(String(row.amount))}</strong></div>)}
-      <p className="muted small">Historical entries may combine legacy sources. Receipts above show exact recorded UGX for new payment intents.</p>
+    <section className="panel"><h2>Historical event log</h2><Freshness feed={history} />
+      {!history.data ? <p className="muted">{history.busy ? "Loading history…" : "History unavailable."}</p> : !history.data.rows.length ?
+        <p className="muted">No logged events.</p> : history.data.rows.map((row) =>
+          <div className="list-row" key={row.id}><span>{row.transaction_type_display}<small>{row.status} · {dateTime(row.created_at)}</small>
+            {row.recorded_units !== null && <small>Recorded units: {row.recorded_units}</small>}</span>
+            <strong>{row.recorded_amount === null ? "Amount unavailable" : `Recorded amount: ${row.recorded_amount}`}</strong></div>)}
+      {history.data?.next && <button disabled={history.busy} onClick={() => void history.load(history.data?.next)}>More events</button>}
+      <p className="muted small">Legacy log units are unconfirmed. Values are shown as recorded, without interpreting them as UGX or kWh. This log does not include every legacy table.</p>
     </section>
   </>;
 }

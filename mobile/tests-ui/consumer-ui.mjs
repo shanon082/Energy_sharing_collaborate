@@ -57,8 +57,11 @@ try {
       else body = { meter: selected, unit: "kWh", quantum_kwh: "0.01", available_kwh: id === 7 ? "1.50" : "2.50",
         pending_kwh: "0.31", confirmed_kwh: "0.20", delivery_environment: "UNAVAILABLE", contact_source: "UNAVAILABLE", last_meter_contact: null };
     } else if (path.endsWith("loans/mobile-overview/")) body = { loans: [] };
-    else if (path.endsWith("meter/mobile-consumption/")) body = { meter_no: new URL(route.request().url()).searchParams.get("meter_no"), daily_usage: [], simulator_telemetry: [] };
-    else if (path.endsWith("meter/mobile-deliveries/")) body = { meter_no: new URL(route.request().url()).searchParams.get("meter_no"), deliveries: [] };
+    else if (path.endsWith("meter/mobile-consumption/")) body = { meter: liveMeters.find((row) => row.id === Number(new URL(route.request().url()).searchParams.get("meter_id"))), meter_no: new URL(route.request().url()).searchParams.get("meter_no"), daily_usage: [], simulator_telemetry: [], consumer_attribution_available: false };
+    else if (path.endsWith("meter/mobile-deliveries/")) body = { meter: liveMeters.find((row) => row.id === Number(new URL(route.request().url()).searchParams.get("meter_id"))), meter_no: new URL(route.request().url()).searchParams.get("meter_no"), deliveries: [], pagination: { has_more: false, next_before_id: null } };
+    else if (path.endsWith("transactions/mobile-receipts/")) body = { receipts: [], pagination: { has_more: false, next_before_id: null } };
+    else if (path.endsWith("transactions/mobile-history/")) body = { transactions: [], pagination: { has_more: false, next_before_id: null } };
+    else if (path.endsWith("meter/mobile-notifications/")) body = { notifications: [], pagination: { has_more: false, next_before_id: null }, unread_count: 0 };
     else if (path.endsWith("auth/register/")) {
       const input = route.request().postDataJSON();
       assert.equal(input.gender, "FEMALE");

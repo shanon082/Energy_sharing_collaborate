@@ -177,7 +177,8 @@ export default function App() {
     const path = encodeURIComponent(meterNo);
     const [allocationResult, consumptionResult] = await Promise.allSettled([
       session.get<unknown>(`meter/mobile-meters/${selected.id}/`).then((data) => parseMeterDashboard(data, selected)),
-      session.get<unknown>(`meter/mobile-consumption/?meter_no=${path}`).then(parseConsumption),
+      session.get<unknown>(`meter/mobile-consumption/?meter_id=${selected.id}&meter_no=${path}`)
+        .then((data) => parseConsumption(data, selected)),
     ]);
     if (owner !== session.identity || selectedRef.current?.id !== selected.id ||
         selectedRef.current.meter_number !== meterNo || !selectedReads.current.current(ticket)) return;
@@ -325,7 +326,7 @@ export default function App() {
               <p className="muted">Physical delivery status is unavailable.</p>}
           </>}
         </Panel>}
-        {meter && <DeliveryPanel key={meter.meter_number} session={session} meterNo={meter.meter_number}
+        {meter && <DeliveryPanel key={meter.id} session={session} meter={meter}
           allocation={allocation.value} onReserved={() => void loadSelected(meter)} />}
         {meter && <PurchasePanel key={`purchase-${meter.meter_number}`} session={session}
           meterNo={meter.meter_number} enabled={mobileActions.purchase}
@@ -351,6 +352,8 @@ export default function App() {
         {!meter ? <Panel title="Choose a meter"><p className="muted">Select a meter first.</p><button onClick={() => setTab("meters")}>Select meter</button></Panel>
           : <><p className="muted">{meter.label} · {meter.meter_number}</p><StateLine data={consumption} offline={offline} />
             {consumption.value && <>
+              {!consumption.value.consumer_attribution_available &&
+                <p className="muted small">Stored history for this assigned meter. Historical consumer attribution is unavailable.</p>}
               <Panel title="Stored daily usage">
                 {consumption.value.daily_usage.length ? consumption.value.daily_usage.map((row) =>
                   <div className="list-row" key={row.date}><span>{row.date}<small>{row.source === "STUB" ? "Development stub" : row.source}</small></span>

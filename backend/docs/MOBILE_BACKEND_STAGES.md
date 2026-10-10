@@ -70,12 +70,92 @@ The debug Vite build and Capacitor sync passed. `JAVA_HOME=/usr/lib/jvm/java-21-
 
 `mobile/tests-ui/consumer-ui.mjs` passed **14 Chromium scenarios**, intercepting every `/api/v1/` request with synthetic data. These cover authentication, preview isolation, live profile editing, stale/offline editing restrictions and recovery, missing details, explicit meter choice, replacement/reassignment invalidation, zero meters, navigation, responsive layouts and logout. The test server was loopback-only and stopped afterward; the disposable PostgreSQL cluster was stopped too. The backend command was `backend/venv/bin/python /tmp/gpawa-stage2-pg/tests.py`, whose runner explicitly overrides all DB settings, blocks unmocked HTTP, uses in-memory mail and runs the Stage 1 labels above plus `accounts.tests_mobile_profile_meters`. Physical-phone checks remain outstanding: reload Django, install the updated debug APK, verify zero/multiple assigned meters and profile saves, disconnect/reconnect and refresh, then log out. Actual verification-email delivery remains a separate configured-mail test.
 
+## Stage 3: consumption, delivery state, receipts and notifications
+
+Dedicated consumer read contracts replace the mobile activity screen's legacy
+notification and mixed-unit unified-history calls. The existing Next.js APIs,
+Render testing profile, seven deferred flags, financial rollout flag, settlement
+service and development-only simulator remain unchanged. No migration is added.
+
+| Endpoint | Contract |
+| --- | --- |
+| `GET meter/mobile-consumption/?meter_id=<id>&meter_no=<number>` | Current assigned meter ID/number must match. Keeps the number-only compatibility alias. Returns stored daily kWh as exact strings and simulator counters with `cumulative_wh_exact`, boot ID, sequence, measurement/receipt times and reported relay feedback. Reads do not debit counters or call hardware. Latest 30 daily/telemetry records, not a complete lifetime series. |
+| `GET meter/mobile-deliveries/?meter_id=<id>` | Filters by current meter assignment **and allocation owner**. Returns source/allocation identity, durable command, lifecycle and application evidence. `application_confirmed` requires APPLIED status, application timestamp and a stored simulator command with matching command ID, amount and device/meter. Status alone is insufficient. Uncertain outcomes stay reserved; reading does not retry or release energy. |
+| `GET transactions/mobile-receipts/` and `GET transactions/mobile-receipts/<provider-reference>/` | Owner-bound stored intents, exact received/billed/residual/applied/excess money and explicit simulation/provider environment. Pending intents are labelled requests. Refresh/detail reads never poll providers, reconcile, settle or create allocations. Existing trusted reconciliation paths remain intact. |
+| `GET/PATCH meter/mobile-notifications/` | Verified active consumers only for JWT **and session** authentication. GET omits device credentials. PATCH accepts only explicit `ids` (maximum 50), checks all belong to the consumer before changing read metadata; mixed/foreign IDs reject without a partial update. Repetition is idempotent. No mark-all request or financial/device mutation. |
+| `GET transactions/mobile-history/` | Owner-bound `TransactionLog` events as recorded. Exact decimal strings, no `details`, tokens, payment credentials or recipient lookup. Historical money/energy units remain **unconfirmed**, not relabelled to UGX/kWh. This is the log table, not every legacy history source; full legacy web history remains available under its existing authorization. |
+
+Receipts, deliveries, notifications and event logs accept `limit` (1–50, default
+30) and `before_id` for stable descending-ID pagination. New records do not move
+an already-issued cursor. Consumers cannot supply an owner or bypass account
+state/role permissions. Anonymous, staff, unverified and password-change-required
+reads are tested; historical receipt ownership does not change with meter reassignment.
+
+The app validates these response shapes, binds meter reads to ID and number,
+preserves large Wh integers as strings, labels simulation and missing application
+evidence, shows fetch time/stale/error/empty states and supports older pages.
+Older responses are invalidated on refresh/unmount/selection change. Payment
+status buttons now refresh stored records rather than invoke settlement-capable
+legacy status endpoints. Existing provider reconciliation runs separately when
+properly configured. Only alert read metadata is a new mutation in this stage;
+existing guarded transaction/simulator controls are not enabled by it.
+
+**Known data limit:** daily usage and simulator telemetry belong to the meter;
+they have no historical consumer/tenancy assignment audit. Responses declare
+`history_scope=CURRENT_ASSIGNED_METER` and
+`consumer_attribution_available=false`, and the UI explains this. This retains
+the existing current-assignment read policy; it does **not** establish privacy
+isolation between past occupants of the same meter. A historical ownership and
+visibility policy is required before deploying multi-tenant meter reuse. No
+historical readings are backfilled, transferred or attributed by assumption.
+The existing recoverable MeterBalance signal conflict is unchanged and outside
+this stage. The overdue-after-completion expected failure remains visible.
+
+Validation: **129 backend tests, OK with one known expected failure**, on a fresh
+PostgreSQL 18 cluster on port 55443. `gpawa_stage3_tests` is the disposable parent;
+Django created/deleted `test_gpawa_stage3_tests`. The runner overrides all DB
+settings, disables local dotenv, blocks unmocked HTTP, uses in-memory mail and
+test-only MD5 hashing; no operational database/provider/device was contacted.
+Seven Stage 3 tests cover pending/foreign receipts, exact residuals, missing and
+wrong-device acknowledgements, allocation ownership after reassignment, exact
+Wh, explicit notification targets, stable pagination and session permissions.
+The final runner command is:
+
+```sh
+backend/venv/bin/python /tmp/gpawa-stage3/tests.py
+```
+
+It runs `accounts.tests_mobile_activity`, the Stage 2/Stage 1 tests above,
+payment settlement, allocation/simulator, financial correctness, feature-flag
+and Render environment-parser regressions. The disposable cluster is stopped
+afterward. Mobile strict type checks, the debug Vite build and **22 individual
+unit tests** pass (`node tests/activity-contracts.test.mjs`,
+`node tests/profile-meters.test.mjs`, `node tests/session.test.mjs`); `npm test`
+also passes. Web type checking passes. No web build dependency or checking bypass
+was introduced; the previously documented Next.js production-build blocker
+remains unverified. Browser interception fixtures were updated for the new
+contracts, but Chromium is unavailable in this session: Stage 3 browser runtime
+and physical-phone tests are outstanding, not claimed by unit tests/APK assembly.
+
+The final debug bundle, Capacitor sync and offline wrapper `assembleDebug` pass
+(153 tasks, 27 executed; 30 seconds). APK:
+`mobile/android/app/build/outputs/apk/debug/app-debug.apk`, **4,463,539 bytes**;
+SHA-256 `30c8ca7e166b027a24b5646edd7dac308ea718bc3ac7853e2921516f553021b6`.
+The packaged main bundle matches the final Vite build. App ID
+`org.gpawa.consumer.prototype`; version 1.0/code 1; minimum SDK 24. Embedded API
+remains `http://192.168.193.107:8000/api/v1`; WebView origin `http://localhost`.
+Debug-only HTTP configuration is retained; release still requires HTTPS.
+Build uses Java 21, the installed SDK, a repository-local Gradle cache and a
+temporary Android user directory; no signing credentials are committed.
+Reload Django and install this APK to test the new endpoints. This is an
+installable debug artifact, not evidence of phone runtime or live readiness.
+
 ## Subsequent stages
 
 | Stage | Scope | Acceptance criteria |
 | --- | --- | --- |
 | 2 (implemented) | Consumer profile and assigned-meter dashboard integration | Dedicated owner-bound reads and constrained profile edits, explicit ID-bound selection, zero/multiple/missing/reassigned cases, stale display and JWT/session boundary tests. Physical-phone checks and legacy session-route review remain separate. |
-| 3 | Consumption, delivery state, receipts and notifications | Consumption is distinct from entitlement/delivery. Simulator data is labelled. Ownership checks and requested-versus-applied status survive refresh/restart. Review the existing recoverable MeterBalance signal conflict separately. |
+| 3 (implemented) | Consumption, delivery state, receipts and notifications | Dedicated owner-bound records, exact units, simulator/acknowledgement evidence, read-only receipts, explicit alert targets and stable pagination. Browser/phone runtime checks and historical tenancy policy remain separate. |
 | 4 | Electricity-credit application and read-only debt details | Agree stored terms and calculation policy first; add idempotent source-linked application/disbursement. No fallback score, changed historical loan or duplicated energy. |
 | 5 | Verified purchases and self-repayment | Resolve whole-UGX/fractional-debt, excess/residual and overdue questions. Keep mobile initiation disabled until approved provider/reconciliation testing; conserve money and preserve uncertain obligations. |
 | 6 | Own-meter simulator loading, then hardware review | Durable command identity, exact entitlement reservations and matching application acknowledgement. Physical protocol/radio validation is separate and requires hardware agreement. |

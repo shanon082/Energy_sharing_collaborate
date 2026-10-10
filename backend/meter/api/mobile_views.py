@@ -1,24 +1,53 @@
 """Stored consumption evidence only; no gateway calls or synthetic readings."""
 
+from decimal import Decimal, InvalidOperation
+
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
 from accounts.permissions import ConsumerAccountPermission
-from meter.models import Meter, MeterDelivery, MeterUsageDaily, SimulatedTelemetry
-from decimal import Decimal, InvalidOperation
-from django.utils import timezone
-from django.shortcuts import get_object_or_404
+from backend.mobile_reads import read_page
 from meter.allocation_service import entitlement_summary
-from meter.models import SimulatedMeter
 from meter.api.delivery_views import require_simulation_available
+from meter.models import (
+    Meter, MeterDelivery, MeterNotification, MeterUsageDaily, SimulatedMeter, SimulatedTelemetry,
+)
+
+
+def selected_meter(request):
+    """New clients bind a stable ID; retain the existing number-only read alias."""
+    meter_id = request.query_params.get("meter_id")
+    meter_no = str(request.query_params.get("meter_no") or "").strip()
+    if meter_id is not None:
+        if len(str(meter_id)) > 19 or not str(meter_id).isdigit() or not 0 < int(meter_id) < 2**63:
+            raise ValidationError({"meter_id": "Use a positive meter ID."})
+        meter = get_object_or_404(Meter, pk=int(meter_id), user=request.user, is_deleted=False)
+        if meter_no and meter.meter_no != meter_no:
+            raise ValidationError({"meter_no": "Meter number and selected ID do not match."})
+        return meter
+    if not meter_no:
+        raise ValidationError({"code": "METER_REQUIRED"})
+    return get_object_or_404(Meter, user=request.user, meter_no=meter_no, is_deleted=False)
 
 
 def mobile_meter_record(meter):
     # Legacy units, IP addresses and device credentials are deliberately absent.
     return {"id": meter.pk, "meter_number": meter.meter_no, "label": meter.label,
             "architecture": meter.architecture, "status": meter.status}
+
+
+def application_confirmed(delivery):
+    command = getattr(delivery, "simulated_command", None)
+    return bool(delivery.status == MeterDelivery.APPLIED and delivery.applied_at is not None
+        and command is not None and command.command_id == delivery.command_id
+        and command.amount_kwh == delivery.amount_kwh
+        and command.device.meter_id == delivery.allocation.meter_id)
 
 
 class MobileMeterListView(APIView):
@@ -54,22 +83,22 @@ class MobileConsumptionHistoryView(APIView):
     def get(self, request):
         if request.user.user_role != User.CLIENT:
             return Response({"code": "CONSUMER_ONLY"}, status=403)
-        meter_no = str(request.query_params.get("meter_no") or "").strip()
-        if not meter_no:
-            return Response({"code": "METER_REQUIRED"}, status=400)
-        meter = Meter.objects.filter(user=request.user, meter_no=meter_no, is_deleted=False).first()
-        if meter is None:
-            return Response({"code": "METER_NOT_FOUND"}, status=404)
+        meter = selected_meter(request)
         daily = MeterUsageDaily.objects.filter(meter=meter).order_by("-usage_date")[:30]
         telemetry = SimulatedTelemetry.objects.filter(device__meter=meter).order_by("-received_at")[:30]
         return Response({
-            "meter_no": meter_no,
+            "meter_no": meter.meter_no, "meter": mobile_meter_record(meter),
+            "history_scope": "CURRENT_ASSIGNED_METER",
+            "consumer_attribution_available": False,
             "daily_usage": [{
                 "date": row.usage_date.isoformat(), "kwh": str(row.kwh_used),
                 "source": row.source,
             } for row in daily],
             "simulator_telemetry": [{
                 "event_id": str(row.event_id), "cumulative_wh": row.cumulative_wh,
+                "cumulative_wh_exact": str(row.cumulative_wh),
+                "boot_id": str(row.boot_id), "sequence_exact": str(row.sequence),
+                "reported_relay_state": row.reported_relay_state,
                 "measured_at": row.measured_at.isoformat(),
                 "received_at": row.received_at.isoformat(),
                 "classification": row.classification,
@@ -83,21 +112,54 @@ class MobileDeliveryHistoryView(APIView):
     def get(self, request):
         if request.user.user_role != User.CLIENT:
             return Response({"code": "CONSUMER_ONLY"}, status=403)
-        meter_no = str(request.query_params.get("meter_no") or "").strip()
-        if not meter_no:
-            return Response({"code": "METER_REQUIRED"}, status=400)
-        meter = Meter.objects.filter(user=request.user, meter_no=meter_no, is_deleted=False).first()
-        if meter is None:
-            return Response({"code": "METER_NOT_FOUND"}, status=404)
-        rows = MeterDelivery.objects.filter(allocation__owner=request.user,
-                                            allocation__meter=meter).order_by("-created_at")[:50]
-        return Response({"meter_no": meter_no, "deliveries": [{
+        meter = selected_meter(request)
+        rows, page = read_page(MeterDelivery.objects.filter(allocation__owner=request.user,
+                          allocation__meter=meter).select_related("allocation", "simulated_command__device"), request.query_params)
+        return Response({"meter_no": meter.meter_no, "meter": mobile_meter_record(meter),
+                         "pagination": page, "deliveries": [{
             "id": row.pk, "command_id": str(row.command_id),
             "request_id": str(row.request_id) if row.request_id else None,
             "amount_kwh": str(row.amount_kwh), "status": row.status,
+            "allocation_id": row.allocation_id,
+            "source": "PURCHASE" if row.allocation.purchase_intent_id else "APPROVED_LOAN",
+            "application_confirmed": application_confirmed(row),
+            "environment": "SIMULATOR" if hasattr(row, "simulated_command") else "UNCONFIRMED",
             "created_at": row.created_at.isoformat(),
             "applied_at": row.applied_at.isoformat() if row.applied_at else None,
         } for row in rows]})
+
+
+class MobileNotificationView(APIView):
+    """Owner-bound alert metadata; changing read state never changes finances."""
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def get(self, request):
+        queryset = MeterNotification.objects.filter(user=request.user)
+        unread = request.query_params.get("unread", "false")
+        if unread not in {"true", "false"}:
+            raise ValidationError({"unread": "Use true or false."})
+        if unread == "true":
+            queryset = queryset.filter(is_read=False)
+        rows, page = read_page(queryset.select_related("meter"), request.query_params)
+        return Response({"notifications": [{
+            "id": row.pk, "notification_type": row.notification_type,
+            "message": row.message, "units_kwh": str(row.units_kwh),
+            "occurred_at": row.occurred_at.isoformat(), "is_read": row.is_read,
+            "meter_no": row.meter.meter_no if row.meter_id else None,
+        } for row in rows], "pagination": page,
+            "unread_count": MeterNotification.objects.filter(user=request.user, is_read=False).count()})
+
+    def patch(self, request):
+        if not isinstance(request.data, dict) or set(request.data) != {"ids"}:
+            raise ValidationError({"ids": "Supply only explicit notification IDs."})
+        field = serializers.ListField(child=serializers.IntegerField(min_value=1),
+                                      allow_empty=False, max_length=50)
+        ids = field.run_validation(request.data["ids"])
+        queryset = MeterNotification.objects.filter(user=request.user, pk__in=ids)
+        if queryset.count() != len(set(ids)):
+            return Response({"code": "NOTIFICATION_NOT_FOUND"}, status=404)
+        updated = queryset.filter(is_read=False).update(is_read=True)
+        return Response({"marked_read": updated})
 
 
 class MobilePurchaseQuoteView(APIView):

@@ -18,11 +18,12 @@ export type AllocationStatus = {
 
 export type DailyUsage = { date: string; kwh: string; source: string };
 export type Telemetry = {
-  event_id: string; cumulative_wh: number; measured_at: string;
+  event_id: string; cumulative_wh: string; measured_at: string;
   received_at: string; classification: string;
 };
 export type ConsumptionHistory = {
   meter_no: string; daily_usage: DailyUsage[]; simulator_telemetry: Telemetry[];
+  consumer_attribution_available: boolean;
 };
 
 export type Repayment = {
@@ -104,12 +105,18 @@ export function parseAllocation(payload: unknown): AllocationStatus {
   };
 }
 
-export function parseConsumption(payload: unknown): ConsumptionHistory {
+export function parseConsumption(payload: unknown, selected?: MeterInfo): ConsumptionHistory {
   const data = record(payload);
   if (typeof data.meter_no !== "string" || !Array.isArray(data.daily_usage) ||
       !Array.isArray(data.simulator_telemetry)) throw new Error("Consumption history is unavailable.");
+  if (selected) {
+    const meter = record(data.meter);
+    if (meter.id !== selected.id || data.meter_no !== selected.meter_number ||
+        meter.meter_number !== selected.meter_number) throw new Error("Consumption belongs to a different meter.");
+  }
   return {
     meter_no: data.meter_no,
+    consumer_attribution_available: data.consumer_attribution_available === true,
     daily_usage: data.daily_usage.map((item) => {
       const row = record(item);
       if (typeof row.date !== "string" || typeof row.source !== "string") throw new Error("Invalid usage row.");
@@ -117,10 +124,13 @@ export function parseConsumption(payload: unknown): ConsumptionHistory {
     }),
     simulator_telemetry: data.simulator_telemetry.map((item) => {
       const row = record(item);
-      if (typeof row.event_id !== "string" || typeof row.cumulative_wh !== "number" ||
+      const counter = typeof row.cumulative_wh_exact === "string" ? row.cumulative_wh_exact :
+        Number.isSafeInteger(row.cumulative_wh) ? String(row.cumulative_wh) : null;
+      if (typeof row.event_id !== "string" || counter === null || !/^\d+$/.test(counter) ||
           typeof row.measured_at !== "string" || typeof row.received_at !== "string" ||
           typeof row.classification !== "string") throw new Error("Invalid telemetry row.");
-      return row as Telemetry;
+      return { event_id: row.event_id, cumulative_wh: counter, measured_at: row.measured_at,
+        received_at: row.received_at, classification: row.classification };
     }),
   };
 }

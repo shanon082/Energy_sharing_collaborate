@@ -1,5 +1,6 @@
 from django.urls import path
 from transactions.api.mobile_views import MobilePaymentReceiptsView
+from transactions.api.mobile_views import MobilePaymentReceiptView, MobileTransactionHistoryView
 from .views import BuyUnitsView, TransactionHistoryView, TransactionStatementEmailView
 
 
@@ -7,6 +8,8 @@ from .views import BuyUnitsView, TransactionHistoryView, TransactionStatementEma
 
 
 urlpatterns = [
+    path('mobile-history/', MobileTransactionHistoryView.as_view(), name='mobile-transaction-history'),
+    path('mobile-receipts/<uuid:reference>/', MobilePaymentReceiptView.as_view(), name='mobile-payment-receipt'),
     path('mobile-receipts/', MobilePaymentReceiptsView.as_view(), name='mobile-payment-receipts'),
     path('buy-units/', BuyUnitsView.as_view(), name="buy-units"),
     path('history/', TransactionHistoryView.as_view(), name="transaction-history"),

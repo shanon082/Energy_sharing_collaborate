@@ -89,4 +89,30 @@ Stage 2 validation passed 113 backend regressions (one known financial expected 
 
 ## Remaining release work
 
+Stage 3 connects consumption and delivery history to the selected meter ID,
+adds stored receipt details and paginated event logs, and uses the dedicated
+`meter/mobile-notifications/` API for explicit alert read targets. Activity refresh
+never invokes provider confirmation; pending requests are not settled payments.
+Legacy event amounts/units are shown as recorded without guessing their units.
+Telemetry keeps large Wh counters exact; simulator and application evidence are
+labelled. Historical meter usage is not consumer-attributed because the existing
+database has no tenancy history. See [Stage 3 details](../backend/docs/MOBILE_BACKEND_STAGES.md).
+
+Stage 3 validation: 129 isolated PostgreSQL tests (one known financial expected
+failure), 22 mobile unit cases, mobile/web type checks, debug Vite build and
+offline APK assembly passed. Chromium and physical-phone runtime testing are
+outstanding. No migration or financial-policy change is required; reload Django
+before installing the new APK. On the phone, check stored pending/failed/settled
+receipts and simulation labels, foreign/reassigned meter rejection, notification
+read state after restarting, pagination, disconnect/reconnect, stale timestamps
+and logout/account switching. Do not use real payments or physical hardware for
+these prototype checks.
+
+The final Stage 3 APK is `android/app/build/outputs/apk/debug/app-debug.apk`,
+4,463,539 bytes; SHA-256
+`30c8ca7e166b027a24b5646edd7dac308ea718bc3ac7853e2921516f553021b6`.
+It still targets `http://192.168.193.107:8000/api/v1`; Render's assigned HTTPS URL
+has not been substituted. Java/SDK and offline wrapper build instructions above
+remain applicable. The older Stage 2 checksum documents that earlier build.
+
 Approve the financial policy for whole-UGX versus fractional debt, purchase energy-rounding residuals, no-tariff loans and overdue-after-completion; retain the existing expected-failure test until fixed. Add a mobile-safe, idempotent loan application service with stored quote/terms and no duplicate auto-disbursement. Verify a real provider, callback/reconciliation operations and notification delivery in a controlled environment before enabling `MOBILE_PAYMENT_ACTIONS_ENABLED`. Complete a physical firmware/device contract and gateway integration separately. Add domain-verified Android App Links and release signing. No signing key or provider/device credential belongs in this repository or APK.

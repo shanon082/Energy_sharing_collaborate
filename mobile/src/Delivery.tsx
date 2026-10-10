@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { TransportError, type SessionManager } from "./auth/session.ts";
 import { clearRequestId, savedRequestId, saveRequestId } from "./api/request-id.ts";
-import type { AllocationStatus } from "./api/contracts.ts";
+import type { AllocationStatus, MeterInfo } from "./api/contracts.ts";
 import { dateTime, energy } from "./format.ts";
 
-type Delivery = { id: number; command_id: string; request_id: string | null;
-  amount_kwh: string; status: string; created_at: string; applied_at: string | null };
-type History = { meter_no: string; deliveries: Delivery[] };
+import { parseDeliveries, type Delivery } from "./api/activity-contracts.ts";
+import { LatestRead } from "./api/read-scope.ts";
 
-export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
-  session: SessionManager; meterNo: string; allocation: AllocationStatus | null;
+export function DeliveryPanel({ session, meter, allocation, onReserved }: {
+  session: SessionManager; meter: MeterInfo; allocation: AllocationStatus | null;
   onReserved: () => void;
 }) {
+  const meterNo = meter.meter_number;
+  const reads = useRef(new LatestRead());
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [next, setNext] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [history, setHistory] = useState<Delivery[] | null>(null);
@@ -22,22 +27,24 @@ export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
   const [notice, setNotice] = useState<string | null>(null);
   const inFlight = useRef(false);
 
-  const loadHistory = useCallback(async () => {
-    const owner = session.identity;
+  const loadHistory = useCallback(async (before?: number) => {
+    const owner = session.identity, ticket = reads.current.begin();
+    setHistoryBusy(true); setHistoryError(null);
     try {
-      const result = await session.get<History>(`meter/mobile-deliveries/?meter_no=${encodeURIComponent(meterNo)}`);
-      if (owner === session.identity && result.meter_no === meterNo) {
-        setHistory(result.deliveries);
+      const result = parseDeliveries(await session.get<unknown>(`meter/mobile-deliveries/?meter_id=${meter.id}&meter_no=${encodeURIComponent(meterNo)}${before ? `&before_id=${before}` : ""}`), meter);
+      if (owner === session.identity && reads.current.current(ticket)) {
+        setHistory((old) => before ? [...(old ?? []), ...result.rows] : result.rows);
+        setNext(result.next); if (!before) setFetchedAt(new Date().toISOString());
         const saved = savedRequestId(owner, "delivery", meterNo);
-        if (saved && result.deliveries.some((row) => row.request_id === saved)) {
+        if (saved && result.rows.some((row) => row.request_id === saved)) {
           clearRequestId(owner, "delivery", meterNo); setRequestId(null);
         }
       }
     } catch (cause) {
-      if (owner === session.identity) setError(cause instanceof Error ? cause.message : "Delivery history unavailable.");
-    }
-  }, [session, meterNo]);
-  useEffect(() => { void loadHistory(); }, [loadHistory]);
+      if (owner === session.identity && reads.current.current(ticket)) setHistoryError(cause instanceof Error ? cause.message : "Delivery history unavailable.");
+    } finally { if (owner === session.identity && reads.current.current(ticket)) setHistoryBusy(false); }
+  }, [session, meter, meterNo]);
+  useEffect(() => { void loadHistory(); const scope = reads.current; return () => scope.invalidate(); }, [loadHistory]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -82,17 +89,21 @@ export function DeliveryPanel({ session, meterNo, allocation, onReserved }: {
       </form>
     </>}
     {error && <p className="error" role="alert">{error}</p>}
+    {historyError && <p className="error" role="alert">{historyError}</p>}
     {notice && <p className="tag" role="status">{notice}</p>}
     {requestId && <p className="muted small">A request ID is saved for manual retry after checking history. Use the same meter and amount; nothing is replayed automatically.</p>}
     <h3>Delivery history</h3>
-    <button className="secondary" onClick={() => void loadHistory()}>Refresh status</button>
-    {history === null && <p className="muted">Loading delivery history…</p>}
+    <button className="secondary" disabled={historyBusy || busy} onClick={() => void loadHistory()}>Refresh status</button>
+    {fetchedAt && <p className="muted small">Fetched {dateTime(fetchedAt)}{historyError && " · Displayed history is stale"}</p>}
+    {history === null && <p className="muted">{historyBusy ? "Loading delivery history…" : "Delivery history unavailable."}</p>}
     {history?.length === 0 && <p className="muted">No delivery commands for this meter.</p>}
     {history?.map((row) => <div className="list-row" key={row.id}>
-      <span>{dateTime(row.created_at)}<small>{row.status === "APPLIED" ?
+      <span>{dateTime(row.created_at)}<small>{row.application_confirmed ?
         `Applied ${dateTime(row.applied_at)}` : row.status === "OUTCOME_UNKNOWN" ?
-        "Outcome unknown — reconciliation required" : row.status}</small></span>
+        "Outcome unknown — reconciliation required" : row.status === "APPLIED" ? "Application evidence incomplete" : row.status}</small></span>
       <strong>{energy(row.amount_kwh)}</strong>
+      <small>{row.source} · {row.environment === "SIMULATOR" ? "Simulation only" : "Environment unconfirmed"}</small>
     </div>)}
+    {next && <button disabled={historyBusy || busy} onClick={() => void loadHistory(next)}>More deliveries</button>}
   </section>;
 }
