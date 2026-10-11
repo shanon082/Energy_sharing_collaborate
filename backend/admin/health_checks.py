@@ -45,6 +45,8 @@ def check_postgresql() -> dict:
 
 
 def check_redis() -> dict:
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Redis", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     broker_url = getattr(settings, "CELERY_BROKER_URL", "") or getattr(settings, "REDIS_URL", "")
     if not broker_url:
@@ -75,6 +77,8 @@ def check_api_gateway() -> dict:
 
 def check_celery_dispatch() -> dict:
     """Verify background tasks can be dispatched to the Celery broker."""
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Celery Dispatch", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     eager = getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False)
     if eager:
@@ -139,6 +143,8 @@ def check_cvs_sts_api() -> dict:
     """
     STS tokens are generated locally; AMI delivery uses ThingsBoard when configured.
   """
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Cvs Sts Api", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     gateway = getattr(settings, "AMI_GATEWAY", "") or ""
     external_cvs = (os.getenv("CVS_STS_API_URL") or os.getenv("STS_API_URL") or "").strip()
@@ -192,6 +198,8 @@ def check_cvs_sts_api() -> dict:
 
 
 def check_africas_talking() -> dict:
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Africas Talking", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     api_key = (
         os.getenv("AT_API_KEY")
@@ -232,6 +240,8 @@ def check_africas_talking() -> dict:
 
 
 def check_mtn_momo() -> dict:
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Mtn Momo", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     from mtn_momo.config import is_momo_configured, should_simulate_payments
     from mtn_momo.services import MTNMoMoService
@@ -258,6 +268,8 @@ def check_mtn_momo() -> dict:
 
 
 def check_airtel_money() -> dict:
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Airtel Money", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     client_id = (os.getenv("AIRTEL_MONEY_CLIENT_ID") or os.getenv("AIRTEL_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("AIRTEL_MONEY_CLIENT_SECRET") or os.getenv("AIRTEL_CLIENT_SECRET") or "").strip()
@@ -284,6 +296,8 @@ def check_airtel_money() -> dict:
 
 
 def check_firebase() -> dict:
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return _component("Firebase", "AMBER", error="Unavailable in alwaysdata Free testing; no network probe performed", extras={"celery_dispatch_ok": False})
     start = time.perf_counter()
     creds = (
         os.getenv("FIREBASE_CREDENTIALS_JSON")

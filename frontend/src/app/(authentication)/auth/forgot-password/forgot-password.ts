@@ -6,7 +6,7 @@ import { z } from "zod";
 
 
 export default async function forgotPassword(data: z.infer<typeof ForgotPasswordSchema>){
-  const { error } = await post('auth/forgot-password/', data);
+  const { error, data: response } = await post<{ message: string }>('auth/forgot-password/', data);
   if(error){
     console.log("Error: ", error)
     return { error }
@@ -15,7 +15,7 @@ export default async function forgotPassword(data: z.infer<typeof ForgotPassword
   return {
     success: true,
     email: data.email,
-    message: `Password reset link has been sent to ${data.email}.`,
+    message: response?.message || "If this email has an account, reset instructions have been requested.",
   };
 
 }

@@ -32,4 +32,11 @@ def create_user_account_details(sender, instance, created, **kwargs):
 def send_email_verification(sender, instance, created, **kwargs):
     if created and not instance.email_verified:
         user_id = instance.user_id
-        transaction.on_commit(lambda: dispatch_task(handle_send_email_verification, user_id))
+        if getattr(settings, "ACCOUNT_EMAIL_OUTBOX_ENABLED", False):
+            # Insert with the account transaction: rollback loses both, never just
+            # the email. Rendering does not claim SMTP acceptance.
+            from accounts.email_outbox import enqueue_account_email
+            from accounts.models import AccountEmailDelivery
+            enqueue_account_email(instance.user, AccountEmailDelivery.VERIFICATION)
+        else:
+            transaction.on_commit(lambda: dispatch_task(handle_send_email_verification, user_id))

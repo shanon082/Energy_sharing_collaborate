@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 import logging
 from accounts.tasks import handle_send_email_code, handle_send_email_verification
+from accounts.account_actions import InvalidAccountLink, confirm_account_email, complete_password_reset
 from utils.email import send_email
 from utils.general import generate_numeric_id, get_base_url, dispatch_task
 from six import text_type
@@ -1218,6 +1219,9 @@ class CreateUserAPIView(CreateAPIView):
             "message": "User registered successfully!",
         }
 
+        if getattr(settings, "ACCOUNT_EMAIL_OUTBOX_ENABLED", False):
+            response_data.update(verification_delivery="queued", message="Account created. Verification email queued for scheduled delivery; it has not been sent yet.")
+
         return Response(response_data, status=status.HTTP_201_CREATED)
 
 
@@ -1271,53 +1275,22 @@ class CreateUserAPIView(CreateAPIView):
 #             raise CustomAPIException(message=error_msg)
 
 class VerifyEmailAPIView(GenericAPIView):
-    """
-    API view for verifying a user's email account
-    """
+    """Legacy web verification; hosted account links require a CSRF form POST."""
     permission_classes = (AllowAny,)
-    authentication_classes = []  # Explicitly disable authentication
+    authentication_classes = []
 
     @required_fields(["uid", "token"])
     def get(self, request):
-        error_msg = "Invalid activation link"
-        user_hash = request.query_params.get("uid")
-        token = request.query_params.get("token")
-        
-        logger.info("[EMAIL VERIFICATION] Verification request received")
-        
+        if getattr(settings, "DJANGO_HOSTED_ACCOUNT_PAGES", False):
+            return Response({
+                "code": "ACCOUNT_CONFIRMATION_REQUIRED",
+                "message": "Open the verification email link in your browser and confirm the form, then return to the Android app.",
+            }, status=status.HTTP_405_METHOD_NOT_ALLOWED)
         try:
-            _, user_id = b64decode_hash(user_hash)
-            user = User.objects.get(pk=user_id)
-            logger.info("[EMAIL VERIFICATION] Found user id %s", user.id)
-        except User.DoesNotExist:
-            logger.error("[EMAIL VERIFICATION] User not found for activation link")
-            raise CustomAPIException(message=error_msg)
-        except Exception as e:
-            logger.exception(
-                f"[EMAIL VERIFICATION] Error while decoding user_hash."
-                f" Error: {text_type(e)}"
-            )
-            raise CustomAPIException(message=error_msg)
-
-        logger.info(f"[EMAIL VERIFICATION] Checking token for user {user.id}")
-        if token_generator.check_token(user, token):
-            profile = user.profile
-            profile.email_verified = True
-            profile.save()
-
-            logger.info(
-                f"[EMAIL VERIFICATION] Email verified for user {user.id}"
-            )
-
-            handle_post_email_verification(user)
-
-            response_data = {
-                "message": "User account verified successfully!",
-            }
-            return Response(response_data, status=status.HTTP_200_OK)
-        else:
-            logger.error(f"[EMAIL VERIFICATION] Invalid token for user {user.id}")
-            raise CustomAPIException(message=error_msg)
+            confirm_account_email(request.query_params.get("uid"), request.query_params.get("token"))
+        except InvalidAccountLink:
+            raise CustomAPIException(message="Invalid activation link")
+        return Response({"message": "User account verified successfully!"}, status=status.HTTP_200_OK)
 
 @class_view_decorator(phone_verification_exempt)
 class UserConfigAPIView(GenericAPIView):
@@ -1394,6 +1367,14 @@ class ForgotPasswordAPIView(GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"]
+        if getattr(settings, "ACCOUNT_EMAIL_OUTBOX_ENABLED", False):
+            from accounts.email_outbox import enqueue_account_email
+            from accounts.models import AccountEmailDelivery
+            user = User.objects.filter(email=email, is_active=True).first()
+            if user is not None:
+                enqueue_account_email(user, AccountEmailDelivery.PASSWORD_RESET)
+            # Identical response for unknown accounts; no claim of delivery.
+            return Response({"message": "If this email has an active account, reset instructions are queued for scheduled delivery; delivery is not confirmed."}, status=200)
         message = (
             "Thanks! If there's an account associated with this email. "
             " We'll send password reset instructions immediately."
@@ -1473,31 +1454,10 @@ class ResetPasswordAPIView(GenericAPIView):
         user_hash = request.query_params.get("uid")
         token = request.query_params.get("token")
         error_message = "Invalid reset password link!"
-        user = validate_user_hash(user_hash)
-
-        if not user:
+        try:
+            complete_password_reset(user_hash, token, request.data)
+        except InvalidAccountLink:
             raise CustomAPIException(message=error_message)
-
-        if not reset_password_token_generator.check_token(user, token):
-            raise CustomAPIException(message=error_message)
-
-        data = request.data
-        serializer = self.serializer_class(data=data)
-        serializer.is_valid(raise_exception=True)
-
-        user.set_password(serializer.validated_data["password"])
-        user.must_change_password = False
-        user.save()
-
-        profile = user.profile
-        if not profile.email_verified:
-            profile.email_verified = True
-            profile.save()
-            handle_post_email_verification(user)
-
-        logger.info(
-            f"[RESET PASSWORD] User {user.id} password reset successfully!"
-        )
 
         return Response(
             {
@@ -1547,6 +1507,8 @@ class SettingsAPIView(CreateAPIView):
             )
 
         dispatch_task(handle_send_email_code, user.id, code)
+        if getattr(settings, "ACCOUNT_EMAIL_OUTBOX_ENABLED", False):
+            return Response({"message": "Confirmation code queued; delivery is not confirmed."}, status=202)
 
         response_data = {
             "success": True,
@@ -1587,6 +1549,8 @@ class ResendVerificationEmailAPIView(GenericAPIView):
 
         # send the email now
         dispatch_task(handle_send_email_verification, user.id)
+        if getattr(settings, "ACCOUNT_EMAIL_OUTBOX_ENABLED", False):
+            return Response({"message": "Verification email queued for scheduled delivery; it has not been sent yet."}, status=202)
 
         response_data = {
             "message": "Verification email sent successfully!",

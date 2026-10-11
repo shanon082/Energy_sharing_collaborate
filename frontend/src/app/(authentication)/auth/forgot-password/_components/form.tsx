@@ -75,7 +75,7 @@ export default function ForgotPasswordForm() {
 
           form.reset();
           setSuccess(
-            `Password reset link sent to ${values.email}. If you don't see it within a few minutes, check your spam or junk folder.`
+            data.message || "If this email has an account, reset instructions have been requested."
           );
         });
       }
@@ -92,7 +92,7 @@ export default function ForgotPasswordForm() {
               <Info className="h-4 w-4 text-blue-600" />
               <AlertDescription className="text-sm text-blue-900 dark:text-blue-100">
                 The reset email may land in your <strong>spam or junk folder</strong>. If it
-                doesn't arrive in your inbox, check there before requesting another link.
+                does not arrive in your inbox, check there before requesting another link.
               </AlertDescription>
             </Alert>
 

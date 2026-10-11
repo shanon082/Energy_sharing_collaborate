@@ -1,12 +1,12 @@
 # Celery is an async task queue
 # redis is the message broker used to send and receive messages
 import os
-from celery import Celery
+from utils.hosting_tasks import HostingCelery as Celery
 
 # set the default Django settings module for the 'celery' program.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 
-app = Celery("backend")
+app = Celery("backend", task_cls="utils.hosting_tasks:HostingTask")
 app.conf.enable_utc = False
 app.conf.update(timezone='Africa/Nairobi')
 

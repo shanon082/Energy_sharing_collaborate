@@ -30,12 +30,10 @@ def send_email(
         )
         msg.content_subtype = "html"
         success = msg.send()
-    except Exception as e:
-        logger.exception(
-            f"[EMAILS] SMTP error sending email with subject '{subject}' "
-            f"to {recipients}: {str(e)}"
-        )
-        return (False, f"SMTP error: {str(e)}")
+    except Exception:
+        # SMTP exceptions can contain recipients, credentials or message content.
+        logger.warning("Email transport did not confirm acceptance")
+        return (False, "Email transport did not confirm acceptance")
 
     if not success:
         users = User.objects.filter(email__in=recipients)

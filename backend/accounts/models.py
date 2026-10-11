@@ -505,4 +505,24 @@ class LoanRepayment(models.Model):
     status = models.CharField(max_length=20, choices=[('PENDING', 'Pending'), ('PARTIAL', 'Partial'), ('PAID', 'Paid'), ('OVERDUE', 'Overdue')], default='PENDING')
     is_penalty = models.BooleanField(default=False)
 
-    
+
+
+class AccountEmailDelivery(models.Model):
+    """Finite hosting mail queue; no tokens, credentials or message bodies."""
+    VERIFICATION = "VERIFICATION"
+    PASSWORD_RESET = "PASSWORD_RESET"
+    SETTINGS_CODE = "SETTINGS_CODE"
+    QUEUED = "QUEUED"
+    SENDING = "SENDING"
+    SENT = "SENT"
+    SKIPPED = "SKIPPED"
+    OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    kind = models.CharField(max_length=20, choices=[(x, x) for x in (VERIFICATION, PASSWORD_RESET, SETTINGS_CODE)])
+    account_state = models.CharField(max_length=64)
+    code_id = models.PositiveBigIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, default=QUEUED, db_index=True,
+                              choices=[(x, x) for x in (QUEUED, SENDING, SENT, SKIPPED, OUTCOME_UNKNOWN)])
+    created_at = models.DateTimeField(auto_now_add=True)
+    attempted_at = models.DateTimeField(null=True)
+    finished_at = models.DateTimeField(null=True)

@@ -1,0 +1,3 @@
+# Managed uWSGI is supplied by alwaysdata; Gunicorn is not required here.
+-r requirements.txt
+whitenoise==6.12.0

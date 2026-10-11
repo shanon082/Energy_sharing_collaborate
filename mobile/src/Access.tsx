@@ -51,16 +51,16 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
     try {
       if (mode === "register") {
         if (password !== confirm) throw new Error("Passwords do not match.");
-        await session.publicPost("auth/register/", {
+        const response = await session.publicPost<{ message?: unknown }>("auth/register/", {
           first_name: first.trim(), last_name: last.trim(), email: email.trim(),
           phone_number: phone.trim(), gender, password, confirm_password: confirm,
         });
         setPassword(""); setConfirm("");
-        setSuccess("Account created. Check your email, then verify before signing in.");
+        setSuccess(typeof response?.message === "string" ? response.message : "Account created. Verification email requested; verify before signing in.");
         setMode("verify");
       } else if (mode === "forgot") {
-        await session.publicPost("auth/forgot-password/", { email: email.trim() });
-        setSuccess("If this email has an account, reset instructions will be sent.");
+        const response = await session.publicPost<{ message?: unknown }>("auth/forgot-password/", { email: email.trim() });
+        setSuccess(typeof response?.message === "string" ? response.message : "If this email has an account, reset instructions have been requested.");
         setMode("reset");
       } else if (mode === "verify") {
         const parsed = parseAccountLink(link);
@@ -83,8 +83,8 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
   const resend = async () => {
     setBusy(true); setError(null); setSuccess(null);
     try {
-      await session.publicGet(`auth/resend-email-link/?email=${encodeURIComponent(email.trim())}`);
-      setSuccess("If verification is still needed, a new email has been requested.");
+      const response = await session.publicGet<{ message?: unknown }>(`auth/resend-email-link/?email=${encodeURIComponent(email.trim())}`);
+      setSuccess(typeof response?.message === "string" ? response.message : "If verification is still needed, a new email has been requested.");
     } catch (cause) { setError(describe(cause)); }
     finally { setBusy(false); }
   };

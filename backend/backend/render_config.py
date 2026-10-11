@@ -11,7 +11,7 @@ from backend.feature_config import FEATURE_ENV_VARS, parse_feature_bool
 def required(environ, name):
     value = environ.get(name, "")
     if not value.strip() or re.fullmatch(r"<[^<>]+>", value.strip()):
-        raise ImproperlyConfigured(f"Set {name} in Render; placeholders are not values")
+        raise ImproperlyConfigured(f"Set {name} in the hosting environment; placeholders are not values")
     return value
 
 
@@ -59,11 +59,11 @@ def redis_url(value, name):
     return value
 
 
-def validate_testing_environment(environ):
+def validate_testing_environment(environ, *, profile="Render"):
     for name in ("DEBUG", "SIMULATED_METER_ENABLED", "MOBILE_PAYMENT_ACTIONS_ENABLED",
                  "CELERY_TASK_ALWAYS_EAGER", *FEATURE_ENV_VARS.values()):
         if parse_feature_bool(environ.get(name, "false"), name=name):
-            raise ImproperlyConfigured(f"{name} must remain disabled in the Render testing profile")
+            raise ImproperlyConfigured(f"{name} must remain disabled in the {profile} testing profile")
     # The provider's legacy parser accepts false/0/no (not the feature parser's
     # off). Require an explicit value so missing keys cannot enable simulation.
     if environ.get("MTN_USE_SIMULATED_PAYMENTS", "false").lower() not in {"false", "0", "no"}:
@@ -72,8 +72,8 @@ def validate_testing_environment(environ):
                  "MTN_SUBSCRIPTION_KEY", "PRIMARY_KEY", "SECONDARY_KEY", "MTN_API_KEY",
                  "MTN_API_USER_ID"):
         if environ.get(name):
-            raise ImproperlyConfigured(f"Do not provision {name} in the isolated Render testing profile")
+            raise ImproperlyConfigured(f"Do not provision {name} in the isolated {profile} testing profile")
     if environ.get("AMI_GATEWAY", "utils.ami_gateway.MockAMIGateway") != "utils.ami_gateway.MockAMIGateway":
-        raise ImproperlyConfigured("AMI_GATEWAY must remain the mock gateway for Render testing")
+        raise ImproperlyConfigured(f"AMI_GATEWAY must remain the mock gateway for {profile} testing")
     if environ.get("CRB_PROVIDER", "loan.crb.NoOpCreditBureauProvider") != "loan.crb.NoOpCreditBureauProvider":
-        raise ImproperlyConfigured("CRB_PROVIDER must remain the no-op provider for Render testing")
+        raise ImproperlyConfigured(f"CRB_PROVIDER must remain the no-op provider for {profile} testing")

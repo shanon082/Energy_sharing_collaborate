@@ -7,7 +7,7 @@ import { z } from "zod";
 
 export default async function createUser(data: z.infer<typeof createAccountSchema>){
   try {
-    const { error } = await post("auth/register/", data);
+    const { error, data: response } = await post<{ message: string }>("auth/register/", data);
 
     if(error){
       return { error: getApiErrorMessage(error, "Registration failed") }
@@ -16,7 +16,7 @@ export default async function createUser(data: z.infer<typeof createAccountSchem
     return {
       success: true,
       email: data.email,
-      message: "Account created successfully.",
+      message: response?.message || "Account created successfully. Verification email requested.",
     };
 
   } catch (error) {

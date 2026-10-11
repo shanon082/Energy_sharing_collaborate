@@ -1,0 +1,27 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ title }} · gPawa</title>
+  <link rel="stylesheet" href="{% static 'accounts/account-pages.css' %}">
+</head>
+<body>
+  <main>
+    <p class="brand">gPawa</p>
+    <h1>{{ title }}</h1>
+    {% if message %}<p role="status">{{ message }}</p>{% endif %}
+    {% if form %}
+      <p>Complete this action below. Opening the email link alone does not confirm it.</p>
+      <form method="post" action="{{ request.path }}">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">{{ title }}</button>
+      </form>
+    {% endif %}
+    <p>When finished, close this page and return to the Android app to sign in.</p>
+  </main>
+</body>
+</html>

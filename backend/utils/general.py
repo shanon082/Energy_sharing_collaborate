@@ -14,6 +14,11 @@ def dispatch_task(task, *args, **kwargs):
     Call a Celery task directly in DEBUG mode (no Redis/broker needed),
     or dispatch via .delay() in production.
     """
+    if getattr(settings, "ACCOUNT_EMAIL_OUTBOX_ENABLED", False):
+        from accounts.email_outbox import enqueue_email_task
+        return enqueue_email_task(task, *args, **kwargs)
+    from utils.hosting_tasks import require_background_tasks
+    require_background_tasks()
     if settings.DEBUG:
         try:
             task(*args, **kwargs)

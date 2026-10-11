@@ -73,9 +73,9 @@ export default function RegisterForm() {
       }
 
       form.reset();
-      const email = (data as any)?.email || values.email;
+      const email = data.email || values.email;
       setSuccess("Account created successfully.");
-      setRedirectNote(`Verification link sent to ${email}. Redirecting to login…`);
+      setRedirectNote(`${data.message || `Verification email requested for ${email}.`} Redirecting to login…`);
       setTimeout(() => {
         router.push("/auth/login");
       }, 2500);
