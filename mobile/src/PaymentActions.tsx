@@ -5,8 +5,9 @@ import { clearRequestId, savedRequestId, saveRequestId } from "./api/request-id.
 import { energy, ugx } from "./format.ts";
 import type { Loan } from "./api/contracts.ts";
 
-type Receipt = { purpose: string; status: string; external_id: string;
-  loan_id: string | null; client_request_id: string | null };
+import { normalizeUgandanPhone } from "../../frontend/src/lib/ugandan-phone.ts";
+
+import { parsePaymentRecovery } from "./api/payment-recovery.ts";
 type Quote = { amount_ugx: string; meter_no: string; estimated_energy_kwh: string;
   estimated_billed_ugx: string; estimated_residual_ugx: string;
   tariff_code: string; binding: false };
@@ -31,13 +32,17 @@ export function PurchasePanel({ session, meterNo, enabled, onActivity }: {
   const checkPending = useCallback(async () => {
     const owner = session.identity;
     try {
-      const data = await session.get<{ receipts: Receipt[] }>("transactions/mobile-receipts/");
+      const saved = savedRequestId(owner, "purchase", meterNo);
+      const query = new URLSearchParams({ purpose: "PURCHASE", meter_no: meterNo });
+      if (saved) query.set("client_request_id", saved);
+      const data = parsePaymentRecovery(await session.get<unknown>(`transactions/mobile-payment-recovery/?${query}`),
+        { purpose: "PURCHASE", binding: meterNo, requestId: saved });
       if (owner === session.identity) {
-        const saved = savedRequestId(owner, "purchase", meterNo);
-        if (saved && data.receipts.some((row) => row.client_request_id === saved)) {
+        if (saved && data.receipt?.client_request_id === saved) {
           clearRequestId(owner, "purchase", meterNo); setRequestId(null);
         }
-        setPending(data.receipts.some((row) => row.purpose === "PURCHASE" && row.status === "PENDING"));
+        setPending(data.pending === true);
+        if (data.receipt) setNotice(`Recovered stored request: ${data.receipt.status}. View its receipt in Activity; no new payment was sent.`);
         setReceiptsChecked(true);
       }
     } catch (cause) {
@@ -60,13 +65,16 @@ export function PurchasePanel({ session, meterNo, enabled, onActivity }: {
   };
   const initiate = async () => {
     if (inFlight.current || !quote || !phone.trim() || !enabled || pending || !receiptsChecked) return;
+    let canonicalPhone: string;
+    try { canonicalPhone = normalizeUgandanPhone(phone); }
+    catch (cause) { setError(describe(cause)); return; }
     const id = requestId || crypto.randomUUID();
     const owner = session.identity;
     saveRequestId(owner, "purchase", meterNo, id);
     setRequestId(id); inFlight.current = true; setBusy(true); setError(null); setNotice(null);
     try {
       const result = await session.post<Initiated>("meter/mobile-buy-units/", {
-        amount: quote.amount_ugx, phone_number: phone.trim(), payment_source: "PHONE",
+        amount: quote.amount_ugx, phone_number: canonicalPhone, payment_source: "PHONE",
         meter_no: quote.meter_no, client_request_id: id,
       });
       setNotice(result.reused ? "Existing payment request found. Check its status in Activity." :
@@ -129,14 +137,17 @@ export function RepaymentPanel({ session, loan, enabled, onActivity }: {
   const checkPending = useCallback(async () => {
     const owner = session.identity;
     try {
-      const data = await session.get<{ receipts: Receipt[] }>("transactions/mobile-receipts/");
+      const saved = savedRequestId(owner, "repayment", loan.loan_id);
+      const query = new URLSearchParams({ purpose: "LOAN_REPAYMENT", loan_id: loan.loan_id });
+      if (saved) query.set("client_request_id", saved);
+      const data = parsePaymentRecovery(await session.get<unknown>(`transactions/mobile-payment-recovery/?${query}`),
+        { purpose: "LOAN_REPAYMENT", binding: loan.loan_id, requestId: saved });
       if (owner === session.identity) {
-        const saved = savedRequestId(owner, "repayment", loan.loan_id);
-        if (saved && data.receipts.some((row) => row.client_request_id === saved)) {
+        if (saved && data.receipt?.client_request_id === saved) {
           clearRequestId(owner, "repayment", loan.loan_id); setRequestId(null);
         }
-        setPending(data.receipts.some((row) => row.purpose === "LOAN_REPAYMENT" &&
-          row.loan_id === loan.loan_id && row.status === "PENDING"));
+        setPending(data.pending === true);
+        if (data.receipt) setNotice(`Recovered stored repayment: ${data.receipt.status}. Check Activity; no new collection was sent.`);
         setReceiptsChecked(true);
       }
     } catch (cause) {
@@ -154,13 +165,16 @@ export function RepaymentPanel({ session, loan, enabled, onActivity }: {
   };
   const initiate = async () => {
     if (inFlight.current || !reviewed || !phone.trim() || !enabled || pending || !receiptsChecked) return;
+    let canonicalPhone: string;
+    try { canonicalPhone = normalizeUgandanPhone(phone); }
+    catch (cause) { setError(describe(cause)); return; }
     const id = requestId || crypto.randomUUID();
     const owner = session.identity;
     saveRequestId(owner, "repayment", loan.loan_id, id);
     setRequestId(id); inFlight.current = true; setBusy(true); setError(null); setNotice(null);
     try {
       const result = await session.post<Initiated>(`loans/mobile-repay/momo/${loan.id}/`, {
-        amount, phone_number: phone.trim(), client_request_id: id,
+        amount, phone_number: canonicalPhone, client_request_id: id,
       });
       setNotice(result.reused ? "Existing repayment request found. Check Activity." :
         "Repayment request started. Debt does not fall until Django verifies provider settlement.");

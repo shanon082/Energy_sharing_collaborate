@@ -4,13 +4,16 @@ import { App as NativeApp } from "@capacitor/app";
 import { DISABLED_FEATURES, parseFeatureAvailability, type FeatureAvailability } from "../../frontend/src/lib/features.ts";
 import { API_BASE_URL } from "./api/config.ts";
 import { DISABLED_MOBILE_ACTIONS, parseMobileActions, type MobileActions } from "./api/mobile-actions.ts";
+import SandboxConsumer from "../../frontend/src/components/sandbox-consumer.tsx";
+import { sandboxCapabilities, NO_SANDBOX, type SandboxCapabilities } from "../../frontend/src/lib/sandbox.ts";
+import { MeterOnboarding } from "./Onboarding.tsx";
+import { ForegroundPoller } from "./api/polling.ts";
 import { Access } from "./Access.tsx";
 import { ProfileEditor } from "./Profile.tsx";
 import { DeliveryPanel } from "./Delivery.tsx";
 import { Activity } from "./Activity.tsx";
 import { LoanQuote } from "./LoanQuote.tsx";
 import { PurchasePanel, RepaymentPanel } from "./PaymentActions.tsx";
-import { PreviewApp } from "./PreviewApp.tsx";
 import { Brand, Icon } from "./ui.tsx";
 import { CONSUMER_TABS, type ConsumerTab } from "./consumer-navigation.ts";
 import { LatestRead } from "./api/read-scope.ts";
@@ -86,7 +89,7 @@ function PasswordChange({ required, onDone, onCancel }: {
 }
 
 export default function App() {
-  const [phase, setPhase] = useState<"checking" | "signed_out" | "password_required" | "signed_in" | "preview">("checking");
+  const [phase, setPhase] = useState<"checking" | "signed_out" | "password_required" | "signed_in">("checking");
   const [account, setAccount] = useState<ConsumerIdentity | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -100,6 +103,7 @@ export default function App() {
   const [consumption, setConsumption] = useState<Resource<ConsumptionHistory>>(empty);
   const [features, setFeatures] = useState<FeatureAvailability>(DISABLED_FEATURES);
   const [featuresVerified, setFeaturesVerified] = useState(false);
+  const [sandbox, setSandbox] = useState<SandboxCapabilities>(NO_SANDBOX);
   const [mobileActions, setMobileActions] = useState<MobileActions>(DISABLED_MOBILE_ACTIONS);
   const booted = useRef(false);
   const selectedRef = useRef<MeterInfo | null>(null);
@@ -111,7 +115,7 @@ export default function App() {
     setAccount(null); setMeters(empty()); setLoans(empty()); setAllocation(empty());
     setConsumption(empty()); setSelectedMeter(null); selectedRef.current = null;
     meterReads.current.invalidate(); selectedReads.current.invalidate(); setMeterNotice(null);
-    setChangingPassword(false);
+    setChangingPassword(false); setSandbox(NO_SANDBOX);
     setTab("dashboard");
   }, []);
 
@@ -121,14 +125,15 @@ export default function App() {
 
   const loadFeatures = useCallback(async () => {
     try {
-      const data = await session.publicGet<{ features?: unknown; mobile_actions?: unknown }>("features/");
+      const data = await session.publicGet<{ features?: unknown; mobile_actions?: unknown; sandbox?: unknown }>("features/");
       setOffline(false);
       setFeatures(parseFeatureAvailability(data.features)); setFeaturesVerified(true);
       setMobileActions(parseMobileActions(data.mobile_actions));
+      setSandbox(sandboxCapabilities(data.sandbox));
     } catch (error) {
       if (error instanceof TransportError) setOffline(true);
       setFeatures(DISABLED_FEATURES); setFeaturesVerified(false);
-      setMobileActions(DISABLED_MOBILE_ACTIONS);
+      setMobileActions(DISABLED_MOBILE_ACTIONS); setSandbox(NO_SANDBOX);
     }
   }, []);
 
@@ -137,7 +142,15 @@ export default function App() {
     const ticket = meterReads.current.begin();
     setMeters((old) => ({ ...old, loading: true, error: null }));
     try {
-      const value = parseMeters(await session.get<unknown>("meter/mobile-meters/"));
+      let value: MeterInfo[];
+      try {
+        const onboarding = await session.get<{ meters: unknown[] }>("meter/mobile-onboarding/");
+        value = parseMeters({ success: true, data: { has_meter: onboarding.meters.length > 0, meters: onboarding.meters } });
+      } catch (cause) {
+        if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
+        // Keep existing authorized reads usable during the staged backend upload.
+        value = parseMeters(await session.get<unknown>("meter/mobile-meters/"));
+      }
       if (owner !== session.identity || !meterReads.current.current(ticket)) return;
       setOffline(false);
       if (selectedRef.current && !selectedMeterStillAssigned(selectedRef.current, value)) {
@@ -181,18 +194,18 @@ export default function App() {
         .then((data) => parseConsumption(data, selected)),
     ]);
     if (owner !== session.identity || selectedRef.current?.id !== selected.id ||
-        selectedRef.current.meter_number !== meterNo || !selectedReads.current.current(ticket)) return;
+        selectedRef.current.meter_number !== meterNo || !selectedReads.current.current(ticket)) return false;
     if (allocationResult.status === "rejected" && allocationResult.reason instanceof ApiError &&
         allocationResult.reason.status === 404) {
       selectedRef.current = null; setSelectedMeter(null); selectedReads.current.invalidate();
       setAllocation(empty()); setConsumption(empty());
       setMeterNotice("This meter is no longer assigned to your account. Refresh and select a meter again.");
-      return;
+      return false;
     }
     if (allocationResult.status === "fulfilled") {
       setOffline(false);
       setAllocation({ value: allocationResult.value, loading: false, error: null, fetchedAt: new Date().toISOString() });
-    } else if (allocationResult.reason instanceof SessionExpired) { expire(); return; }
+    } else if (allocationResult.reason instanceof SessionExpired) { expire(); return false; }
     else {
       if (allocationResult.reason instanceof TransportError) setOffline(true);
       setAllocation((old) => ({ ...old, loading: false, error: message(allocationResult.reason) }));
@@ -205,6 +218,7 @@ export default function App() {
       if (consumptionResult.reason instanceof TransportError) setOffline(true);
       setConsumption((old) => ({ ...old, loading: false, error: message(consumptionResult.reason) }));
     }
+    return allocationResult.status === "fulfilled" && consumptionResult.status === "fulfilled";
   }, [expire]);
 
   const chooseMeter = (selected: MeterInfo) => {
@@ -213,11 +227,43 @@ export default function App() {
     void loadSelected(selected);
   };
 
+  const enrolledMeter = (linked: MeterInfo) => {
+    meterReads.current.invalidate();
+    setMeters(old => ({ value: [...(old.value ?? []).filter(item => item.id !== linked.id), linked],
+      loading: false, error: null, fetchedAt: new Date().toISOString() }));
+    chooseMeter(linked);
+  };
+
   const refresh = () => {
     if (phase !== "signed_in") return;
     void loadFeatures(); void loadMeters(); void loadLoans();
     if (selectedRef.current) void loadSelected(selectedRef.current);
   };
+
+  useEffect(() => {
+    if (phase !== "signed_in") return;
+    if (!selectedRef.current && !meterNotice && meters.value?.length === 1) chooseMeter(meters.value[0]);
+  }, [phase, meters.value, meterNotice]);
+
+  useEffect(() => {
+    if (phase !== "signed_in") return;
+    const poller = new ForegroundPoller(async () => {
+      const selected = selectedRef.current;
+      if (selected) return await loadSelected(selected);
+      await loadMeters();
+      return false;
+    });
+    let nativeActive = true;
+    const visibility = () => poller.setActive(nativeActive && document.visibilityState !== "hidden");
+    visibility();
+    document.addEventListener("visibilitychange", visibility);
+    let removed = false;
+    let handle: { remove: () => Promise<void> } | undefined;
+    if (Capacitor.isNativePlatform()) void NativeApp.addListener("appStateChange", ({ isActive }) => {
+      nativeActive = isActive; visibility();
+    }).then((listener) => { if (removed) void listener.remove(); else handle = listener; });
+    return () => { removed = true; poller.dispose(); document.removeEventListener("visibilitychange", visibility); if (handle) void handle.remove(); };
+  }, [phase, loadSelected, loadMeters]);
 
   useEffect(() => {
     if (booted.current) return;
@@ -245,7 +291,7 @@ export default function App() {
   }, [loadFeatures, loadMeters, loadLoans]);
 
   useEffect(() => {
-    if (!Capacitor.isNativePlatform() || phase === "signed_out" || phase === "preview") return;
+    if (!Capacitor.isNativePlatform() || phase === "signed_out") return;
     let removed = false;
     let listener: { remove: () => Promise<void> } | undefined;
     void NativeApp.addListener("backButton", () => {
@@ -270,8 +316,8 @@ export default function App() {
       if (error instanceof TransportError) setOffline(true);
       setAuthError(error instanceof TransportError
         ? loginCompleted
-          ? "Sign-in succeeded, but the account check did not return a readable response. Check the account request."
-          : "The sign-in request did not return a readable response. Check the login request."
+          ? `Sign-in succeeded, but the account check failed. ${error.message}`
+          : `Sign-in could not complete. ${error.message}`
         : message(error));
     }
     finally { setBusy(false); }
@@ -285,9 +331,7 @@ export default function App() {
   };
 
   if (phase === "checking") return <main className="loading" role="status"><Brand /><span className="loading-spinner" /><p>Opening your energy account…</p></main>;
-  if (phase === "preview") return <PreviewApp onExit={() => setPhase("signed_out")} />;
-  if (phase === "signed_out") return <Access session={session} onLogin={login} loginBusy={busy} loginError={authError}
-    onPreview={() => { clearView(); setPhase("preview"); }} />;
+  if (phase === "signed_out") return <Access session={session} onLogin={login} loginBusy={busy} loginError={authError} />;
   if (phase === "password_required") return <PasswordChange required onDone={() => void logout()} />;
   if (changingPassword) return <PasswordChange required={false} onDone={() => void logout()}
     onCancel={() => setChangingPassword(false)} />;
@@ -301,6 +345,7 @@ export default function App() {
     </div></header>
     {offline && <div className="offline" role="status">A request could not reach the API. Displayed values may be stale; tap Refresh to retry.</div>}
     <main className="content">
+      {sandbox.enabled && <p className="tag" role="status">SANDBOX / NO REAL MONEY · EUR test terms · no physical commands</p>}
       {meterNotice && <p className="tag" role="status">{meterNotice}</p>}
       {tab === "dashboard" && <>
         <div className="page-heading"><span className="eyebrow">YOUR ENERGY AT A GLANCE</span>
@@ -310,25 +355,34 @@ export default function App() {
           {meter ? <p><strong>{meter.label}</strong><br /><span className="muted">{meter.meter_number} · {meter.architecture}</span></p>
             : <p className="muted">Choose a meter on the Meters tab to view its entitlement.</p>}
           <button className="secondary" onClick={() => setTab("meters")}>Choose meter</button>
+          {meter?.ownership_provenance === "SELF_DECLARED" && <p className="muted">Meter linked for prototype testing. Ownership and live readings are not verified with the electricity provider.</p>}
         </Panel>
-        {meter && <Panel title="Energy entitlement">
+        {meters.value && !meters.value.some(item => item.status === "ACTIVE") && <MeterOnboarding session={session} hasMeter={false} onRefresh={refresh} onLinked={enrolledMeter} />}
+        {meter && <Panel title={meter.sandbox_inventory ? "Cloud test-energy entitlement" : "Energy entitlement"}>
           <StateLine data={allocation} offline={offline} />
           {allocation.value && <>
             <div className="metrics">
               <div><span>Available to request</span><strong>{energy(allocation.value.available_kwh)}</strong></div>
               <div><span>Reserved / unresolved</span><strong>{energy(allocation.value.pending_kwh)}</strong></div>
-              <div><span>Confirmed applied</span><strong>{energy(allocation.value.confirmed_kwh)}</strong></div>
+              <div><span>Confirmed applied</span><strong>{meter.sandbox_inventory && allocation.value.contact_source === "UNAVAILABLE" ? "Unavailable" : energy(allocation.value.confirmed_kwh)}</strong></div>
             </div>
             <p className="muted">Last {allocation.value.contact_source === "SIMULATOR" ? "simulator" : "meter"} contact: {dateTime(allocation.value.last_meter_contact)}</p>
+            <p className="muted">Contact: {allocation.value.contact_status === "RECENT" ? "Recent simulator contact" : allocation.value.contact_status === "STALE" ? "Stale — not evidence of current connectivity" : "Unavailable"}. Foreground reads refresh with backoff.</p>
+            <p className="muted">Physical meter-reported credit: {allocation.value.meter_reported_remaining_wh == null ? "Unavailable" : `${allocation.value.meter_reported_remaining_wh} Wh`}</p>
+            {allocation.value.contact_source === "SIMULATOR" && <>
+              <p>Simulator credit from applied energy and accepted consumption deltas: {allocation.value.simulator_remaining_wh == null ? "Unavailable" : `${allocation.value.simulator_remaining_wh} Wh`}</p>
+              {allocation.value.consumption_reconciliation_required && <p className="tag">A reset or counter baseline needs reconciliation. Remaining credit is withheld.</p>}
+              <p className="muted">Simulator reported relay: {allocation.value.reported_relay_state || "Unavailable"} · measured {dateTime(allocation.value.last_measurement_at)}. Requested relay state is not feedback.</p>
+            </>}
             {allocation.value.delivery_environment === "SIMULATOR" &&
               <p className="tag">Simulation only — no physical meter accuracy is established.</p>}
             {allocation.value.delivery_environment === "UNAVAILABLE" &&
-              <p className="muted">Physical delivery status is unavailable.</p>}
+              <p className="muted">Hardware connection is pending. Actual usage and physical meter balance are unavailable. Cloud test allocations do not load electricity onto a real meter.</p>}
           </>}
         </Panel>}
         {meter && <DeliveryPanel key={meter.id} session={session} meter={meter}
           allocation={allocation.value} onReserved={() => void loadSelected(meter)} />}
-        {meter && <PurchasePanel key={`purchase-${meter.meter_number}`} session={session}
+        {meter && !sandbox.enabled && <PurchasePanel key={`purchase-${meter.meter_number}`} session={session}
           meterNo={meter.meter_number} enabled={mobileActions.purchase}
           onActivity={() => setTab("activity")} />}
         <Panel title="Loan position"><StateLine data={loans} offline={offline} />
@@ -343,12 +397,15 @@ export default function App() {
         {meters.value && (meters.value.length ? meters.value.map((item) =>
           <button className={`meter-choice ${selectedMeter === item.meter_number ? "chosen" : ""}`}
             key={item.id} onClick={() => chooseMeter(item)}>
-            <strong>{item.label}</strong><span>{item.meter_number} · {item.architecture} · {item.status}</span>
+            <strong>{item.label}</strong><span>{item.meter_number} · {item.sandbox_inventory ? "SANDBOX INVENTORY" : item.architecture} · {item.status}</span>
             <small>{selectedMeter === item.meter_number ? "Selected" : "Tap to select"}</small>
           </button>) : <Panel title="No meters"><p className="muted">No meter is assigned to this account.</p></Panel>)}
       </>}
 
+      {tab === "meters" && meters.value && <MeterOnboarding session={session} hasMeter={meters.value.some(item => item.status === "ACTIVE")} onRefresh={refresh} onLinked={enrolledMeter} />}
+
       {tab === "consumption" && <><h1>Consumption history</h1>
+        {meter?.sandbox_inventory && <p className="muted">Actual usage is unavailable without device evidence. Hardware connection is pending; stored or simulated readings below are not live utility readings.</p>}
         {!meter ? <Panel title="Choose a meter"><p className="muted">Select a meter first.</p><button onClick={() => setTab("meters")}>Select meter</button></Panel>
           : <><p className="muted">{meter.label} · {meter.meter_number}</p><StateLine data={consumption} offline={offline} />
             {consumption.value && <>
@@ -370,7 +427,7 @@ export default function App() {
       </>}
 
       {tab === "loans" && <><h1>Loans and repayments</h1><StateLine data={loans} offline={offline} />
-        <LoanQuote session={session} meters={meters.value} selectedMeter={selectedMeter} />
+        {!sandbox.enabled && <LoanQuote session={session} meters={meters.value} selectedMeter={selectedMeter} />}
         {loans.value && (loans.value.length ? loans.value.map((loan) => <Panel key={loan.id} title={loan.loan_id}>
           <div className="metrics two"><div><span>Status</span><strong>{loan.status}</strong></div>
             <div><span>Outstanding</span><strong>{ugx(loan.outstanding_ugx)}</strong></div></div>
@@ -385,6 +442,10 @@ export default function App() {
         </Panel>) : <Panel title="No loans"><p className="muted">No loan records are available.</p></Panel>)}
       </>}
 
+      {sandbox.enabled && account && (tab === "loans" || tab === "activity" || tab === "dashboard") && <SandboxConsumer
+        key={account.id} client={session} owner={account.id} meters={meters.value ?? []} selectedMeter={meter}
+        capabilities={sandbox} onChanged={refresh} />}
+
       {tab === "activity" && <Activity session={session} />}
 
       {tab === "account" && <><h1>Account</h1><Panel title="Consumer profile">
@@ -395,7 +456,7 @@ export default function App() {
         <button className="secondary" onClick={() => setChangingPassword(true)}>Change password</button>
       </Panel><Panel title="Feature availability">
         <p className="muted">{featuresVerified ? "Supplied by Django" : "Could not verify; deferred features remain hidden."}</p>
-        <p className="muted">{Object.values(features).filter(Boolean).length} deferred features enabled on the server. Mobile purchase and repayment requests are {mobileActions.purchase || mobileActions.repayment ? "available only through verified provider flow" : "disabled pending policy approval and provider setup"}; loan applications remain unavailable.</p>
+        <p className="muted">{Object.values(features).filter(Boolean).length} deferred features enabled on the server. Mobile purchase and repayment requests are {mobileActions.purchase || mobileActions.repayment ? "available only through verified provider flow" : "disabled pending policy approval and provider setup"}; {sandbox.enabled ? "sandbox loan applications are available under test terms" : "loan applications remain unavailable"}.</p>
       </Panel><Panel title="Session"><button className="danger" onClick={() => void logout()}>Log out</button>
         <p className="muted small">Offline logout clears this device; server revocation needs a connection.</p></Panel></>}
     </main>

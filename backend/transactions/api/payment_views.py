@@ -16,6 +16,7 @@ from phonenumber_field.phonenumber import PhoneNumber
 
 from accounts.models import Wallet as AccountWallet
 from accounts.models import User
+from accounts.phones import normalize_ugandan_phone
 from loan.models import LoanApplication, LoanRepayment
 from meter.models import Meter
 from transactions.models import PaymentIntent, Transaction
@@ -122,7 +123,10 @@ class VerifiedPurchaseView(APIView):
         except PaymentSettlementError as exc:
             return _unavailable(exc)
         amount = _positive_amount(request.data.get("amount"))
-        phone = str(request.data.get("phone_number") or "").strip()
+        try:
+            phone = normalize_ugandan_phone(request.data.get("phone_number"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
         if amount is None or not phone:
             return Response({"error": "A positive UGX amount and phone number are required."}, status=400)
         try:
@@ -133,7 +137,7 @@ class VerifiedPurchaseView(APIView):
         if not meter_no:
             return Response({"error": "Select the intended meter explicitly."}, status=400)
         meter = Meter.objects.filter(
-            user=request.user, is_deleted=False, status=Meter.STATUS_ACTIVE,
+            user=request.user, is_deleted=False, status=Meter.STATUS_ACTIVE, sandbox_inventory=False,
             meter_no=meter_no,
         ).first()
         if meter is None:
@@ -267,7 +271,10 @@ class VerifiedLoanRepaymentView(APIView):
         if loan is None:
             return Response({"error": "No repayable loan belonging to your account was found."}, status=404)
         amount = _positive_amount(request.data.get("amount"))
-        phone = str(request.data.get("phone_number") or "").strip()
+        try:
+            phone = normalize_ugandan_phone(request.data.get("phone_number"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
         if amount is None or not phone:
             return Response({"error": "A positive whole-UGX amount and phone number are required."}, status=400)
         try:

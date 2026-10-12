@@ -4,6 +4,10 @@ export type MeterInfo = {
   label: string;
   architecture: string;
   status: string;
+  sandbox_inventory?: boolean;
+  ownership_provenance?: "SELF_DECLARED";
+  enrolled_at?: string;
+  hardware_connection?: "PENDING";
 };
 
 export type AllocationStatus = {
@@ -14,6 +18,12 @@ export type AllocationStatus = {
   last_meter_contact: string | null;
   delivery_environment: "SIMULATOR" | "UNAVAILABLE";
   contact_source?: "SIMULATOR" | "UNAVAILABLE";
+  contact_status?: "UNAVAILABLE" | "STALE" | "RECENT";
+  simulator_remaining_wh?: string | null;
+  meter_reported_remaining_wh?: string | null;
+  reported_relay_state?: string | null;
+  last_measurement_at?: string | null;
+  consumption_reconciliation_required?: boolean;
 };
 
 export type DailyUsage = { date: string; kwh: string; source: string };
@@ -69,6 +79,12 @@ export function parseMeters(payload: unknown): MeterInfo[] {
       label: typeof meter.label === "string" && meter.label ? meter.label : meter.meter_number,
       architecture: meter.architecture,
       status: meter.status,
+      ...(typeof meter.sandbox_inventory === "boolean" ? { sandbox_inventory: meter.sandbox_inventory } : {}),
+      ...(meter.ownership_provenance === "SELF_DECLARED" && meter.sandbox_inventory === true ? {
+        ownership_provenance: "SELF_DECLARED" as const,
+        ...(typeof meter.enrolled_at === "string" ? { enrolled_at: meter.enrolled_at } : {}),
+        ...(meter.hardware_connection === "PENDING" ? { hardware_connection: "PENDING" as const } : {}),
+      } : {}),
     };
   });
 }
@@ -87,7 +103,18 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
       !["SIMULATOR", "UNAVAILABLE"].includes(String(data.contact_source))) {
     throw new Error("Meter dashboard is unavailable.");
   }
-  return { ...parseAllocation(data), contact_source: data.contact_source as AllocationStatus["contact_source"] };
+  const optionalWh = (value: unknown) => value == null ? null :
+    typeof value === "string" && /^[0-9]+$/.test(value) ? value : (() => { throw new Error("Invalid meter credit reading."); })();
+  return { ...parseAllocation(data), contact_source: data.contact_source as AllocationStatus["contact_source"],
+    contact_status: ["UNAVAILABLE", "STALE", "RECENT"].includes(String(data.contact_status))
+      ? data.contact_status as AllocationStatus["contact_status"] : "UNAVAILABLE",
+    simulator_remaining_wh: optionalWh(data.simulator_remaining_wh),
+    meter_reported_remaining_wh: optionalWh(data.meter_reported_remaining_wh),
+    reported_relay_state: ["OPEN", "CLOSED", "UNKNOWN"].includes(String(data.reported_relay_state))
+      ? String(data.reported_relay_state) : null,
+    last_measurement_at: typeof data.last_measurement_at === "string" ? data.last_measurement_at : null,
+    consumption_reconciliation_required: data.consumption_reconciliation_required === true,
+  };
 }
 
 export function parseAllocation(payload: unknown): AllocationStatus {

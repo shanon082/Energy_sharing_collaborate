@@ -11,6 +11,7 @@ from backend.features import require_feature
 import logging
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
@@ -80,6 +81,8 @@ def reconcile_user_loan_statuses(user) -> int:
     loan list/stats fetch so approved credit never stays stuck waiting on a
     customer action - there isn't one.
     """
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        return 0
     updated = 0
 
     for loan in LoanApplication.objects.filter(user=user, status="APPROVED"):
@@ -103,12 +106,13 @@ def reconcile_user_loan_statuses(user) -> int:
     return updated
 
 
-def get_blocking_loan_state(user) -> dict:
+def get_blocking_loan_state(user, *, reconcile=True) -> dict:
     """
     Single source of truth for whether loans should block unit purchases.
     Pending applications block because they are unresolved; paid loans do not.
     """
-    reconcile_user_loan_statuses(user)
+    if reconcile:
+        reconcile_user_loan_statuses(user)
 
     loans = LoanApplication.objects.filter(user=user)
     pending_applications = loans.filter(status="PENDING").count()
@@ -129,15 +133,16 @@ def get_blocking_loan_state(user) -> dict:
     }
 
 
-def user_can_apply_for_loan(user) -> tuple[bool, str]:
-    reconcile_user_loan_statuses(user)
+def user_can_apply_for_loan(user, *, reconcile=True) -> tuple[bool, str]:
+    if reconcile:
+        reconcile_user_loan_statuses(user)
     if LoanApplication.objects.filter(user=user, status__in=APPLY_BLOCK_STATUSES).exists():
         return False, APPLY_BLOCK_MESSAGE
     return True, ""
 
 
-def user_can_purchase_units(user) -> tuple[bool, str]:
-    state = get_blocking_loan_state(user)
+def user_can_purchase_units(user, *, reconcile=True) -> tuple[bool, str]:
+    state = get_blocking_loan_state(user, reconcile=reconcile)
     if state["has_blocking_loan"]:
         return False, PURCHASE_BLOCK_MESSAGE
     return True, ""
@@ -162,7 +167,10 @@ def resolve_user_loan_access(user) -> dict:
     credit_signal = get_or_create_credit_signal(user)
     profile_score = max(0, min(calculate_weighted_credit_score(credit_signal), 100))
     trust = compute_repayment_trust(user)
-    credit_score = apply_trust_to_score(profile_score, trust)
+    from loan.purchase_scoring import purchase_history_contribution
+    purchase_contribution = purchase_history_contribution(user)
+    trust_score = apply_trust_to_score(profile_score, trust)
+    credit_score = min(100, trust_score + purchase_contribution["points"])
     tier_info = _determine_loan_tier(credit_score)
 
     if tier_info:
@@ -176,6 +184,10 @@ def resolve_user_loan_access(user) -> dict:
     return {
         "credit_score": credit_score,
         "profile_score": profile_score,
+        "trust_score_delta": trust.score_delta,
+        "starter_policy_floor_applied": trust_score > max(0, min(100, profile_score + trust.score_delta)),
+        "purchase_history_contribution": purchase_contribution,
+        "score_evidence_updated_at": credit_signal.updated_at.isoformat() if getattr(credit_signal, "updated_at", None) else None,
         "loan_tier": loan_tier,
         "max_eligible_amount": max_eligible,
         "platform_max_loan": PLATFORM_MAX_LOAN,
@@ -426,6 +438,8 @@ def _resolve_loan_for_disburse(user, loan_id=None):
 
 def disburse_loan(user, loan_id=None, *, channel: str = "WEB", meter_no: str | None = None) -> dict:
     """Same rules as ``LoanDisbursementView.post``."""
+    if getattr(settings, "ALWAYSDATA_TESTING", False):
+        raise LoanOperationError("Loan disbursement is unavailable on this testing host.")
     loan = _resolve_loan_for_disburse(user, loan_id)
     if not loan:
         raise LoanOperationError("No approved loan found.")
@@ -453,7 +467,7 @@ def disburse_loan(user, loan_id=None, *, channel: str = "WEB", meter_no: str | N
         if meter is None:
             raise LoanOperationError("An explicit owned meter selection is required before disbursement.")
         if (meter.user_id != user.pk or meter.status != Meter.STATUS_ACTIVE or
-                meter.is_deleted or (meter_no and meter.meter_no != meter_no)):
+                meter.is_deleted or meter.sandbox_inventory or (meter_no and meter.meter_no != meter_no)):
             raise LoanOperationError("The selected loan meter is no longer assigned and active.")
 
         if loan.tariff:

@@ -7,7 +7,7 @@ import { parseAllocation, parseMeters } from "../src/api/contracts.ts";
 import { probeConnection } from "../src/api/diagnostics.ts";
 import { parseMobileActions, DISABLED_MOBILE_ACTIONS } from "../src/api/mobile-actions.ts";
 import { isPositiveWholeUgx, wholeUgxWithinDebt } from "../src/api/payment-guards.ts";
-import { parseAccountLink, accountTokenQuery } from "../src/auth/account-links.ts";
+import { parseAccountLink, accountTokenQuery, accountCompletionMode } from "../src/auth/account-links.ts";
 import { clearOwnerRequestIds, saveRequestId, savedRequestId } from "../src/api/request-id.ts";
 
 const base = "https://api.example.invalid/api/v1";
@@ -21,6 +21,22 @@ function store() {
 }
 function json(body, status = 200) { return Response.json(body, { status }); }
 function route(fetcher) { return async (url, options) => fetcher(new URL(url).pathname, options); }
+
+test("hosted HTTPS login joins the API base exactly once", async () => {
+  const hosted = apiBaseUrl("https://shanonsimon.alwaysdata.net/api/v1/", "android-debug");
+  const requested = [];
+  const session = new SessionManager(hosted, store(), async (url) => {
+    requested.push(url);
+    return url.endsWith("auth/login/") ? json({ access: "access", refresh: "refresh", user }) : json(user);
+  });
+  await session.login(user.email, "test-only");
+  await session.getAccount();
+  assert.deepEqual(requested, ["https://shanonsimon.alwaysdata.net/api/v1/auth/login/",
+                               "https://shanonsimon.alwaysdata.net/api/v1/auth/mobile-account/"]);
+  assert.equal(accountCompletionMode("browser"), "browser");
+  assert.equal(accountCompletionMode(), "api");
+  assert.throws(() => accountCompletionMode("unrecognized"), /VITE_ACCOUNT_COMPLETION/);
+});
 
 test("login retains only refresh and rejects unverified/staff responses", async () => {
   const saved = store();
@@ -162,7 +178,7 @@ test("successful login and failed account fetch are distinct stages", async () =
   assert.deepEqual(await saved.load(), { refresh: "refresh", userId: 1 });
 });
 
-test("debug connection probe sends no credentials and distinguishes CORS from transport", async () => {
+test("debug connection probe checks readable JSON without using account credentials", async () => {
   const requests = [];
   const api = "http://192.168.97.107:8000/api/v1";
   const report = await probeConnection(api, "http://localhost", async (url, options) => {
@@ -173,18 +189,68 @@ test("debug connection probe sends no credentials and distinguishes CORS from tr
     throw new TypeError("Failed to fetch");
   });
   assert.equal(report.origin, "http://localhost");
-  assert.equal(report.simpleGet, "HTTP 200");
+  assert.equal(report.simpleGet, "HTTP 200; JSON readable");
   assert.equal(report.jsonGet, "Fetch blocked or failed");
   assert.equal(report.loginPreflight, "Fetch blocked or failed");
-  assert.equal(report.accountGet, "HTTP 401");
+  assert.equal(report.registerPost, "Fetch blocked or failed");
+  assert.equal(report.accountGet, "HTTP 401; JSON readable");
   assert.match(report.opaqueGet, /Reached host/);
   assert.deepEqual(requests.map(({ url }) => url), [
     `${api}/features/`, `${api}/features/`, `${api}/auth/login/`,
-    `${api}/auth/mobile-account/`, `${api}/features/`,
+    `${api}/auth/register/`, `${api}/auth/mobile-account/`, `${api}/features/`,
   ]);
   assert.equal(requests[2].options.body, "{}");
-  assert.equal(requests[3].options.headers.Authorization, "Bearer diagnostic-invalid-token");
+  assert.equal(requests[3].options.body, "{}");
+  assert.equal(requests[4].options.headers.Authorization, "Bearer diagnostic-invalid-token");
   assert.ok(requests.every(({ options }) => !options.body || options.body === "{}"));
+});
+
+test("request diagnostics identify the failing stage and exclude all sensitive data", async () => {
+  const session = new SessionManager(base, store(), async () => {
+    throw new TypeError("sensitive-error-text-must-not-be-retained");
+  });
+  await assert.rejects(session.publicGet("auth/resend-email-link/?email=private@example.invalid&token=secret"), TransportError);
+  assert.equal(session.lastRequest.path, "/api/v1/auth/resend-email-link/");
+  assert.equal(session.lastRequest.status, null);
+  assert.equal(session.lastRequest.outcome, "transport failure");
+  assert.equal(session.lastRequest.failure, "TypeError");
+  assert.ok(Number.isFinite(Date.parse(session.lastRequest.startedAt)));
+  assert.doesNotMatch(JSON.stringify(session.lastRequest), /private|secret|sensitive-error-text/);
+  await assert.rejects(session.login(user.email, "password-never-retained"), TransportError);
+  assert.equal(session.lastRequest.path, "/api/v1/auth/login/");
+  assert.equal(session.lastRequest.method, "POST");
+  assert.doesNotMatch(JSON.stringify(session.lastRequest), /password-never-retained|owner@example/);
+});
+
+test("signup HTTP validation, transport and parsing failures remain distinct", async () => {
+  const validation = new SessionManager(base, store(), async (url) => {
+    assert.equal(url, `${base}/auth/register/`);
+    return json({ email: ["Email address is required"] }, 400);
+  });
+  await assert.rejects(validation.publicPost("auth/register/", {}), (error) =>
+    error instanceof ApiError && error.status === 400 && error.message === "Email address is required");
+  assert.equal(validation.lastRequest.status, 400);
+  assert.equal(validation.lastRequest.outcome, "HTTP response");
+  const unreadable = new SessionManager(base, store(), async () => new Response("not JSON", { status: 201 }));
+  await assert.rejects(unreadable.publicPost("auth/register/", {}), ResponseFormatError);
+  assert.equal(unreadable.lastRequest.status, 201);
+  assert.equal(unreadable.lastRequest.outcome, "invalid JSON");
+  const failed = new SessionManager(base, store(), async () => { throw new TypeError("Failed to fetch"); });
+  await assert.rejects(failed.publicPost("auth/register/", {}), TransportError);
+  assert.equal(failed.lastRequest.path, "/api/v1/auth/register/");
+  assert.equal(failed.lastRequest.status, null);
+});
+
+test("probe reports readable error JSON separately from HTML and malformed JSON", async () => {
+  const report = await probeConnection(base, "http://localhost", async (url, options) => {
+    if (options.mode === "no-cors") return { type: "opaque" };
+    if (url.endsWith("auth/login/")) return json({ password: ["Required"] }, 400);
+    if (url.endsWith("auth/register/")) return new Response("Gateway error", { status: 502 });
+    return new Response("malformed JSON", { status: 200 });
+  });
+  assert.equal(report.loginPreflight, "HTTP 400; JSON readable");
+  assert.equal(report.registerPost, "HTTP 502; body is not readable JSON");
+  assert.equal(report.jsonGet, "HTTP 200; body is not readable JSON");
 });
 
 test("feature availability fails closed and release API requires HTTPS", () => {

@@ -5,6 +5,7 @@ dist/
 .env.android-debug.local
 android/.gradle/
 .gradle-user/
+.android-signing/
 android/build/
 android/app/build/
 android/local.properties

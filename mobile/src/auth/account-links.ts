@@ -1,5 +1,12 @@
 export type AccountLink = { kind: "verify" | "reset"; uid: string; token: string };
 
+export function accountCompletionMode(raw = "api"): "api" | "browser" {
+  if (raw !== "api" && raw !== "browser") {
+    throw new Error("VITE_ACCOUNT_COMPLETION must be api or browser.");
+  }
+  return raw;
+}
+
 // The URL is only a carrier. Django validates the uid and one-use/expiring token.
 export function parseAccountLink(raw: string): AccountLink {
   let url: URL;

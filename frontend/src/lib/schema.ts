@@ -1,5 +1,6 @@
 import { z } from "zod";
 import validator from "validator";
+import { isUgandanPhone, normalizeUgandanPhone } from "./ugandan-phone";
 import dayjs from "dayjs";
 import { get, patch } from "./fetch";
 import { getApiErrorMessage } from "./api-response";
@@ -10,7 +11,7 @@ export const createAccountSchema = z
     first_name: z.string().min(2).max(50),
     last_name: z.string().min(2).max(50),
     email: z.string().email("Please provide a valid email address"),
-    phone_number: z.string().refine(validator.isMobilePhone),
+    phone_number: z.string().refine(isUgandanPhone, "Use 0771000111, 256771000111 or +256771000111").transform(normalizeUgandanPhone),
     gender: z.enum(["OTHER", "MALE", "FEMALE"]),
     password: z
       .string()
@@ -29,7 +30,7 @@ export const settingsSchema = z
     first_name: z.string().min(2).max(50),
     last_name: z.string().min(2).max(50),
     email: z.string().email("Please provide a valid email address"),
-    phone_number: z.string().refine(validator.isMobilePhone),
+    phone_number: z.string().refine(isUgandanPhone, "Use 0771000111, 256771000111 or +256771000111").transform(normalizeUgandanPhone),
     gender: z.enum(["OTHER", "MALE", "FEMALE"]),
     password: z.string().optional(),
     confirm_password: z.string(),

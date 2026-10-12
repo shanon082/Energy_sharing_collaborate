@@ -5,7 +5,8 @@ import DesktopSidebar from "../_components/desktop-sidebar";
 import RightHeader from "../_components/right-header";
 import LoansClient from "./_components/loans-client";
 import { get } from "@/lib/fetch";
-import { getFeatureAvailability } from "@/lib/features-server";
+import SandboxWeb from "@/components/sandbox-web";
+import { getSandboxAvailability, getFeatureAvailability } from "@/lib/features-server";
 import FeatureUnavailable from "@/components/common/feature-unavailable";
 
 async function getLoans() {
@@ -26,6 +27,7 @@ export default async function LoansPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const loans = await getLoans();
+  const sandbox = await getSandboxAvailability();
   const params = await searchParams;
   const { third_party_repayment } = await getFeatureAvailability();
   if (params?.tab === "pay-for-someone" && !third_party_repayment) return <FeatureUnavailable />;
@@ -45,6 +47,7 @@ export default async function LoansPage({
                 : "Apply for a loan or view your loan history."}
             </p>
           </div>
+          {sandbox.enabled && <SandboxWeb />}
           <Suspense fallback={<div className="p-4 text-muted-foreground">Loading…</div>}>
             <LoansClient loans={loans} defaultTab={defaultTab} />
           </Suspense>

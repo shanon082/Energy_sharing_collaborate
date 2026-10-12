@@ -6,6 +6,7 @@ export type Receipt = { external_id: string; purpose: string; status: string; am
   purchase_billed_ugx: string | null; purchase_residual_ugx: string | null;
   repayment_applied_ugx: string | null; repayment_excess_ugx: string | null;
   environment: "SIMULATOR" | "PROVIDER" | "UNCONFIRMED"; settlement_recorded: boolean;
+  allocated_energy_kwh: string | null; delivery_confirmed_kwh: string | null;
   initiated_at: string; settled_at: string | null };
 export type Notice = { id: number; message: string; occurred_at: string; is_read: boolean; meter_no: string | null };
 export type HistoryRow = { id: number; transaction_type_display: string; status: string;
@@ -64,6 +65,8 @@ export function parseReceipt(value: unknown): Receipt {
     repayment_applied_ugx: nullableDecimal(row.repayment_applied_ugx),
     repayment_excess_ugx: nullableDecimal(row.repayment_excess_ugx),
     environment: environment as Receipt["environment"], settlement_recorded: settled,
+    allocated_energy_kwh: row.allocated_energy_kwh == null ? null : decimal(row.allocated_energy_kwh),
+    delivery_confirmed_kwh: row.delivery_confirmed_kwh == null ? null : decimal(row.delivery_confirmed_kwh),
     initiated_at: text(row.initiated_at), settled_at: settledAt };
 }
 export function parseReceipts(payload: unknown): Page<Receipt> { return page(payload, "receipts", parseReceipt); }

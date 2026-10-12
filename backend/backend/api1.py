@@ -3,6 +3,7 @@ from django.urls import include, path
 from backend.features import FeatureAvailabilityView
 
 urlpatterns = [
+    path("sandbox/", include("loan.sandbox_urls")),
     path("features/", FeatureAvailabilityView.as_view(), name="features"),
     path(
         "auth/",

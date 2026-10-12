@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="strict-origin">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Meter request review</title></head>
+<body><h1>Meter request review — testing backend</h1>
+<p>Metadata assignment only. No money, credit, device commands or telemetry is generated.</p>
+<p>Verify the consumer's identity and right to use this exact meter independently:
+contact the utility through a trusted channel, or inspect occupancy proof and the owner's authorization.
+A printed number, consumer declaration or phone format is insufficient.
+For explicitly marked SANDBOX inventory, verify the consumer identity and documented authorization/consent to use that synthetic test meter instead; do not claim household ownership.
+Record a reference to evidence held in your private case system, not documents or secrets here.</p>
+<p>Approval requires active pre-provisioned inventory. Existing foreign ownership or history requires separate reconciliation.</p>
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<h2>Pending requests (oldest 50)</h2>
+{% for row in pending %}
+<p>Request {{ row.request_id }} — consumer ID {{ row.owner_id }} — meter {{ row.meter_no }} — {{ row.created_at }}</p>
+{% empty %}<p>No pending requests.</p>{% endfor %}
+<form method="post" action="{% url 'staff-meter-requests' %}">{% csrf_token %}
+{{ form.as_p }}<button type="submit">Save final decision</button></form>
+<p>Decisions are audited and immutable through this page. Rejection explanations are visible to the consumer;
+evidence references remain private. Configured staff authenticators require a fresh code.</p>
+</body></html>

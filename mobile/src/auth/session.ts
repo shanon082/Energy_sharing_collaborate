@@ -12,7 +12,7 @@ export class SessionExpired extends ApiError {
   constructor() { super("Session expired. Please sign in again.", 401, "SESSION_EXPIRED"); }
 }
 export class TransportError extends Error {
-  constructor() { super("The app could not read an API response. Check the connection or cross-origin policy."); }
+  constructor() { super("No readable HTTP response arrived. Check the API connection and try again."); }
 }
 export class ResponseFormatError extends Error {
   constructor() { super("The API returned an unreadable response. Please try again."); }
@@ -26,6 +26,13 @@ export type ConsumerIdentity = {
 type LoginResult = { access?: string; refresh?: string; requires_2fa?: boolean; user?: ConsumerIdentity };
 type RefreshResult = { access?: string; refresh?: string };
 type FetchLike = typeof fetch;
+
+/** Metadata only: never retain request bodies, headers, query strings or error messages. */
+export type RequestDiagnostic = {
+  method: string; path: string; startedAt: string; status: number | null;
+  outcome: "sending" | "HTTP response" | "invalid JSON" | "transport failure";
+  failure?: "TypeError" | "AbortError" | "Other error";
+};
 
 function errorMessage(body: unknown, fallback: string): string {
   if (!body || typeof body !== "object") return fallback;
@@ -54,6 +61,7 @@ export class SessionManager {
   private refreshFlight: Promise<boolean> | null = null;
   private epoch = 0;
   private loggingOut = false;
+  private diagnostic: RequestDiagnostic | null = null;
 
   constructor(baseUrl: string, store: SessionStore, send: FetchLike = fetch) {
     this.baseUrl = baseUrl; this.store = store; this.send = send;
@@ -61,12 +69,19 @@ export class SessionManager {
 
   get identity(): number | null { return this.userId; }
   get authenticated(): boolean { return this.access !== null; }
+  get lastRequest(): Readonly<RequestDiagnostic> | null { return this.diagnostic; }
 
   private async call(path: string, options: RequestInit = {}, token?: string): Promise<{ status: number; body: unknown }> {
+    const url = `${this.baseUrl}/${path.replace(/^\/+/, "")}`;
+    const diagnostic: RequestDiagnostic = {
+      method: options.method || "GET", path: new URL(url).pathname,
+      startedAt: new Date().toISOString(), status: null, outcome: "sending",
+    };
+    this.diagnostic = diagnostic;
     let response: Response;
     try {
       // Browser fetch can reject an invocation whose receiver is SessionManager.
-      response = await this.send.call(globalThis, `${this.baseUrl}/${path.replace(/^\/+/, "")}`, {
+      response = await this.send.call(globalThis, url, {
         ...options,
         headers: {
           "Content-Type": "application/json",
@@ -74,12 +89,19 @@ export class SessionManager {
           ...options.headers,
         },
       });
-    } catch { throw new TransportError(); }
+    } catch (error) {
+      diagnostic.outcome = "transport failure";
+      diagnostic.failure = error instanceof Error && (error.name === "TypeError" || error.name === "AbortError")
+        ? error.name : "Other error";
+      throw new TransportError();
+    }
+    diagnostic.status = response.status;
+    diagnostic.outcome = "HTTP response";
     let body: unknown = null;
     if (response.status !== 204) {
       try { body = await response.json(); }
       catch {
-        if (response.ok) throw new ResponseFormatError();
+        if (response.ok) { diagnostic.outcome = "invalid JSON"; throw new ResponseFormatError(); }
         // Keep the HTTP status authoritative even if its error body is not JSON.
       }
     }

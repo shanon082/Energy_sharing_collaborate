@@ -2,14 +2,22 @@
 
 The Android app is a separate Capacitor/Vite bundle. It calls Django directly and does not change the Next.js server-rendered web build. The methodology named Kotlin; Capacitor is the requested prototype choice. Statuses below describe this code, not production approval.
 
-The welcome screen also offers an isolated **design preview**. Dashboard, meter/usage, loan/repayment, transaction forms/reviews, receipts, notifications, profile/security and help designs are available without a backend. All values are labelled samples; no API client or authenticated session is passed into the preview. Its transaction forms stop at review. This does not change the connected workflow statuses or enable deferred features below. Actual authentication continues to use Django.
+The unauthenticated preview entry was removed. Authentication and connected
+screens call Django; no sample balances or scores stand in for account data.
+Email verification and password recovery use the Django-hosted HTTPS pages;
+return to Android manually, with no hosted Next.js dependency or deep link.
+
+Current consumer expansion and its deployment gates are documented in
+[`CONSUMER_EXPANSION.md`](CONSUMER_EXPANSION.md) and
+[`backend/docs/CONSUMER_EXPANSION.md`](../backend/docs/CONSUMER_EXPANSION.md).
 
 | Consumer task | Mobile status | Django authority / boundary |
 | --- | --- | --- |
-| Register, email verification/resend, password reset/change, login/refresh/logout | Available | Existing account routes and mobile JWT revocation; token expiry and one-use are validated by Django. Local development uses copied email links; domain-verified Android App Links are outstanding. |
+| Register, email verification/resend, password reset/change, login/refresh/logout | Available | Existing account routes and mobile JWT revocation; token expiry and one-use are validated by Django. Hosted testing uses Django account pages and manual return to Android; App Links are deferred. |
 | Profile and loan assessment | Available | Server whitelists profile edits. A score is hidden until required profile evidence exists. Staff role, limits, verification and meter ownership are not editable. |
 | Select meter, entitlement, consumption, loan/debt and repayment history | Available | Owner-bound reads; unknown values remain unavailable and existing records are not converted. |
-| Alerts and transaction/payment receipts | Available | Owner-bound history. A receipt's `PENDING` status never means settled. Manual provider status checks use existing verified routes. |
+| Alerts and transaction/payment receipts | Available | Owner-bound history. A receipt's `PENDING` status never means settled. Recovery/refresh reads stored verified settlement. Worker absence on alwaysdata is explicit. |
+| Pending meter verification | Implemented | Typing a number records a request; staff assignment is required before access. Historical meters are not transferred. |
 | Loan eligibility and quote | Informational | Current tariff and stored scoring rules; a quote is nonbinding. |
 | Loan application | Blocked | Existing `/loans/apply/` can auto-disburse, lacks a mobile request ID and uses provisional/fallback calculation rules. Create an idempotent service with stored final terms after policy decisions. |
 | Paid purchase and self-repayment | Guarded, disabled by default | Separate mobile initiation routes require a verified consumer, unique `client_request_id`, no competing pending intent, and a configured real provider. Django alone settles PaymentIntents from trusted evidence. `MOBILE_PAYMENT_ACTIONS_ENABLED=false` until finance/operator approval. |

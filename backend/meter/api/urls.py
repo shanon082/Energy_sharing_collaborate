@@ -36,7 +36,12 @@ from meter.api.delivery_views import (
 )
 
 
+from meter.api.onboarding import MobileOnboardingView, MeterEnrollmentView, SandboxMeterEnrollmentView
+
 urlpatterns = [
+    path("sandbox-meter-enrollment/", SandboxMeterEnrollmentView.as_view(), name="sandbox-meter-enrollment"),
+    path("mobile-onboarding/", MobileOnboardingView.as_view(), name="mobile-onboarding"),
+    path("mobile-meter-requests/", MeterEnrollmentView.as_view(), name="mobile-meter-requests"),
     path('mobile-notifications/', MobileNotificationView.as_view(), name='mobile-notifications'),
     path('mobile-meters/', MobileMeterListView.as_view(), name='mobile-meters'),
     path('mobile-meters/<int:meter_id>/', MobileMeterDashboardView.as_view(), name='mobile-meter-dashboard'),

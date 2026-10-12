@@ -522,59 +522,11 @@ def delete_user_meter(request):
     )
 
 
-class MeterRegisterView(generics.CreateAPIView):
-    serializer_class = MeterSerializer
-    permission_classes = [permissions.IsAuthenticated]
+from meter.api.onboarding import MeterEnrollmentView
 
-    def create(self, request, *args, **kwargs):
-        try:
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
 
-            # Check if meter number already exists
-            meter_no = request.data.get('meter_no')
-            if Meter.objects.filter(meter_no=meter_no).exists():
-                return Response({
-                    "success": False,
-                    "error": "Duplicate Meter Number",
-                    "message": "This meter number is already registered to another account."
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Save with user
-            meter = serializer.save(user=request.user)
-            
-            return Response({
-                "success": True,
-                "message": "Meter registered successfully",
-                "data": MeterSerializer(meter).data
-            }, status=status.HTTP_201_CREATED)
-            
-        except ValidationError as e:
-            return Response({
-                "success": False,
-                "error": "Validation Error",
-                "message": str(e),
-                "details": e.message_dict if hasattr(e, 'message_dict') else None
-            }, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Meter registration error: {str(e)}\n{traceback.format_exc()}")
-            return Response(
-                {
-                    "success": False,
-                    "error": "Registration Failed",
-                    "message": "Failed to register meter. Please try again or contact support."
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    def _validate_ip_address(self, ip):
-        """Validate IP address format"""
-        import socket
-        try:
-            socket.inet_aton(ip)
-            return True
-        except socket.error:
-            return False
+class MeterRegisterView(MeterEnrollmentView):
+    """Legacy web alias: prototype enrollment in sandbox, reviewed request otherwise."""
 
 
 class SendUnitsView(GenericAPIView):

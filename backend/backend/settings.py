@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 from backend.feature_config import load_feature_flags, parse_feature_bool
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -50,6 +51,17 @@ BASE_URL = get_env_variable("BASE_URL", "http://localhost:8000/api/v1")
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 FEATURE_FLAGS = load_feature_flags(os.environ)
+# No numeric scoring policy is assumed; enabling requires all approved settings.
+PURCHASE_HISTORY_SCORING_ENABLED = parse_feature_bool(os.environ.get("PURCHASE_HISTORY_SCORING_ENABLED", "false"), name="PURCHASE_HISTORY_SCORING_ENABLED")
+PURCHASE_HISTORY_POLICY_ID = os.environ.get("PURCHASE_HISTORY_POLICY_ID", "").strip()
+PURCHASE_HISTORY_SCORE_CAP = int(os.environ["PURCHASE_HISTORY_SCORE_CAP"]) if os.environ.get("PURCHASE_HISTORY_SCORE_CAP") else None
+from decimal import Decimal
+PURCHASE_HISTORY_UGX_PER_POINT = Decimal(os.environ["PURCHASE_HISTORY_UGX_PER_POINT"]) if os.environ.get("PURCHASE_HISTORY_UGX_PER_POINT") else None
+if PURCHASE_HISTORY_SCORING_ENABLED and (not PURCHASE_HISTORY_POLICY_ID or PURCHASE_HISTORY_SCORE_CAP is None or not 0 < PURCHASE_HISTORY_SCORE_CAP <= 100 or PURCHASE_HISTORY_UGX_PER_POINT is None or not PURCHASE_HISTORY_UGX_PER_POINT.is_finite() or PURCHASE_HISTORY_UGX_PER_POINT <= 0):
+    raise ImproperlyConfigured("Purchase scoring requires an approved policy ID, cap (1-100) and positive UGX-per-point basis.")
+MOBILE_METER_STALE_SECONDS = int(os.environ.get("MOBILE_METER_STALE_SECONDS", "120"))
+if MOBILE_METER_STALE_SECONDS <= 0:
+    raise ImproperlyConfigured("MOBILE_METER_STALE_SECONDS must be positive.")
 SIMULATED_METER_ENABLED = parse_feature_bool(
     os.environ.get("SIMULATED_METER_ENABLED", "false"), name="SIMULATED_METER_ENABLED",
 )

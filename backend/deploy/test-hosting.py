@@ -48,8 +48,9 @@ if '--render' in sys.argv:
         EMAIL_HOST_PASSWORD='test-only', DEFAULT_EMAIL_SENDER='test@example.invalid',
         CELERY_BROKER_URL='redis://127.0.0.1:6399/0',
     )
-if '--profile' in sys.argv:
-    sys.argv.remove('--profile')
+sandbox_profile = '--sandbox-profile' in sys.argv
+if '--profile' in sys.argv or sandbox_profile:
+    sys.argv.remove('--sandbox-profile' if sandbox_profile else '--profile')
     private = tempfile.TemporaryDirectory(prefix='gpawa-hosting-test-')
     atexit.register(private.cleanup)
     envfile = Path(private.name) / 'backend.env'
@@ -59,7 +60,7 @@ if '--profile' in sys.argv:
                        'EMAIL_HOST_PASSWORD=test-only\nDEFAULT_EMAIL_SENDER=test@example.invalid\n')
     envfile.chmod(0o600)
     os.environ.update(ALWAYSDATA_ENV_FILE=str(envfile),
-                      DJANGO_SETTINGS_MODULE='backend.alwaysdata_settings', DEBUG='False')
+                      DJANGO_SETTINGS_MODULE='backend.alwaysdata_sandbox_settings' if sandbox_profile else 'backend.alwaysdata_settings', DEBUG='False')
 import django
 
 django.setup()

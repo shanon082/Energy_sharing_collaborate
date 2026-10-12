@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 from accounts.models import TimestampMixin, User
 from meter.models import Meter
 from django.utils.translation import gettext_lazy as _
@@ -129,13 +130,24 @@ class PaymentIntent(models.Model):
     purchase_billed_ugx = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
     purchase_residual_ugx = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
     purchase_calculation = models.JSONField(null=True, blank=True)
+    sandbox_loan = models.ForeignKey("loan.SandboxLoan", on_delete=models.PROTECT, null=True, blank=True)
+    sandbox_context = models.JSONField(null=True, blank=True)
+    sandbox_quote = models.OneToOneField("loan.SandboxQuote", on_delete=models.PROTECT, null=True, blank=True)
+    reconcile_after = models.DateTimeField(default=timezone.now, db_index=True)
+    reconcile_attempts = models.PositiveIntegerField(default=0)
+    reconcile_lease_until = models.DateTimeField(null=True, blank=True)
+    reconcile_lease_id = models.UUIDField(null=True, blank=True)
+    submission_state = models.CharField(max_length=20, blank=True, default="")
+    reconciliation_error = models.CharField(max_length=48, blank=True, default="")
 
     class Meta:
         constraints = [
             models.CheckConstraint(
                 condition=(
-                    models.Q(purpose="PURCHASE", purchase__isnull=False, repayment__isnull=True, meter__isnull=False)
-                    | models.Q(purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=False, meter__isnull=True)
+                    models.Q(purpose="PURCHASE", purchase__isnull=False, repayment__isnull=True, meter__isnull=False, sandbox_loan__isnull=True) & ~models.Q(provider="MTN_SANDBOX")
+                    | models.Q(purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=False, meter__isnull=True, sandbox_loan__isnull=True) & ~models.Q(provider="MTN_SANDBOX")
+                    | models.Q(provider="MTN_SANDBOX", currency="EUR", sandbox_quote__isnull=False, purpose="PURCHASE", purchase__isnull=True, repayment__isnull=True, sandbox_loan__isnull=True, meter__isnull=False)
+                    | models.Q(provider="MTN_SANDBOX", currency="EUR", sandbox_quote__isnull=False, purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=True, sandbox_loan__isnull=False, meter__isnull=True)
                 ),
                 name="payment_intent_one_purpose",
             ),
@@ -145,3 +157,6 @@ class PaymentIntent(models.Model):
                 name="payment_provider_transaction_unique",
             ),
         ]
+
+
+from transactions.sandbox_models import SandboxSettlement  # noqa: F401

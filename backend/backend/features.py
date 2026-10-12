@@ -57,8 +57,24 @@ class FeatureAvailabilityView(APIView):
             provider_ready = True
         except PaymentSettlementError:
             pass
+        from mtn_momo.sandbox import configured
+        sandbox_enabled = getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
         response = Response({
+            "sandbox": {"enabled": sandbox_enabled, "currency": "EUR", "label": "SANDBOX / NO REAL MONEY",
+                        "loans": sandbox_enabled, "purchases": configured(), "repayments": configured(),
+                        "provider": "MTN_SANDBOX", "physical_delivery": False,
+                        "self_declared_meter_enrollment": sandbox_enabled},
             "features": {key: feature_enabled(key) for key in FEATURE_ENV_VARS},
+            "consumer_capabilities": {
+                "meter_requests": True, "sandbox_self_enrollment": sandbox_enabled, "read_only_monitoring": True,
+                "provisional_quotes": True,
+                "purchase_history_scoring": getattr(settings, "PURCHASE_HISTORY_SCORING_ENABLED", False) is True,
+                "background_processing_configured": getattr(settings, "BACKGROUND_TASKS_AVAILABLE", False) is True,
+                "simulator_delivery_environment": bool(not getattr(settings, "ALWAYSDATA_TESTING", False)
+                                        and getattr(settings, "SIMULATED_METER_ENABLED", False)
+                                        and getattr(settings, "DEBUG", False)),
+                "physical_meter": False,
+            },
             "mobile_actions": {
                 "purchase": bool(getattr(settings, "MOBILE_PAYMENT_ACTIONS_ENABLED", False) and provider_ready),
                 "repayment": bool(getattr(settings, "MOBILE_PAYMENT_ACTIONS_ENABLED", False) and provider_ready),

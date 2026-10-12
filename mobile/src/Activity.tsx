@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionManager } from "./auth/session.ts";
-import { dateTime, ugx } from "./format.ts";
+import { dateTime, energy, ugx } from "./format.ts";
 import { LatestRead } from "./api/read-scope.ts";
 import { parseReceipts, parseReceipt, parseNotices, parseHistory, type Page, type Receipt } from "./api/activity-contracts.ts";
 
@@ -72,6 +72,11 @@ export function Activity({ session }: { session: SessionManager }) {
       <p>{detail.purpose} · {detail.status}</p><p>Recorded amount: {ugx(detail.amount_ugx)}</p>
       <p>{detail.environment === "SIMULATOR" ? "Simulation only" : "Stored payment record"} ·
         {detail.settlement_recorded ? ` Settlement recorded ${dateTime(detail.settled_at)}` : " Settlement not confirmed"}</p>
+      {detail.purpose === "PURCHASE" && <>
+        <p>Source-linked energy allocated: {detail.allocated_energy_kwh === null ? "Not recorded" : energy(detail.allocated_energy_kwh)}</p>
+        <p>Meter application acknowledged: {detail.delivery_confirmed_kwh === null ? "Not recorded" : energy(detail.delivery_confirmed_kwh)}</p>
+        <p className="muted small">Payment verification does not prove meter delivery. Simulator acknowledgement is not evidence of physical hardware application.</p>
+      </>}
       {detail.purchase_billed_ugx !== null && <p>Billed {ugx(detail.purchase_billed_ugx)} · Residual {ugx(detail.purchase_residual_ugx)}</p>}
       {detail.repayment_applied_ugx !== null && <p>Applied to debt {ugx(detail.repayment_applied_ugx)} · Excess {ugx(detail.repayment_excess_ugx)}</p>}
       <p className="muted small">Residuals and excess remain recorded for reconciliation. This read does not contact a provider.</p>

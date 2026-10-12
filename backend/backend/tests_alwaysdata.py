@@ -224,7 +224,11 @@ class AlwaysdataProfileTests(SimpleTestCase):
         self.assertEqual(settings.CELERY_BEAT_SCHEDULE, {})
         self.assertIsNone(settings.CELERY_BROKER_URL)
         self.assertTrue(all(not value for value in settings.FEATURE_FLAGS.values()))
-        self.assertEqual(settings.DATABASES["default"]["OPTIONS"]["options"], "-c search_path=custom,public")
+        db_options = settings.DATABASES["default"]["OPTIONS"]["options"]
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False):
+            self.assertEqual(db_options, "-c search_path=custom,public -c statement_timeout=10000 -c lock_timeout=5000")
+        else:
+            self.assertEqual(db_options, "-c search_path=custom,public")
         self.assertLessEqual(settings.EMAIL_TIMEOUT, 30)
         self.assertEqual(settings.CSRF_TRUSTED_ORIGINS, [settings.PRODUCTION_ORIGIN])
         with patch.dict(connection.settings_dict, {"ATOMIC_REQUESTS": False}):

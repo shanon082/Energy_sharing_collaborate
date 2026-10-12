@@ -2,6 +2,7 @@
 
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers
@@ -37,9 +38,13 @@ def selected_meter(request):
 
 
 def mobile_meter_record(meter):
+    declared = getattr(meter, "sandbox_enrollment", None)
     # Legacy units, IP addresses and device credentials are deliberately absent.
     return {"id": meter.pk, "meter_number": meter.meter_no, "label": meter.label,
-            "architecture": meter.architecture, "status": meter.status}
+            "architecture": meter.architecture, "status": meter.status,
+            **({"sandbox_inventory": True} if meter.sandbox_inventory else {}),
+            **({"ownership_provenance": "SELF_DECLARED", "enrolled_at": declared.enrolled_at.isoformat(),
+                "hardware_connection": "PENDING"} if declared else {})}
 
 
 def application_confirmed(delivery):
@@ -66,9 +71,27 @@ class MobileMeterDashboardView(APIView):
         meter = get_object_or_404(Meter, pk=meter_id, user=request.user, is_deleted=False)
         device = SimulatedMeter.objects.filter(meter=meter).first()
         simulated = device is not None and require_simulation_available()
+        last_contact = device.last_contact_at if device else None
+        stale_after = getattr(settings, "MOBILE_METER_STALE_SECONDS", 120)
+        stale = last_contact is None or (timezone.now() - last_contact).total_seconds() > stale_after
+        # Simulator consumption is the accepted boot-aware delta ledger, not an
+        # arbitrary cumulative counter subtracted from cloud purchases.
+        remaining = max(0, int(device.applied_kwh * Decimal("1000")) - device.consumed_wh) if device else None
+        uncertain = bool(device and (device.reset_count > 0 or device.telemetry.filter(
+            classification__in=["INITIAL", "RESET"], cumulative_wh__gt=0,
+        ).exists() or device.telemetry.filter(classification="DISCONTINUITY").exists()))
         return Response({
             "meter": mobile_meter_record(meter),
             "unit": "kWh", "quantum_kwh": "0.01",
+            "observed_at": timezone.now().isoformat(), "stale_after_seconds": stale_after,
+            "contact_status": "UNAVAILABLE" if last_contact is None else "STALE" if stale else "RECENT",
+            "meter_reported_remaining_wh": None,  # physical contract not implemented
+            "simulator_remaining_wh": str(remaining) if remaining is not None and not uncertain else None,
+            "simulator_remaining_basis": "APPLIED_MINUS_ACCEPTED_DELTAS" if device else None,
+            "consumption_reconciliation_required": uncertain,
+            "reported_relay_state": device.reported_relay_state if device else None,
+            "relay_source": "SIMULATOR" if device else "UNAVAILABLE",
+            "last_measurement_at": device.last_measured_at.isoformat() if device and device.last_measured_at else None,
             **{key: str(value) for key, value in entitlement_summary(request.user, meter).items()},
             "last_meter_contact": device.last_contact_at.isoformat()
                 if device is not None and device.last_contact_at else None,
@@ -121,7 +144,7 @@ class MobileDeliveryHistoryView(APIView):
             "request_id": str(row.request_id) if row.request_id else None,
             "amount_kwh": str(row.amount_kwh), "status": row.status,
             "allocation_id": row.allocation_id,
-            "source": "PURCHASE" if row.allocation.purchase_intent_id else "APPROVED_LOAN",
+            "source": "PURCHASE" if row.allocation.purchase_intent_id else "SANDBOX_LOAN" if row.allocation.sandbox_loan_id else "APPROVED_LOAN",
             "application_confirmed": application_confirmed(row),
             "environment": "SIMULATOR" if hasattr(row, "simulated_command") else "UNCONFIRMED",
             "created_at": row.created_at.isoformat(),
@@ -185,7 +208,7 @@ class MobilePurchaseQuoteView(APIView):
                                      status=Meter.STATUS_ACTIVE, is_deleted=False).first()
         if meter is None:
             return Response({"code": "METER_UNAVAILABLE"}, status=409)
-        can_buy, reason = user_can_purchase_units(request.user)
+        can_buy, reason = user_can_purchase_units(request.user, reconcile=False)
         if not can_buy:
             return Response({"code": "PURCHASE_BLOCKED", "message": reason}, status=409)
         tariff = get_active_domestic_tariff()

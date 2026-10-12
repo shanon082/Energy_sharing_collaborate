@@ -65,8 +65,15 @@ class HostedAccountPageTests(TransactionTestCase):
         self.assertContains(response, f'action="{parsed.path}"')
         self.assertNotContains(response, "<script")
         self.assertNotContains(response, "https://")
-        csrf = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', response.content.decode()).group(1)
-        self.assertTrue(self.client.cookies[settings.CSRF_COOKIE_NAME]["secure"])
+        form_html = re.search(r'<form\b[^>]*method="post"[^>]*>(.*?)</form>',
+                              response.content.decode(), re.DOTALL).group(1)
+        csrf = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form_html).group(1)
+        cookie = self.client.cookies[settings.CSRF_COOKIE_NAME]
+        self.assertTrue(cookie["secure"])
+        self.assertEqual(cookie["samesite"], "Lax")
+        self.assertEqual(cookie["path"], "/")
+        self.assertEqual(cookie["domain"], "")  # host-only; no cross-host cookie
+        self.assertTrue(response.wsgi_request.is_secure())
         return parsed.path, {**self.args(link), "csrfmiddlewaretoken": csrf}
 
     def submit(self, path, data, **headers):
@@ -75,7 +82,7 @@ class HostedAccountPageTests(TransactionTestCase):
     def assert_sensitive_headers(self, response):
         self.assertIn("no-store", response["Cache-Control"])
         self.assertIn("private", response["Cache-Control"])
-        self.assertEqual(response["Referrer-Policy"], "no-referrer")
+        self.assertEqual(response["Referrer-Policy"], "strict-origin")
         self.assertIn("noindex", response["X-Robots-Tag"])
         self.assertIn("default-src 'none'", response["Content-Security-Policy"])
         self.assertIn("form-action 'self'", response["Content-Security-Policy"])
@@ -118,6 +125,72 @@ class HostedAccountPageTests(TransactionTestCase):
         self.assertFalse(self.user.profile.email_verified)
         self.assertEqual(self.client.post(path, {**data, "confirm": "on"},
                                          HTTP_REFERER=link).status_code, 200)
+
+    def test_missing_origin_and_referer_rejects_even_with_valid_cookie_and_token(self):
+        path, data = self.open_form(self.link())
+        with self.assertLogs("django.security.csrf", level="WARNING") as logged:
+            response = self.client.post(path, {**data, "confirm": "on"})
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.wsgi_request.is_secure())
+        self.assertIn(settings.CSRF_COOKIE_NAME, response.wsgi_request.COOKIES)
+        self.assertIn("Referer checking failed - no Referer.", logged.output[0])
+        self.assertNotIn(data["token"], "\n".join(logged.output))
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.profile.email_verified)
+
+    def test_null_origin_from_no_referrer_navigation_remains_rejected(self):
+        path, data = self.open_form(self.link())
+        # Fetch's non-CORS POST navigation rules serialize Origin as "null"
+        # for no-referrer. A valid CSRF cookie/form token cannot override it.
+        with self.assertLogs("django.security.csrf", level="WARNING") as logged:
+            response = self.client.post(path, {**data, "confirm": "on"}, HTTP_ORIGIN="null")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Origin checking failed - null does not match any trusted origins.", logged.output[0])
+        self.assertNotIn(data["token"], "\n".join(logged.output))
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.profile.email_verified)
+
+    def test_origin_only_referrer_policy_allows_secure_confirmation_and_reset(self):
+        for reset in (False, True):
+            with self.subTest(reset=reset):
+                link = self.link(reset=reset)
+                response = self.client.get(urlsplit(link).path, self.args(link))
+                self.assertEqual(response["Referrer-Policy"], "strict-origin")
+                self.assertContains(response, '<meta name="referrer" content="strict-origin">')
+                # No full-page/query Referer and no Origin: an origin-only
+                # HTTPS Referer must satisfy Django's strict fallback check.
+                path, data = self.open_form(link)
+                payload = {**data, "confirm": "on"}
+                if reset:
+                    payload.update(password="Referrer-reset-password-234",
+                                   confirm_password="Referrer-reset-password-234")
+                response = self.client.post(path, payload, HTTP_REFERER=f"{settings.ACCOUNT_PAGES_ORIGIN}/")
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.wsgi_request.is_secure())
+                self.assertIn(settings.CSRF_COOKIE_NAME, response.wsgi_request.COOKIES)
+                self.assertNotIn("?", response.wsgi_request.get_full_path())
+                self.assert_sensitive_headers(response)
+                self.assertNotContains(response, data["token"])
+                self.user.refresh_from_db()
+                if reset:
+                    self.assertTrue(self.user.check_password(payload["password"]))
+                else:
+                    self.assertTrue(self.user.profile.email_verified)
+
+    def test_origin_only_referer_cannot_bypass_cookie_or_host_checks(self):
+        path, data = self.open_form(self.link())
+        payload = {**data, "confirm": "on"}
+        for referer in ("http://test.alwaysdata.net/", "https://unapproved.invalid/"):
+            response = self.client.post(path, payload, HTTP_REFERER=referer)
+            self.assertEqual(response.status_code, 403)
+        without_cookie = Client(enforce_csrf_checks=True, HTTP_HOST=settings.ALLOWED_HOSTS[0],
+                                HTTP_X_FORWARDED_PROTO="https")
+        with self.assertLogs("django.security.csrf", level="WARNING") as logged:
+            response = without_cookie.post(path, payload, HTTP_REFERER=f"{settings.ACCOUNT_PAGES_ORIGIN}/")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("CSRF cookie not set.", logged.output[0])
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.profile.email_verified)
 
     def test_reset_get_does_not_change_password_or_verify_and_post_is_single_use(self):
         link = self.link(reset=True)

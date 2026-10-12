@@ -1,5 +1,5 @@
 from django.urls import path
-from loan.api.mobile_views import MobileLoanOverviewView, MobileLoanEligibilityView, MobileLoanQuoteView
+from loan.api.mobile_views import MobileLoanOverviewView, MobileLoanEligibilityView, MobileLoanQuoteView, MobileLoanApplicationView
 
 from .views import (
     ActiveLoanRepaymentView,
@@ -20,6 +20,7 @@ from transactions.api.payment_views import VerifiedLoanRepaymentView, VerifiedLo
 from webhooks.api.views import LoanTokenVerificationView
 
 urlpatterns = [
+    path("mobile-apply/", MobileLoanApplicationView.as_view(), name="mobile-loan-apply"),
     path('mobile-overview/', MobileLoanOverviewView.as_view(), name='mobile-loan-overview'),
     path('mobile-eligibility/', MobileLoanEligibilityView.as_view(), name='mobile-loan-eligibility'),
     path('mobile-quote/', MobileLoanQuoteView.as_view(), name='mobile-loan-quote'),

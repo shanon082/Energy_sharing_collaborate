@@ -4,6 +4,7 @@ export type ConnectionProbe = {
   simpleGet: string;
   jsonGet: string;
   loginPreflight: string;
+  registerPost: string;
   accountGet: string;
   opaqueGet: string;
 };
@@ -13,7 +14,10 @@ async function check(url: string, options: RequestInit, send: typeof fetch): Pro
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await send(url, { ...options, cache: "no-store", signal: controller.signal });
-    return response.type === "opaque" ? "Reached host; response hidden by no-cors" : `HTTP ${response.status}`;
+    if (response.type === "opaque") return "Reached host; response hidden by no-cors";
+    try { await response.json(); }
+    catch { return `HTTP ${response.status}; body is not readable JSON`; }
+    return `HTTP ${response.status}; JSON readable`;
   } catch (error) {
     return error instanceof DOMException && error.name === "AbortError" ? "Timed out" : "Fetch blocked or failed";
   } finally {
@@ -31,6 +35,9 @@ export async function probeConnection(api: string, origin: string, send: typeof 
     jsonGet: await check(features, { method: "GET", headers: { "Content-Type": "application/json" } }, send),
     // Empty JSON exercises the browser's login preflight; Django should return HTTP 400.
     loginPreflight: await check(`${api}/auth/login/`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }, send),
+    registerPost: await check(`${api}/auth/register/`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
     }, send),
     // A fixed invalid token tests the Authorization preflight without using a real session.

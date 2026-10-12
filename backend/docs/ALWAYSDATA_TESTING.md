@@ -203,11 +203,98 @@ automatic login, Next.js page, JavaScript, third-party asset or deep link is use
 CSS is served by WhiteNoise from this backend after `collectstatic`.
 
 Responses, including token errors and CSRF failures, carry `Cache-Control:
-no-store, private`, `Referrer-Policy: no-referrer`, no-index and restrictive CSP
-headers. Keep platform HTTP caching disabled. Initial email URLs still enter
+no-store, private`, `Referrer-Policy: strict-origin`, no-index and restrictive CSP
+headers. The HTML meta policy also uses `strict-origin`: same-origin form POSTs
+retain their HTTPS origin, and an origin-only Referer remains available to
+Django when Origin is absent. Paths and uid/token queries are never sent as
+Referer, even to this site's own CSS. HTTPS-to-HTTP downgrades send no Referer.
+Keep platform HTTP caching disabled. Initial email URLs still enter
 browser history/platform access logs; restrict log access and omit query strings
 where supported. Do not paste live links into curl, logs or chat. GET does not
 write account/session state or invalidate a token.
+
+### Account confirmation CSRF diagnosis and patch
+
+The former response header **and** HTML meta tag used `no-referrer`. For a
+non-CORS form POST navigation, Fetch specifies `Origin: null` under that policy;
+some clients instead omit Origin/Referer. With valid form/cookie tokens, the
+isolated Django regressions capture these `django.security.csrf` reasons:
+
+- `Origin checking failed - null does not match any trusted origins.`
+- `Referer checking failed - no Referer.`
+
+The patch changes both policies to `strict-origin`. It never accepts null or
+untrusted origins, bypasses referer validation, disables CSRF, changes token
+expiry/consumption rules, broadens trusted origins or enables DEBUG. The form
+already contains `{% csrf_token %}` **inside** the POST form; its relative
+action preserves the current HTTPS host and excludes the email-link query.
+Valid-link tests verify a host-only Secure/SameSite=Lax CSRF cookie is set and
+sent, and Django sees HTTPS when the proxy supplies `X-Forwarded-Proto: https`.
+The explicit trusted origin remains `https://shanonsimon.alwaysdata.net`.
+
+The actual hosted failure reason/cookie submission still needs operator
+confirmation; the agent could not authenticate over SSH. Do not infer a missing
+cookie from an invalid token-free GET, which intentionally renders no form.
+In **Web → Sites → Logs** inspect the uWSGI error log. To extract only bounded
+reason categories after logging in over SSH, run this read-only snippet. It
+never prints raw log lines, header values, email links, cookies or request bodies:
+
+```bash
+/home/shanonsimon/energy-venv/bin/python - <<'PY'
+from pathlib import Path
+checks = (
+    ('Origin checking failed - null ', 'Origin checking failed: null origin'),
+    ('Origin checking failed - ', 'Origin checking failed: untrusted origin (value omitted)'),
+    ('Referer checking failed - no Referer.', 'Referer checking failed: no Referer'),
+    ('Referer checking failed - Referer is insecure', 'Referer checking failed: insecure Referer'),
+    ('Referer checking failed - Referer is malformed', 'Referer checking failed: malformed Referer'),
+    ('Referer checking failed - ', 'Referer checking failed: untrusted Referer (value omitted)'),
+    ('CSRF cookie not set.', 'CSRF cookie not set'),
+    ('CSRF token missing.', 'CSRF token missing'),
+    ('CSRF token from POST', 'CSRF POST token invalid or mismatched (details omitted)'),
+)
+found = False
+for logfile in sorted(Path('/home/shanonsimon/admin/logs/uwsgi').glob('*.log')):
+    with logfile.open('rb') as stream:
+        stream.seek(max(0, logfile.stat().st_size - 65536))
+        lines = stream.read().decode('utf-8', errors='replace').splitlines()
+    for line in lines:
+        if not any(path in line for path in ('/account/verify-email/', '/account/reset-password/')):
+            continue
+        for fragment, sanitized in checks:
+            if fragment in line:
+                print(f'{logfile.name}: {sanitized}')
+                found = True
+                break
+if not found:
+    print('No account-page CSRF reason in the last 64 KiB of current uWSGI logs; inspect the site log location/rotation.')
+PY
+```
+
+Upload only the two runtime files, from the repository root in WSL:
+
+```bash
+scp backend/backend/hosting_middleware.py shanonsimon@ssh-shanonsimon.alwaysdata.net:/home/shanonsimon/energy-sharing/backend/hosting_middleware.py
+scp backend/accounts/templates/accounts/account_action.html shanonsimon@ssh-shanonsimon.alwaysdata.net:/home/shanonsimon/energy-sharing/accounts/templates/accounts/account_action.html
+```
+
+Then use **Web → Sites → Restart** for `shanonsimon.alwaysdata.net`. This patch
+requires no database migration, dependency installation, collectstatic, secret
+change or APK rebuild. Reload the valid email link with a fresh GET after restart
+to replace the old document policy and obtain its CSRF cookie; avoid resubmitting
+an old open tab. Check the page header and meta tag both say `strict-origin`, the
+form POST uses the same HTTPS hostname, and the cookie is present without
+copying its value. Origin should be the HTTPS backend origin; when absent,
+Referer should be `https://shanonsimon.alwaysdata.net/` without a query. If the
+browser suppresses both headers, Django must still reject the POST. If the log
+says cookie/token missing instead, check the browser's cookies and reopen the
+same link in the same browser before attempting confirmation. A 403 does not
+consume the verification/reset token; an expired or used link needs a new one.
+
+References: [Django's HTTPS/referrer checks](https://docs.djangoproject.com/en/5.2/ref/csrf/),
+[Fetch form Origin rules](https://fetch.spec.whatwg.org/#append-a-request-origin-header),
+[strict-origin policy](https://www.w3.org/TR/referrer-policy/#referrer-policy-strict-origin),
+[alwaysdata proxy headers](https://help.alwaysdata.com/en/docs/web-hosting/sites/http-stack/).
 
 Existing `PASSWORD_RESET_TIMEOUT` and token hash rules remain unchanged.
 Mutations share a service with the API; user/profile row locks re-check tokens
@@ -255,8 +342,36 @@ not addresses, passwords, codes or tokens.
 Read-only report (default; no SMTP):
 
 ```bash
-/home/shanonsimon/energy-venv/bin/python manage.py drain_account_emails
+DJANGO_SETTINGS_MODULE=backend.alwaysdata_settings ALWAYSDATA_ENV_FILE=/home/shanonsimon/.config/energy-sharing/backend.env /home/shanonsimon/energy-venv/bin/python /home/shanonsimon/energy-sharing/manage.py drain_account_emails
 ```
+
+### Verification remains queued after registration
+
+An APK login/signup change does not run the outbox. First run the read-only
+command above over SSH; it displays bounded job IDs/statuses and totals without
+addresses or links. Then inspect **Advanced → Scheduled tasks → Logs** for the
+account-mail command. Alwaysdata also stores scheduled-task logs under
+`/home/shanonsimon/admin/logs/jobs/`; do not share unrelated/private log contents.
+
+- `QUEUED`: no sender has claimed that job yet. Check that the scheduled task is
+  enabled, its interval has elapsed, and it uses the full virtualenv Python,
+  settings module and private-file path shown above. A failed startup will leave
+  the job queued. Do not change the web request to claim email was sent.
+- `SENT`: SMTP accepted it; check Spam/All Mail. This is not proof of inbox arrival.
+- `OUTCOME_UNKNOWN` or `SENDING`: review the task/SMTP history before requesting
+  another email. Do not reset these jobs to queued or replay them automatically.
+- `SKIPPED`: the account state changed, the request expired or the account was
+  already verified. Request a fresh verification email only if still needed.
+
+To send eligible queued account mail intentionally, run the scheduled command
+with `--send --limit 5` manually or configure it in the panel. This contacts
+Gmail and may send up to five queued account messages; the default read-only
+command never sends. Enter any corrected Gmail app password privately in
+`/home/shanonsimon/.config/energy-sharing/backend.env`, never in command arguments
+or chat. Keep `smtp.gmail.com:587`, STARTTLS enabled and implicit TLS disabled.
+The management command reads this file on each invocation; a site reload alone
+does not drain mail. No Redis, Celery eager mode, financial worker or migration
+is required just to run the already-deployed account-mail sender.
 
 ## Redis/Celery inventory and unavailable operations
 
@@ -313,7 +428,7 @@ curl -i -H 'Origin: https://localhost' -H 'Content-Type: application/json' --dat
 Expect HTTP redirect, HTTPS health/static 200, all seven features/mobile actions
 false, preflight allowing only required headers/methods, and **readable login
 400** for empty data with the exact matching CORS origin. The two account pages
-without a token should return generic 400 HTML with no-store/no-referrer/CSP
+without a token should return generic 400 HTML with no-store/strict-origin/CSP
 headers, not a Next.js redirect. Authenticated account
 reads require real verified testing accounts; never paste passwords/JWTs into
 diagnostic logs. Test registration → scheduled SMTP acceptance → verification →
@@ -360,6 +475,19 @@ The following inventory includes that earlier hosting work as well:
   mobile messaging: `mobile/src/Access.tsx`. No APK/build configuration change.
 
 ## Local verification
+
+CSRF patch verification (12 October 2026): the focused hosting-profile command
+below passed **20 tests** after the fix. Before the fix, its new origin-only
+policy case failed for both verification and reset, and the null-Origin case
+captured Django's rejection reason. The combined command passed **142 tests,
+one unchanged expected failure** for overdue-after-completion. Pre-existing
+wallet MeterBalance fixture-conflict logs still occur; they did not cause test
+failures and were not changed or suppressed. Email was mocked, external HTTP
+blocked, and all database work confined to the isolated PostgreSQL test cluster.
+This proves code behavior, not actual phone headers/cookie delivery: the hosted
+token-free GET still showed `no-referrer` header and meta, and SSH log access
+was denied. No host deployment, migration, SMTP send or APK rebuild was done
+for this backend patch.
 
 Use a disposable PostgreSQL cluster, never the hosted database. The local test
 harness refuses to start unless the account-owned `/tmp/gpawa-alwaysdata/pg`
@@ -443,3 +571,55 @@ smoke checks, and later APK endpoint update. Previously embedded SMTP and any
 reused deployment/provider secrets require operator rotation; no rotation was
 performed. Free plan resources and process-local throttling are testing limits,
 not evidence of readiness for live funds/hardware.
+
+## Consumer expansion upload (review only; not run by this change)
+
+Use [CONSUMER_EXPANSION_DEPLOYMENT.md](CONSUMER_EXPANSION_DEPLOYMENT.md) and
+the explicit `deploy/consumer-expansion.files` allowlist for the current change.
+It includes the two original migrations plus `meter.0027_meterenrollmentreview`,
+the narrowly authorized staff page and the working account-page CSRF fix.
+The commands below describe the earlier changed-source upload; the explicit
+allowlist and exclusion-filtered commands in the new runbook supersede it.
+
+Review [CONSUMER_EXPANSION.md](CONSUMER_EXPANSION.md) before deploying the new
+meter request/scoring tables. The existing account pages, strict-origin CSRF
+fix and scheduled account-email outbox remain included in the upload.
+Only nonfinancial metadata requests and provisional quotes are newly allowed;
+shared hosted loan reconciliation/disbursement is contained even behind GET.
+The seven flags and financial/device restrictions remain disabled.
+
+From the local repository root, make a reviewed changed-source list. It includes
+tracked edits and new nonignored backend files, including the two migrations;
+it cannot select ignored local .env files. Review every listed name before upload.
+
+```bash
+{ git diff --name-only -- backend/; git ls-files --others --exclude-standard -- backend/; } | sed 's#^backend/##' | sort -u > /tmp/energy-consumer-backend-files.txt
+cat /tmp/energy-consumer-backend-files.txt
+rsync -avn --files-from=/tmp/energy-consumer-backend-files.txt backend/ shanonsimon@ssh-shanonsimon.alwaysdata.net:/home/shanonsimon/energy-sharing/
+rsync -av --files-from=/tmp/energy-consumer-backend-files.txt backend/ shanonsimon@ssh-shanonsimon.alwaysdata.net:/home/shanonsimon/energy-sharing/
+```
+
+No `--delete`. Preserve remote private environment/media and any host-only files.
+Privately add `PURCHASE_HISTORY_SCORING_ENABLED=false` and optionally
+`MOBILE_METER_STALE_SECONDS=120` to the mode-0600 environment file. No numerical
+scoring proposal is approved/configured. The settings reject enabling it here.
+
+Use the database check, read-only phone audit, migration-plan/backup review and
+confirmed **testing** database commands in the consumer document. New migrations
+are `meter.0026_meterenrollmentrequest`, `loan.0022_purchasescoreexclusion` and
+the new `meter.0027_meterenrollmentreview`.
+They do not backfill or convert old records. Restart the Web → Sites WSGI site,
+then run credential-free checks:
+
+```bash
+curl -i https://shanonsimon.alwaysdata.net/api/v1/features/
+curl -i -X OPTIONS https://shanonsimon.alwaysdata.net/api/v1/auth/login/ -H 'Origin: http://localhost' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type'
+curl -i -X POST https://shanonsimon.alwaysdata.net/api/v1/auth/login/ -H 'Origin: http://localhost' -H 'Content-Type: application/json' --data '{}'
+```
+
+Expected features HTTP 200; all seven deferred flags and mobile financial actions
+false. Preflight allows only configured origins/headers; empty login POST HTTP
+400 is expected and its response must be readable to the configured origin.
+Use synthetic authenticated accounts on the phone for onboarding/owner-bound
+reads and CSRF-protected email forms; do not paste tokens into shared logs.
+No live payment reconciliation or meter-delivery worker is running on this host.

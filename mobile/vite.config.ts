@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   return {
     base: "./",
     plugins: [react()],
+    resolve: { dedupe: ["react", "react-dom"] },
     server: { host: "0.0.0.0" },
     build: { outDir: "dist", emptyOutDir: true },
   };

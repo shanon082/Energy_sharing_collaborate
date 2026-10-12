@@ -161,3 +161,14 @@ installable debug artifact, not evidence of phone runtime or live readiness.
 | 6 | Own-meter simulator loading, then hardware review | Durable command identity, exact entitlement reservations and matching application acknowledgement. Physical protocol/radio validation is separate and requires hardware agreement. |
 
 The staged plan does not re-enable peer sharing, consumer meter transfers, third-party repayment, USSD, wallet deposits/withdrawals or external CRB.
+
+## Consumer expansion — October 2026
+
+The local phase adds strict shared Ugandan phone formats, a pending consumer
+meter declaration model/legacy alias containment, onboarding, lending score
+explanations, dormant purchase-score configuration/exclusions, stored payment
+recovery beyond pagination, distinct allocation/acknowledgement receipts, and
+foreground simulator monitoring. See [CONSUMER_EXPANSION.md](CONSUMER_EXPANSION.md)
+for current authority, additive migrations and gates. Mobile submission remains
+contained pending policy/idempotent accepted-terms work. No host deployment,
+hosted migration, live provider or physical device operation was performed.

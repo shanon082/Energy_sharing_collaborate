@@ -1,10 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { SessionManager } from "./auth/session.ts";
 import type { MeterInfo } from "./api/contracts.ts";
-import { energy, ugx } from "./format.ts";
+import { dateTime, energy, ugx } from "./format.ts";
 
 type Eligibility = { score: number | null; eligible: boolean; can_apply: boolean;
   reason: string | null; source: string | null; tier?: string;
+  calculated_at?: string; evidence_updated_at?: string | null;
+  factors?: Record<string, number> | null; profile_score?: number;
+  starter_policy_floor_applied?: boolean; trust_score_delta?: number;
+  purchase_history_contribution?: { enabled: boolean; points: number; source_count: number; qualifying_billed_ugx: string };
   min_loan_ugx?: string; max_loan_ugx?: string; interest_rate_percent?: string | null };
 type Quote = { requested_ugx: string; estimated_approved_ugx: string; estimated_interest_ugx: string;
   estimated_total_due_ugx: string; estimated_energy_kwh: string; unallocated_ugx: string;
@@ -49,6 +53,12 @@ export function LoanQuote({ session, meters, selectedMeter }: {
     {eligibility && <>
       <p>Score: <strong>{eligibility.score === null ? "Unavailable" :
         `${eligibility.score} (self-reported profile estimate)`}</strong></p>
+      <p className="muted">Calculated {dateTime(eligibility.calculated_at || null)} · evidence updated {dateTime(eligibility.evidence_updated_at || null)}</p>
+      {eligibility.factors && <><p>Profile estimate: {eligibility.profile_score}; repayment-policy adjustment: {eligibility.trust_score_delta || 0}.</p>
+        {Object.entries(eligibility.factors).map(([factor, score]) => <div className="list-row" key={factor}><span>{factor.replaceAll("_", " ")}</span><strong>{score}/100</strong></div>)}
+      </>}
+      {eligibility.starter_policy_floor_applied && <p className="tag">The existing starter-access policy raises this score. That floor is a lending rule, not evidence of purchase or repayment history.</p>}
+      <p className="muted">Purchase-history scoring {eligibility.purchase_history_contribution?.enabled ? `contributes ${eligibility.purchase_history_contribution.points} points` : "is disabled pending business approval"}. Repeated refreshes do not earn points.</p>
       <p className="muted">{eligibility.reason || `Tier ${eligibility.tier || "unavailable"}; current cap ${ugx(eligibility.max_loan_ugx)}.`}</p>
       {eligibility.can_apply && <form className="form-panel" onSubmit={(event) => void submit(event)}>
         <label>Requested amount (whole UGX) <input inputMode="numeric" value={amount}

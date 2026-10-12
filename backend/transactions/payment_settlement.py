@@ -33,6 +33,8 @@ class PaymentSettlementError(Exception):
 
 
 def require_real_ugx_provider():
+    if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False):
+        raise PaymentSettlementError("Production providers are forbidden in sandbox mode.")
     cfg = getattr(settings, "MTN_MOMO_CONFIG", {})
     endpoint = urlparse(str(cfg.get("BASE_URL") or ""))
     if (cfg.get("ENVIRONMENT") != "production" or
@@ -243,16 +245,24 @@ def settle_from_provider_evidence(intent_id, evidence):
 def _settle_locked(intent_id, evidence):
     with db_transaction.atomic():
         intent = PaymentIntent.objects.select_for_update().get(pk=intent_id)
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and intent.provider != "MTN_SANDBOX":
+            raise PaymentSettlementError("Production/simulation records cannot settle in sandbox mode.")
         if intent.status == PaymentIntent.SETTLED:
             return intent, False
         if intent.status == PaymentIntent.FAILED:
             return intent, False
         if evidence["status"] in {"PENDING", "UNKNOWN"}:
             return intent, False
-        _validate_evidence(intent, evidence)
+        if intent.provider == "MTN_SANDBOX":
+            from transactions.sandbox_payments import validate_sandbox_evidence
+            validate_sandbox_evidence(intent, evidence)
+        else:
+            _validate_evidence(intent, evidence)
         if evidence["status"] == "FAILED":
             intent.status = PaymentIntent.FAILED
             intent.save(update_fields=["status"])
+            if intent.provider == "MTN_SANDBOX":
+                return intent, False
             if intent.purchase_id:
                 intent.purchase.status = "FAILED"
                 intent.purchase.save(update_fields=["status"])
@@ -268,7 +278,10 @@ def _settle_locked(intent_id, evidence):
         intent.provider_transaction_id = provider_transaction_id
         intent.status = PaymentIntent.SETTLED
         intent.save(update_fields=["status", "provider_transaction_id"])
-        if intent.purpose == PaymentIntent.PURCHASE:
+        if intent.provider == "MTN_SANDBOX":
+            from transactions.sandbox_payments import apply_sandbox_settlement
+            apply_sandbox_settlement(intent)
+        elif intent.purpose == PaymentIntent.PURCHASE:
             _settle_purchase(intent)
         else:
             _settle_repayment(intent)
@@ -281,6 +294,9 @@ def reconcile_payment(intent_id):
     intent = PaymentIntent.objects.get(pk=intent_id)
     if intent.status != PaymentIntent.PENDING:
         return intent, False
+    if intent.provider == "MTN_SANDBOX":
+        from transactions.sandbox_payments import reconcile_sandbox_payment
+        return reconcile_sandbox_payment(intent.pk)
     if intent.provider != "MTN_PRODUCTION":
         raise PaymentSettlementError("Simulation cannot settle real-provider records.")
     require_real_ugx_provider()

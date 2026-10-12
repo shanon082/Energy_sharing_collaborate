@@ -48,14 +48,15 @@ def authorize_purchase_allocation(intent, units):
     from transactions.models import PaymentIntent
 
     if (intent.purpose != PaymentIntent.PURCHASE or intent.status != PaymentIntent.SETTLED or
-            not intent.meter_id or not intent.purchase_id):
+            not intent.meter_id or (not intent.purchase_id and intent.provider != "MTN_SANDBOX")):
         raise AllocationError("A settled, meter-bound purchase is required.")
     meter = Meter.all_objects.get(pk=intent.meter_id)
-    if meter.user_id != intent.owner_id:
+    if meter.user_id != intent.owner_id or (intent.provider == "MTN_SANDBOX") != meter.sandbox_inventory:
         raise AllocationError("Meter ownership changed before allocation.")
     allocation, created = EnergyAllocation.objects.get_or_create(
         purchase_intent=intent,
         defaults={"owner_id": intent.owner_id, "meter": meter,
+                  "accounting_environment": "SANDBOX" if intent.provider == "MTN_SANDBOX" else "CORE",
                   "amount_kwh": quantize_source_kwh(units)},
     )
     if not created:
@@ -66,6 +67,8 @@ def authorize_purchase_allocation(intent, units):
 def authorize_loan_allocation(disbursement, units):
     loan = disbursement.loan_application
     meter = Meter.all_objects.get(pk=disbursement.meter_id)
+    if meter.sandbox_inventory:
+        raise AllocationError("Core UGX loans cannot provision test inventory.")
     if loan.status != "DISBURSED" or meter.user_id != loan.user_id:
         raise AllocationError("A disbursed loan and its assigned meter are required.")
     allocation, created = EnergyAllocation.objects.get_or_create(
@@ -76,6 +79,20 @@ def authorize_loan_allocation(disbursement, units):
     if not created:
         raise AllocationError("Loan allocation already exists.")
     return allocation
+
+
+def authorize_sandbox_loan_allocation(loan, units):
+    from loan.sandbox_service import require_sandbox, owned_test_meter
+    require_sandbox()
+    meter = owned_test_meter(loan.owner, loan.meter_id)
+    if loan.status != "DISBURSED" or loan.currency != "EUR":
+        raise AllocationError("An approved EUR sandbox loan is required.")
+    row, created = EnergyAllocation.objects.get_or_create(sandbox_loan=loan,
+        defaults={"owner": loan.owner, "meter": meter, "accounting_environment": "SANDBOX",
+                  "amount_kwh": parse_requested_kwh(units)})
+    if not created and (row.owner_id != loan.owner_id or row.meter_id != loan.meter_id or row.amount_kwh != parse_requested_kwh(units)):
+        raise AllocationError("Sandbox source allocation differs from its frozen terms.")
+    return row
 
 
 def reserve_for_delivery(*, owner, meter_no, amount_kwh, request_id=None):
@@ -93,6 +110,10 @@ def reserve_for_delivery(*, owner, meter_no, amount_kwh, request_id=None):
         ).first()
         if meter is None:
             raise AllocationError("Choose an active AMI meter assigned to your account.")
+        if meter.sandbox_inventory:
+            from meter.api.delivery_views import require_simulation_available
+            if not require_simulation_available():
+                raise AllocationError("Test allocations cannot dispatch physical delivery; use the isolated development simulator.")
         allocations = list(EnergyAllocation.objects.select_for_update().filter(
             owner=owner, meter=meter,
         ).order_by("pk"))

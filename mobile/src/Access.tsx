@@ -2,20 +2,22 @@ import { useCallback, useState, type FormEvent } from "react";
 import { App as NativeApp } from "@capacitor/app";
 import type { SessionManager } from "./auth/session.ts";
 import { accountTokenQuery, parseAccountLink } from "./auth/account-links.ts";
-import { API_BASE_URL } from "./api/config.ts";
+import { ACCOUNT_COMPLETION, API_BASE_URL } from "./api/config.ts";
 import { probeConnection, type ConnectionProbe } from "./api/diagnostics.ts";
 import { Brand, EnergyArtwork, Icon } from "./ui.tsx";
 import { useNativeBack } from "./use-native-back.ts";
 
+import { normalizeUgandanPhone } from "../../frontend/src/lib/ugandan-phone.ts";
+
 type Mode = "welcome" | "login" | "register" | "verify" | "forgot" | "reset";
 type Props = { session: SessionManager; onLogin: (email: string, password: string) => Promise<void>;
-  loginBusy: boolean; loginError: string | null; onPreview: () => void; };
+  loginBusy: boolean; loginError: string | null; };
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : "The request failed. Please try again.";
 }
 
-export function Access({ session, onLogin, loginBusy, loginError, onPreview }: Props) {
+export function Access({ session, onLogin, loginBusy, loginError }: Props) {
   const [mode, setMode] = useState<Mode>("welcome");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,6 +33,7 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
   const [link, setLink] = useState("");
   const [checkingApi, setCheckingApi] = useState(false);
   const [connection, setConnection] = useState<ConnectionProbe | null>(null);
+  const browserCompletion = ACCOUNT_COMPLETION === "browser" && (mode === "verify" || mode === "reset");
 
   const change = (next: Mode) => {
     setMode(next); setError(null); setSuccess(null); setPassword(""); setConfirm(""); setLink("");
@@ -44,7 +47,7 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
   }, [mode, busy, loginBusy]));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || loginBusy) return;
+    if (busy || loginBusy || browserCompletion) return;
     setError(null); setSuccess(null);
     if (mode === "login") { await onLogin(email.trim(), password); return; }
     setBusy(true);
@@ -53,7 +56,7 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
         if (password !== confirm) throw new Error("Passwords do not match.");
         const response = await session.publicPost<{ message?: unknown }>("auth/register/", {
           first_name: first.trim(), last_name: last.trim(), email: email.trim(),
-          phone_number: phone.trim(), gender, password, confirm_password: confirm,
+          phone_number: normalizeUgandanPhone(phone), gender, password, confirm_password: confirm,
         });
         setPassword(""); setConfirm("");
         setSuccess(typeof response?.message === "string" ? response.message : "Account created. Verification email requested; verify before signing in.");
@@ -100,8 +103,6 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
     </div>
     <div className="welcome-actions"><button className="primary-button" onClick={() => change("register")}>Get started <Icon name="arrow" /></button>
       <button className="welcome-signin" onClick={() => change("login")}>Already have an account? <strong>Sign in</strong></button>
-      <button className="preview-link" onClick={onPreview}>Explore the app preview <Icon name="arrow" /></button>
-      <p className="welcome-footnote">Preview uses sample data. No account needed.</p>
     </div>
   </main>;
 
@@ -132,41 +133,53 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
         <label>Email address <span className="input-wrap"><Icon name="mail" /><input type="email" autoComplete="email" placeholder="you@example.com" value={email}
           onChange={(event) => setEmail(event.target.value)} required={mode !== "verify"} /></span></label>}
       {mode === "register" && <>
-        <label>Phone number <span className="input-wrap"><Icon name="phone" /><input type="tel" autoComplete="tel" placeholder="+256 …" value={phone} onChange={(event) => setPhone(event.target.value)} required /></span></label>
+        <label>Phone number <span className="input-wrap"><Icon name="phone" /><input type="tel" autoComplete="tel" placeholder="0771000111 or +256771000111" value={phone} onChange={(event) => setPhone(event.target.value)} required /></span></label>
         <label>Gender <select value={gender} onChange={(event) => setGender(event.target.value)} required>
           <option value="" disabled>Select gender</option>
           <option value="MALE">Male</option><option value="FEMALE">Female</option></select></label>
       </>}
-      {(mode === "verify" || mode === "reset") && <>
+      {browserCompletion && <p className="muted">Open the link from your email in your phone’s browser.
+        {mode === "verify" ? " Confirm your email address on the page." : " Choose your new password on the page."}
+        {" "}Then return to this app and sign in. Opening the email link alone does not complete the action.</p>}
+      {(mode === "verify" || mode === "reset") && !browserCompletion && <>
         <p className="muted small">For local testing, copy the complete link from the email and paste it here. Django validates its token and expiry.</p>
         <label>Email link <input type="url" value={link} onChange={(event) => setLink(event.target.value)} required /></label>
       </>}
-      {(mode === "login" || mode === "register" || mode === "reset") &&
+      {(mode === "login" || mode === "register" || (mode === "reset" && !browserCompletion)) &&
         <label>{mode === "reset" ? "New password" : "Password"}
           <span className="input-wrap"><Icon name="lock" /><input type={showPassword ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"}
             placeholder={mode === "login" ? "Enter your password" : "Create a password"}
             value={password} onChange={(event) => setPassword(event.target.value)} required />
           <button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"}
             aria-pressed={showPassword} onClick={() => setShowPassword((value) => !value)}><Icon name={showPassword ? "eye-off" : "eye"} /></button></span></label>}
-      {(mode === "register" || mode === "reset") &&
+      {(mode === "register" || (mode === "reset" && !browserCompletion)) &&
         <label>Confirm password <span className="input-wrap"><Icon name="lock" /><input type={showPassword ? "text" : "password"} autoComplete="new-password" placeholder="Re-enter your password"
           value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></span></label>}
       {mode === "login" && <button type="button" className="text-button forgot-link" disabled={loginBusy} onClick={() => change("forgot")}>Forgot password?</button>}
       {(error || (mode === "login" && loginError)) &&
         <p className="error" role="alert">{error || loginError}</p>}
       {success && <p className="tag" role="status">{success}</p>}
-      <button type="submit" className="primary-button" disabled={busy || loginBusy}>
+      {!browserCompletion && <button type="submit" className="primary-button" disabled={busy || loginBusy}>
         {busy || loginBusy ? "Please wait…" : ({ login: "Sign in", register: "Register",
-          verify: "Verify link", forgot: "Send reset email", reset: "Reset password" } as const)[mode]}<Icon name="arrow" /></button>
+          verify: "Verify link", forgot: "Send reset email", reset: "Reset password" } as const)[mode]}<Icon name="arrow" /></button>}
       {mode === "register" && <p className="form-hint"><Icon name="shield" />We’ll send you an email to verify your account before you sign in.</p>}
       {mode === "verify" && <button type="button" className="secondary" disabled={busy || !email.trim()}
         onClick={() => void resend()}>Resend verification email</button>}
       <div className="access-links">
         {mode !== "login" && mode !== "register" && <button type="button" className="text-button" disabled={busy} onClick={() => change("login")}>Back to sign in</button>}
-        {mode === "login" && <button type="button" className="text-button" disabled={loginBusy} onClick={() => change("verify")}>Have a verification link?</button>}
-        {mode === "forgot" && <button type="button" className="text-button" disabled={busy} onClick={() => change("reset")}>Already have a reset link?</button>}
+        {mode === "login" && <button type="button" className="text-button" disabled={loginBusy} onClick={() => change("verify")}>
+          {ACCOUNT_COMPLETION === "browser" ? "Email verification" : "Have a verification link?"}</button>}
+        {mode === "forgot" && <button type="button" className="text-button" disabled={busy} onClick={() => change("reset")}>
+          {ACCOUNT_COMPLETION === "browser" ? "Check reset email" : "Already have a reset link?"}</button>}
       </div>
-      {mode === "login" && import.meta.env.MODE === "android-debug" && <details className="connection-details"><summary>Development connection tools</summary>
+      {(mode === "login" || mode === "register") && import.meta.env.MODE === "android-debug" && <details className="connection-details"><summary>Development connection tools</summary>
+        <div className="muted small">App origin: {window.location.origin}<br />API: {API_BASE_URL}</div>
+        {session.lastRequest && <div className="muted small" role="status">
+          Last account request: {session.lastRequest.method} {session.lastRequest.path}<br />
+          Result: {session.lastRequest.outcome}{session.lastRequest.status !== null ? ` (HTTP ${session.lastRequest.status})` : " (no HTTP status)"}
+          {session.lastRequest.failure ? ` · ${session.lastRequest.failure}` : ""}<br />
+          Started: {session.lastRequest.startedAt}
+        </div>}
         <button type="button" className="secondary" disabled={checkingApi} onClick={() => {
           setCheckingApi(true);
           void probeConnection(API_BASE_URL, window.location.origin)
@@ -176,6 +189,7 @@ export function Access({ session, onLogin, loginBusy, loginError, onPreview }: P
           <div>App origin: {connection.origin}</div><div>API: {connection.api}</div>
           <div>Simple GET: {connection.simpleGet}</div><div>JSON GET: {connection.jsonGet}</div>
           <div>Empty login POST: {connection.loginPreflight}</div>
+          <div>Empty signup POST: {connection.registerPost}</div>
           <div>Account GET with invalid test token: {connection.accountGet}</div>
           <div>No-CORS GET: {connection.opaqueGet}</div>
         </div>}

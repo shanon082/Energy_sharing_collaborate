@@ -23,6 +23,7 @@ try {
   const homeMeter = { id: 7, meter_number: "UI-METER-7", label: "Home meter", architecture: "AMI", status: "ACTIVE" };
   const shopMeter = { id: 8, meter_number: "UI-METER-8", label: "Shop meter", architecture: "STS", status: "SUSPENDED" };
   let liveMeters = [homeMeter, shopMeter];
+  let selfEnrollment = false;
   let failProfile = false;
   let detailsAvailable = true;
   let detailsValues = { account_number: "EN-TEST", address: null, energy_preference: null, payment_method: null };
@@ -48,6 +49,25 @@ try {
         detailsValues = { ...detailsValues, ...update };
       }
       body = { details_available: detailsAvailable, values: detailsAvailable ? detailsValues : null, choices: detailsChoices };
+    } else if (path.endsWith("meter/mobile-onboarding/")) {
+      body = { needs_meter: !liveMeters.length, meters: liveMeters, requests: [], phone_ownership_verified: false,
+        sandbox_self_enrollment: selfEnrollment };
+    } else if (path.endsWith("meter/sandbox-meter-enrollment/")) {
+      assert.equal(route.request().method(), "POST");
+      const input = route.request().postDataJSON();
+      assert.deepEqual(input, { meter_no: "000245" });
+      const declared = { id: 24, meter_number: input.meter_no, label: "Prototype meter", architecture: "AMI", status: "ACTIVE",
+        sandbox_inventory: true, ownership_provenance: "SELF_DECLARED", enrolled_at: "2026-10-13T00:00:00Z", hardware_connection: "PENDING" };
+      liveMeters = [declared];
+      body = { success: true, status: "SELF_DECLARED", meter: declared,
+        message: "Meter linked for prototype testing. Ownership and live readings are not verified with the electricity provider." };
+      status = 201;
+    } else if (path.endsWith("meter/mobile-meter-requests/")) {
+      assert.equal(route.request().method(), "POST");
+      assert.deepEqual(Object.keys(route.request().postDataJSON()), ["meter_no"]);
+      body = { success: true, status: "PENDING", request_id: "ui-pending-request", message: "Request recorded; staff verification is required." }; status = 202;
+    } else if (path.endsWith("transactions/mobile-payment-recovery/")) {
+      body = { pending: false, receipt: null, provider_polled: false, status_source: "STORED_VERIFIED_SETTLEMENT" };
     } else if (path.endsWith("meter/mobile-meters/")) {
       body = { success: true, data: { has_meter: Boolean(liveMeters.length), meters: liveMeters } };
     } else if (/meter\/mobile-meters\/\d+\/$/.test(path)) {
@@ -117,119 +137,31 @@ try {
   await page.locator('form button[type="submit"]').click();
   await page.getByRole("heading", { name: "Check your inbox." }).waitFor();
   await layout("verification");
+  const browserAccountPages = await page.getByText(/Open the link from your email in your phone’s browser/).count() > 0;
+  if (browserAccountPages) {
+    assert.equal(await page.getByLabel("Email link", { exact: true }).count(), 0);
+    assert.equal(await page.locator('form button[type="submit"]').count(), 0);
+    assert.equal(calls.filter((call) => call.path.endsWith("auth/verify-email/")).length, 0);
+  }
   checks++;
 
   await page.getByRole("button", { name: "Back to sign in" }).click();
   await page.getByRole("button", { name: "Forgot password?" }).click();
   await layout("forgot-password");
-  await page.getByRole("button", { name: "Already have a reset link?" }).click();
+  await page.getByRole("button", { name: browserAccountPages ? "Check reset email" : "Already have a reset link?" }).click();
   await layout("reset-password");
-  await page.getByRole("button", { name: "Back to welcome" }).click();
-  const beforePreview = calls.length;
-  await page.getByRole("button", { name: "Explore the app preview" }).click();
-  await page.getByRole("heading", { name: "Hello, Alex." }).waitFor();
-  await layout("dashboard");
-  assert.deepEqual(await page.getByRole("navigation").getByRole("button").allTextContents(), ["Home", "Meters", "Usage", "Credit", "Activity", "Account"]);
-  assert.equal(await page.getByRole("button", { name: /share|transfer|withdraw|deposit|pay.for.someone|ussd/i }).count(), 0);
-  checks++;
-
-  await tab("Meters");
-  await page.getByRole("button", { name: /Shop meter Small business/ }).click();
-  await layout("meters");
-  await tab("Home");
-  await page.getByRole("button", { name: "Buy electricity" }).click();
-  assert.equal(await page.getByLabel("Your meter").inputValue(), "1");
-  await page.getByRole("button", { name: "UGX 5,000", exact: true }).click();
-  await page.getByLabel("Mobile Money phone").fill("+256700000000");
-  await layout("purchase");
-  await page.getByRole("button", { name: "Review request" }).click();
-  await page.getByText("Shop meter · SAMPLE-M002", { exact: true }).waitFor();
-  await layout("purchase-review");
-  await page.getByRole("button", { name: "About this preview" }).click();
-  await page.getByRole("dialog").waitFor();
-  assert.equal(await page.getByRole("button", { name: "Got it" }).evaluate((button) => button === document.activeElement), true);
-  await page.keyboard.press("Escape");
-  assert.equal(await page.getByRole("dialog").count(), 0);
-  checks++;
-
-  await tab("Meters");
-  await page.getByRole("button", { name: "Preview meter loading" }).click();
-  await page.getByLabel("Energy amount (kWh)").fill("0.001");
-  await page.getByRole("button", { name: "Review load" }).click();
-  await page.getByRole("alert").filter({ hasText: "0.01 kWh" }).waitFor();
-  await page.getByLabel("Energy amount (kWh)").fill("4.61");
-  await page.getByRole("button", { name: "Review load" }).click();
-  await page.getByRole("alert").filter({ hasText: "available entitlement" }).waitFor();
-  await page.getByLabel("Energy amount (kWh)").fill("1.20");
-  await page.getByRole("button", { name: "Review load" }).click();
-  await layout("load-review");
-  checks++;
-
-  await tab("Credit");
-  await layout("credit");
-  await page.getByRole("button", { name: "View loan" }).click();
-  await page.getByText("SAMPLE-M001", { exact: true }).waitFor();
-  await layout("loan-detail");
-  await page.getByRole("button", { name: "Preview self-repayment" }).click();
-  assert.equal(await page.getByLabel("Loan meter").inputValue(), "0", "Loan stays bound to its source meter");
-  await page.getByLabel("Amount (whole UGX)").fill("8000");
-  await page.getByLabel("Mobile Money phone").fill("+256700000000");
-  await page.getByRole("button", { name: "Review repayment" }).click();
-  await page.getByRole("alert").waitFor();
-  await page.getByLabel("Amount (whole UGX)").fill("2500");
-  await page.getByRole("button", { name: "Review repayment" }).click();
-  await page.getByText("Home meter · SAMPLE-M001", { exact: true }).waitFor();
-  await layout("repayment-review");
-  await tab("Credit");
-  await page.getByRole("button", { name: "Preview a credit request" }).click();
-  await page.getByLabel("Amount (whole UGX)").fill("10000");
-  await page.getByRole("button", { name: "Review request" }).click();
-  await layout("application-review");
-  checks++;
-
-  await tab("Usage"); await layout("usage");
-  await tab("Activity"); await layout("activity");
-  await page.getByRole("button", { name: /Electricity purchase.*5,000/ }).click();
-  await page.getByText("SAMPLE-M001", { exact: true }).waitFor();
-  await layout("receipt");
-  await page.getByRole("button", { name: "Preview notifications" }).click();
-  await layout("notifications");
-  await page.getByRole("button", { name: "Mark sample alerts as read" }).click();
-  checks++;
-
-  await tab("Account"); await layout("account");
-  await page.getByRole("button", { name: /Personal details/ }).click();
-  await page.getByLabel("First name").fill("Changed");
-  await page.getByRole("button", { name: "Save sample details" }).click();
-  await page.getByRole("button", { name: "Got it" }).click();
-  await layout("profile");
-  await tab("Account");
-  await page.getByRole("button", { name: /Account security/ }).click(); await layout("security");
-  await tab("Account");
-  await page.getByRole("button", { name: /Help/ }).click(); await layout("help");
-  assert.equal(calls.length, beforePreview, "Entire design preview makes no API calls");
-  checks++;
-
-  await tab("Home");
-  await page.getByText("Preview display states", { exact: true }).click();
-  await page.getByRole("button", { name: "Empty account" }).click();
-  await page.getByRole("heading", { name: "Nothing here yet" }).waitFor();
-  await layout("empty");
-  await page.getByRole("button", { name: "Offline / stale" }).click();
-  await page.getByRole("status").filter({ hasText: "stale" }).waitFor();
-  await layout("offline");
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
-  for (const width of [320, 768]) {
-    await page.setViewportSize({ width, height: 844 });
-    for (const name of ["Home", "Meters", "Usage", "Credit", "Activity", "Account"]) {
-      await tab(name); await layout(`${name.toLowerCase()}-${width}`);
-    }
+  if (browserAccountPages) {
+    await page.getByText(/Choose your new password on the page/).waitFor();
+    assert.equal(await page.locator('input[type="password"]').count(), 0);
+    assert.equal(await page.locator('form button[type="submit"]').count(), 0);
+    assert.equal(calls.filter((call) => call.path.endsWith("auth/reset-password/")).length, 0);
   }
+  await page.getByRole("button", { name: "Back to welcome" }).click();
+  assert.equal(await page.getByRole("button", { name: "Explore the app preview" }).count(), 0,
+    "Welcome has no unauthenticated preview entry");
+  assert.equal(await page.getByText("Preview uses sample data. No account needed.").count(), 0);
   checks++;
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Exit preview", exact: true }).click();
-  await page.getByRole("heading", { name: "Your power. Your possibilities." }).waitFor();
   loginAccepted = true;
   await page.getByRole("button", { name: /Already have an account/ }).click();
   await page.getByLabel("Email address").fill(user.email);
@@ -278,12 +210,30 @@ try {
   assert.equal(calls.some((call) => call.path.endsWith("auth/account-details/") || call.path.endsWith("meter/my-meter/")), false);
   assert.equal(calls.some((call) => /share|send-units|transfer-units/.test(call.path)), false);
   checks++;
+  selfEnrollment = true;
+  await page.getByRole("button", { name: "Refresh meters", exact: true }).click();
+  await page.getByRole("button", { name: "Add your meter", exact: true }).waitFor();
+  await page.getByLabel("Meter number", { exact: true }).fill(" 000245 ");
+  await page.getByRole("button", { name: "Add your meter", exact: true }).click();
+  await page.getByRole("button", { name: /Prototype meter.*000245/ }).waitFor();
+  await tab("Home");
+  await page.getByRole("heading", { name: "Cloud test-energy entitlement", exact: true }).waitFor();
+  await page.getByText("Hardware connection is pending.", { exact: false }).first().waitFor();
+  assert.equal(calls.some(call => call.path.endsWith("meter/sandbox-meter-enrollment/") && call.method === "POST"), true);
+  checks++;
+  for (const width of [320, 768]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const name of ["Home", "Meters", "Usage", "Credit", "Activity", "Account"]) {
+      await tab(name); await layout(`${name.toLowerCase()}-${width}`);
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await tab("Account");
   await page.getByRole("button", { name: "Log out", exact: true }).click();
   await page.getByRole("heading", { name: "Your power. Your possibilities." }).waitFor();
   assert.equal(await page.getByText("ui@example.invalid", { exact: true }).count(), 0, "Logout removes private account data");
   assert.deepEqual(errors, [], "No browser runtime errors");
   checks++;
-  console.log(`${checks} browser scenarios passed: authentication, preview isolation, meter binding, forms, navigation, states, responsive layouts and logout.`);
+  console.log(`${checks} browser scenarios passed: authentication, hidden preview, meter binding, forms, navigation, states and logout.`);
   await context.close();
 } finally { await browser.close(); }

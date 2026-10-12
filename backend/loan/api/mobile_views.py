@@ -8,7 +8,7 @@ from accounts.models import User
 from accounts.permissions import ConsumerAccountPermission
 from loan.models import LoanApplication
 from loan.services import get_loan_eligibility, user_can_apply_for_loan
-from loan.scoring import profile_scoring_fields_complete
+from loan.scoring import profile_scoring_fields_complete, get_or_create_credit_signal, get_factor_breakdown
 from meter.models import Meter
 from utils.billing import calculate_units_from_payment, get_active_domestic_tariff
 from loan.financial import interest_charge, money
@@ -55,20 +55,30 @@ class MobileLoanEligibilityView(APIView):
     def get(self, request):
         if request.user.user_role != User.CLIENT:
             return Response({"code": "CONSUMER_ONLY"}, status=403)
+        calculated_at = timezone.now().isoformat()
         if not profile_scoring_fields_complete(request.user):
             return Response({"score": None, "eligible": False, "can_apply": False,
                              "reason": "Complete the loan assessment profile before a score is available.",
-                             "source": None})
+                             "source": None, "calculated_at": calculated_at, "factors": None,
+                             "application_available": False})
         access = get_loan_eligibility(request.user)
         if access.get("credit_signal_source") != "PROFILE":
             return Response({"score": None, "eligible": False, "can_apply": False,
                              "reason": "The score source needs review before mobile use.",
                              "source": access.get("credit_signal_source")})
-        can_apply, reason = user_can_apply_for_loan(request.user)
+        can_apply, reason = user_can_apply_for_loan(request.user, reconcile=False)
         return Response({
             "score": access["credit_score"], "eligible": access["is_loan_eligible"],
             "can_apply": bool(can_apply and access["is_loan_eligible"]),
             "reason": reason or None,
+            "calculated_at": calculated_at,
+            "evidence_updated_at": access["score_evidence_updated_at"],
+            "profile_score": access["profile_score"],
+            "factors": get_factor_breakdown(get_or_create_credit_signal(request.user))["factor_scores"],
+            "trust_score_delta": access["trust_score_delta"],
+            "starter_policy_floor_applied": access["starter_policy_floor_applied"],
+            "purchase_history_contribution": access["purchase_history_contribution"],
+            "application_available": False,
             "source": "PROFILE", "tier": access["loan_tier"],
             "min_loan_ugx": str(access["min_loan_amount"]),
             "max_loan_ugx": str(access["max_eligible_amount"]),
@@ -100,6 +110,8 @@ class MobileLoanQuoteView(APIView):
             return Response({"code": "TARIFF_POLICY_REQUIRED",
                              "message": "A current domestic tariff is required for a mobile quote."}, status=409)
         requested = serializer.validated_data["amount_requested"]
+        if requested != requested.to_integral_value():
+            return Response({"code": "WHOLE_UGX_REQUIRED", "message": "Loan principal must be whole UGX."}, status=400)
         max_eligible = Decimal(str(eligibility.data["max_loan_ugx"]))
         approved = min(requested, max_eligible)
         rate = Decimal(str(eligibility.data["interest_rate_percent"]))
@@ -122,3 +134,12 @@ class MobileLoanQuoteView(APIView):
             "application_available": False,
             "application_blocker": "Mobile loan submission awaits idempotency and financial-policy approval.",
         })
+
+
+class MobileLoanApplicationView(APIView):
+    """Fail closed until accepted terms and policy-safe idempotent submission exist."""
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def post(self, request):
+        return Response({"code": "LOAN_POLICY_APPROVAL_REQUIRED",
+                         "message": "Submission is unavailable until fractional debt, final overdue charges, tariff/terms snapshots and retry-safe approval are resolved. No application was created."}, status=409)

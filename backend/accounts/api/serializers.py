@@ -21,6 +21,7 @@ import re
 from wallet.models import Wallet as MoneyWallet
 
 from utils.validations import validate_password
+from accounts.phones import normalize_ugandan_phone, phone_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -449,13 +450,13 @@ class CreateUserSerializer(serializers.ModelSerializer):
         ]
 
     def validate_phone_number(self, value):
-        """Validate phone number format"""
-        phone_pattern = r'^\+?1?\d{9,14}$'
-        if not re.match(phone_pattern, value):
-            raise serializers.ValidationError(
-                "Please enter a valid phone number (9-15 digits, optional + prefix)"
-            )
-        return value
+        try:
+            canonical = normalize_ugandan_phone(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from None
+        if User.objects.filter(phone_number__in=phone_aliases(canonical)).exists():
+            raise serializers.ValidationError("Phone number already in use!")
+        return canonical
 
     def create(self, validated_data):
         """
@@ -559,6 +560,13 @@ class SettingsSerializer(serializers.ModelSerializer):
         Method to validate request data
         """
         user = self.context.user
+        if data.get("phone_number"):
+            try:
+                data["phone_number"] = normalize_ugandan_phone(data["phone_number"])
+            except ValueError as exc:
+                raise serializers.ValidationError({"phone_number": str(exc)}) from None
+            if User.objects.exclude(pk=user.pk).filter(phone_number__in=phone_aliases(data["phone_number"])).exists():
+                raise serializers.ValidationError({"phone_number": "Phone number is already registered"})
         phone_exists = User.objects.filter(Q(~Q(id=user.id) & Q(phone_number=data.get("phone_number")))).last()
         if phone_exists:
             raise serializers.ValidationError({"phone_number": "Phone number is already registered"})

@@ -9,9 +9,17 @@ from accounts.models import User
 from accounts.permissions import ConsumerAccountPermission
 from backend.mobile_reads import read_page
 from transactions.models import PaymentIntent, TransactionLog
+from rest_framework.exceptions import ValidationError
+import uuid
 
 
 def receipt_record(intent):
+    from decimal import Decimal
+    from meter.api.mobile_views import application_confirmed
+    allocation = getattr(intent, "energy_allocation", None)
+    # A receipt and a meter acknowledgement represent different business events.
+    applied = sum((row.amount_kwh for row in allocation.deliveries.select_related("allocation", "simulated_command__device")
+                   if application_confirmed(row)), Decimal("0")) if allocation else None
     return {
         "external_id": str(intent.provider_reference),
         "client_request_id": str(intent.client_request_id) if intent.client_request_id else None,
@@ -29,13 +37,15 @@ def receipt_record(intent):
         "environment": "SIMULATOR" if intent.provider == "SIMULATED" else
             "PROVIDER" if intent.provider == "MTN_PRODUCTION" else "UNCONFIRMED",
         "settlement_recorded": intent.status == PaymentIntent.SETTLED and intent.settled_at is not None,
+        "allocated_energy_kwh": str(allocation.amount_kwh) if allocation else None,
+        "delivery_confirmed_kwh": str(applied) if applied is not None else None,
         "initiated_at": intent.initiated_at.isoformat(),
         "settled_at": intent.settled_at.isoformat() if intent.settled_at else None,
     }
 
 
 def owned_receipts(user):
-    return PaymentIntent.objects.filter(owner=user).select_related("meter", "repayment", "repayment__loan")
+    return PaymentIntent.objects.filter(owner=user).exclude(provider="MTN_SANDBOX").select_related("meter", "repayment", "repayment__loan")
 
 
 class MobilePaymentReceiptsView(APIView):
@@ -54,6 +64,42 @@ class MobilePaymentReceiptView(APIView):
     def get(self, request, reference):
         intent = get_object_or_404(owned_receipts(request.user), provider_reference=reference)
         return Response({"receipt": receipt_record(intent)})
+
+
+class MobilePaymentRecoveryView(APIView):
+    """Stored status only, including old pending intents beyond receipt pagination."""
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def get(self, request):
+        from meter.models import Meter
+        from loan.models import LoanApplication
+        purpose = request.query_params.get("purpose")
+        rows = owned_receipts(request.user)
+        if purpose == PaymentIntent.PURCHASE:
+            meter = get_object_or_404(Meter, user=request.user,
+                                     meter_no=request.query_params.get("meter_no"), is_deleted=False)
+            bound = rows.filter(purpose=purpose, meter=meter)
+            pending = rows.filter(purpose=purpose, status=PaymentIntent.PENDING).exists()
+        elif purpose == PaymentIntent.LOAN_REPAYMENT:
+            loan = get_object_or_404(LoanApplication, user=request.user,
+                                    loan_id=request.query_params.get("loan_id"))
+            bound = rows.filter(purpose=purpose, repayment__loan=loan)
+            pending = bound.filter(status=PaymentIntent.PENDING).exists()
+        else:
+            raise ValidationError({"purpose": "Use PURCHASE or LOAN_REPAYMENT."})
+        reference = request.query_params.get("client_request_id")
+        intent = None
+        if reference:
+            try:
+                reference = uuid.UUID(reference)
+            except (ValueError, TypeError):
+                raise ValidationError({"client_request_id": "Use a UUID."}) from None
+            intent = bound.filter(client_request_id=reference).first()
+        response = Response({"pending": pending, "receipt": receipt_record(intent) if intent else None,
+                             "status_source": "STORED_VERIFIED_SETTLEMENT",
+                             "provider_polled": False})
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class MobileTransactionHistoryView(APIView):

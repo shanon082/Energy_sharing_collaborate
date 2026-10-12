@@ -81,7 +81,7 @@ def get_monthly_units_consumed(user, month_date: Optional[date] = None) -> Decim
 
     month_date = month_date or timezone.localdate()
     allocations = EnergyAllocation.objects.filter(
-        owner=user, purchase_intent__status="SETTLED",
+        owner=user, purchase_intent__status="SETTLED", accounting_environment="CORE",
         created_at__year=month_date.year,
         created_at__month=month_date.month,
     ).select_related("purchase_intent")

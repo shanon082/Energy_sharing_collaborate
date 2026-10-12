@@ -10,7 +10,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         database = settings.DATABASES["default"]
-        if settings.SETTINGS_MODULE != "backend.alwaysdata_settings" or (
+        if settings.SETTINGS_MODULE not in {"backend.alwaysdata_settings", "backend.alwaysdata_sandbox_settings"} or (
                 database["HOST"], database["NAME"], database["USER"]) != (
                 "postgresql-shanonsimon.alwaysdata.net", "shanonsimon_energy_test", "shanonsimon"):
             raise CommandError("Refusing a database other than the confirmed alwaysdata testing target")

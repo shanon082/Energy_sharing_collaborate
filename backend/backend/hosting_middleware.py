@@ -16,9 +16,12 @@ class AccountPageSecurityMiddleware:
 
     def __call__(self, request):
         response = self.get_response(request)
-        if request.path in ACCOUNT_PAGE_PATHS:
+        if request.path in ACCOUNT_PAGE_PATHS or request.path in {"/admin-panel/meter-link-requests/", "/admin-panel/sandbox-decisions/"}:
             add_never_cache_headers(response)
-            response["Referrer-Policy"] = "no-referrer"
+            # HTTPS form navigation needs a usable Origin/Referer for Django
+            # CSRF checks. Keep the origin only: never refer account-link paths
+            # or uid/token query strings, including on same-origin requests.
+            response["Referrer-Policy"] = "strict-origin"
             response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
             response["Content-Security-Policy"] = (
                 "default-src 'none'; style-src 'self'; form-action 'self'; "
@@ -42,13 +45,25 @@ class FreeTestingMiddleware:
         auth = path.startswith("/api/v1/auth/")
         account_page = (getattr(settings, "DJANGO_HOSTED_ACCOUNT_PAGES", False)
                         and path in ACCOUNT_PAGE_PATHS and request.method == "POST")
+        import re
+        sandbox_write = bool(getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
+            and request.method == "POST" and (path in {
+                "/api/v1/sandbox/quotes/", "/api/v1/sandbox/loans/", "/api/v1/sandbox/payments/",
+                "/api/v1/meter/sandbox-meter-enrollment/"
+            } or re.fullmatch(r"/api/v1/sandbox/payments/[0-9a-fA-F-]{36}/", path)))
         local_metadata = path in {
-            "/api/v1/meter/register/", "/api/v1/meter/mobile-notifications/",
+            "/api/v1/meter/register/", "/api/v1/meter/mobile-meter-requests/",
+            # These previews perform no reconciliation, settlement or dispatch.
+            "/api/v1/meter/mobile-purchase-quote/", "/api/v1/loans/mobile-quote/",
+            "/api/v1/meter/mobile-notifications/",
             "/api/v1/meter/notifications/", "/admin-panel/login/", "/admin-panel/logout/",
+            # Narrow view enforces active operator/admin session, verified
+            # evidence, CSRF and atomic audit. General admin writes stay blocked.
+            "/admin-panel/meter-link-requests/",
         }
         if request.method != "OPTIONS" and (
                 path.startswith(unavailable_reads)
-                or (request.method not in {"GET", "HEAD"} and not (auth or account_page or local_metadata))):
+                or (request.method not in {"GET", "HEAD"} and not (auth or account_page or local_metadata or sandbox_write))):
             return JsonResponse({"code": "TESTING_OPERATION_UNAVAILABLE",
                                  "message": "Financial, delivery and worker-dependent operations are unavailable on this testing host."}, status=503)
         return self.get_response(request)

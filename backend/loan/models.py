@@ -490,3 +490,14 @@ class CreditScoreFactors(models.Model):
     
     def __str__(self):
         return f"Factors for {self.user.email}"
+
+from loan.sandbox_models import SandboxLoan, SandboxQuote  # noqa: F401
+
+
+class PurchaseScoreExclusion(models.Model):
+    """Audited reversal/uncertainty marker, not a refund or accounting adjustment."""
+    intent = models.OneToOneField("transactions.PaymentIntent", on_delete=models.PROTECT,
+                                 related_name="score_exclusion")
+    reason = models.CharField(max_length=16, choices=[("REVERSED", "Reversed"), ("UNCERTAIN", "Uncertain")])
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)

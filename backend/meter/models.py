@@ -94,6 +94,7 @@ class Meter(TimestampMixin):
         help_text="STS = token keypad entry; AMI = networked, direct balance update"
     )
     # Spec additions — Section 4.3
+    sandbox_inventory = models.BooleanField(default=False)
     label = models.CharField(max_length=50, blank=True, default='Home')
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
     deactivation_reason = models.CharField(max_length=50, null=True, blank=True)
@@ -132,6 +133,8 @@ class EnergyAllocation(models.Model):
         "loan.LoanDisbursement", on_delete=models.PROTECT, null=True, blank=True,
         related_name="energy_allocation",
     )
+    sandbox_loan = models.OneToOneField("loan.SandboxLoan", on_delete=models.PROTECT, null=True, blank=True, related_name="energy_allocation")
+    accounting_environment = models.CharField(max_length=12, default="CORE")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -139,8 +142,9 @@ class EnergyAllocation(models.Model):
             models.CheckConstraint(condition=models.Q(amount_kwh__gt=0), name="allocation_positive_kwh"),
             models.CheckConstraint(
                 condition=(
-                    models.Q(purchase_intent__isnull=False, loan_disbursement__isnull=True)
-                    | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=False)
+                    models.Q(purchase_intent__isnull=False, loan_disbursement__isnull=True, sandbox_loan__isnull=True)
+                    | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=False, sandbox_loan__isnull=True)
+                    | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=True, sandbox_loan__isnull=False, accounting_environment="SANDBOX")
                 ),
                 name="allocation_one_source",
             ),
@@ -512,3 +516,41 @@ class Transaction(TimestampMixin):
     def __str__(self):
         return f"{self.transaction_type} — {self.user.email} — {self.amount_kwh} kWh ({self.status})"
 
+
+class MeterEnrollmentRequest(models.Model):
+    """Pending consumer declaration; assignment remains a separate staff action."""
+    request_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    owner = models.ForeignKey(User, on_delete=models.PROTECT)
+    meter_no = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["owner", "meter_no"], name="meter_enrollment_owner_number",
+        )]
+
+
+class MeterEnrollmentReview(models.Model):
+    """One final staff decision; private evidence references are never consumer data."""
+    request = models.OneToOneField(MeterEnrollmentRequest, on_delete=models.PROTECT, related_name="review")
+    decision = models.CharField(max_length=8, choices=[("APPROVED", "Approved"), ("REJECTED", "Rejected")])
+    meter = models.ForeignKey(Meter, on_delete=models.PROTECT, null=True, blank=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.PROTECT)
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+    evidence_type = models.CharField(max_length=32, blank=True)
+    evidence_reference = models.CharField(max_length=160, blank=True)
+    consumer_reason = models.CharField(max_length=240, blank=True)
+
+
+class SandboxMeterEnrollment(models.Model):
+    """Prototype ownership assumption, never utility/staff ownership evidence."""
+    meter = models.OneToOneField(Meter, on_delete=models.PROTECT, related_name="sandbox_enrollment")
+    owner = models.ForeignKey(User, on_delete=models.PROTECT, related_name="sandbox_meter_enrollments")
+    provenance = models.CharField(max_length=20, default="SELF_DECLARED", editable=False)
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+    prior_request = models.OneToOneField(MeterEnrollmentRequest, on_delete=models.PROTECT,
+        null=True, blank=True, related_name="sandbox_transition")
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(provenance="SELF_DECLARED"),
+            name="sandbox_meter_self_declared")]

@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sandbox decisions</title></head>
+<body><h1>SANDBOX / NO REAL MONEY — read-only staff decisions</h1><p><a href="/admin-panel/meter-link-requests/">Meter authorization requests</a></p>
+<p>No manual override, payment replay, refund or physical command is available here. An allocation is not confirmed meter application.</p>
+{% for loan in loans %}<section><h2>{{ loan.id }} — {{ loan.status }}</h2><p>{{ loan.reason }}</p>
+<p>Owner ID {{ loan.terms.owner_id }} · meter ID {{ loan.meter_id }} · policy {{ loan.terms.policy.id }}.</p>
+<p>EUR TEST principal {{ loan.principal }} · total {{ loan.total_due }} · outstanding {{ loan.outstanding }} · due {{ loan.due_at }} · closed {{ loan.closed_at|default:"Unclosed" }}.</p>
+<p>Assessment: {% if loan.assessment.starter %}Starter; no established score{% else %}{{ loan.assessment.score }}/100{% endif %}. Purchase points {{ loan.assessment.purchase_points }}. Allocation {{ loan.allocated_kwh|default:"None" }} kWh.</p></section>{% empty %}<p>No test decisions.</p>{% endfor %}
+<h2>Audit history</h2>{% for audit in audits %}<p>Audit {{ audit.pk }} · {{ audit.timestamp }} · {{ audit.details.decision }} · {{ audit.details.reason }} · quote {{ audit.details.quote_id }} · policy {{ audit.details.policy.id }}.</p>{% empty %}<p>No test audits.</p>{% endfor %}
+</body></html>
