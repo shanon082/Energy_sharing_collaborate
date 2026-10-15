@@ -28,6 +28,9 @@ from utils.billing import (
 from wallet.models import UnitBalance
 
 
+_DEMO_AUTHORITY = object()  # Internal capability; provider evidence cannot authorize demo money.
+
+
 class PaymentSettlementError(Exception):
     pass
 
@@ -242,10 +245,15 @@ def settle_from_provider_evidence(intent_id, evidence):
         raise PaymentSettlementError("Provider transaction or allocation identity was already used.") from exc
 
 
-def _settle_locked(intent_id, evidence):
+def _settle_locked(intent_id, evidence, *, _demo_authority=None):
     with db_transaction.atomic():
         intent = PaymentIntent.objects.select_for_update().get(pk=intent_id)
-        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and intent.provider != "MTN_SANDBOX":
+        if intent.provider == "LOCAL_DEMO":
+            if _demo_authority is not _DEMO_AUTHORITY:
+                raise PaymentSettlementError("Demo completion requires the timed server simulator, not provider evidence.")
+            from transactions.demo_payments import validate_demo_intent
+            validate_demo_intent(intent)
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and intent.provider not in {"MTN_SANDBOX", "LOCAL_DEMO"}:
             raise PaymentSettlementError("Production/simulation records cannot settle in sandbox mode.")
         if intent.status == PaymentIntent.SETTLED:
             return intent, False
@@ -253,7 +261,10 @@ def _settle_locked(intent_id, evidence):
             return intent, False
         if evidence["status"] in {"PENDING", "UNKNOWN"}:
             return intent, False
-        if intent.provider == "MTN_SANDBOX":
+        if intent.provider == "LOCAL_DEMO":
+            if evidence != _demo_evidence(intent):
+                raise PaymentSettlementError("Demo server evidence does not match the intent.")
+        elif intent.provider == "MTN_SANDBOX":
             from transactions.sandbox_payments import validate_sandbox_evidence
             validate_sandbox_evidence(intent, evidence)
         else:
@@ -278,7 +289,7 @@ def _settle_locked(intent_id, evidence):
         intent.provider_transaction_id = provider_transaction_id
         intent.status = PaymentIntent.SETTLED
         intent.save(update_fields=["status", "provider_transaction_id"])
-        if intent.provider == "MTN_SANDBOX":
+        if intent.provider in {"MTN_SANDBOX", "LOCAL_DEMO"}:
             from transactions.sandbox_payments import apply_sandbox_settlement
             apply_sandbox_settlement(intent)
         elif intent.purpose == PaymentIntent.PURCHASE:
@@ -303,3 +314,11 @@ def reconcile_payment(intent_id):
     # Provider network I/O is outside every database-locking transaction.
     evidence = MTNMoMoService().get_payment_status(str(intent.provider_reference))
     return settle_from_provider_evidence(intent.pk, evidence)
+
+
+def _demo_evidence(intent):
+    """Local evidence is generated only by the timed, authenticated simulator."""
+    return {"provider": "LOCAL_DEMO", "status": "SUCCESS", "currency": "UGX",
+            "amount": str(intent.amount), "reference_id": str(intent.provider_reference),
+            "external_id": intent.provider_external_id, "purpose": intent.purpose,
+            "transaction_id": "demo-" + str(intent.provider_reference)}

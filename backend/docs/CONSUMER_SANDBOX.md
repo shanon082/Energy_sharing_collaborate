@@ -1,5 +1,11 @@
 # Consumer sandbox: implementation and testing deployment
 
+**Current mode:** the prototype now defaults to `LOCAL_DEMO` with a distinct
+UGX DEMO policy. Follow [LOCAL_PAYMENT_DEMO.md](LOCAL_PAYMENT_DEMO.md) for the
+current deployment, scheduler and APK steps. The EUR/MTN material below is
+retained for future resumption and historical interpretation; do not provision
+MTN or run its reconciliation job while local demo mode is active.
+
 This is an opt-in **SANDBOX TEST POLICY / NO REAL MONEY**, not approved lending
 terms or a live deployment. The ordinary alwaysdata profile remains read-only.
 Next.js and Android use the same Django services and the shared React form in
@@ -214,6 +220,71 @@ MTN operator setup:
 ```bash
 /home/shanonsimon/energy-venv/bin/python /home/shanonsimon/energy-sharing/deploy/provision-mtn-sandbox.py --env-file /home/shanonsimon/.config/energy-sharing/backend.env --provision
 ```
+
+### Helper diagnostics and recovery
+
+Upload only the helper from the repository root (no site restart needed):
+
+```bash
+scp backend/deploy/provision-mtn-sandbox.py shanonsimon@ssh-shanonsimon.alwaysdata.net:/home/shanonsimon/energy-sharing/deploy/provision-mtn-sandbox.py
+```
+
+Failures report `stage=API-user creation` or `stage=API-key creation`, a category,
+HTTP status (or `unavailable` for transport failures), and an exact allowlisted
+provider code. Unknown codes, free-text messages, headers, credentials and raw
+bodies are withheld. TLS errors, network timeouts and connection failures are
+separate categories; HTTP redirects are not followed. A 201 key response with
+missing/malformed key data is reported as an invalid success response.
+The allowlist follows [MTN's official error codes](https://momodeveloper.mtn.com/content/html_widgets/1vu7v.html).
+An unavailable code does not establish a cause; check the status and the active
+Collections sandbox subscription in the [official profile](https://momodeveloper.mtn.com/profile).
+Do not disable TLS verification or enable HTTP debug logging.
+
+**Recover before retrying.** An unchanged private environment file says nothing
+about remote creation. A lost API-user response can leave a remote user; a failed
+API-key request or invalid 201 response can leave both a user and a key.
+The helper does not automatically retry either POST. Before its first request it
+creates a 0600 `.mtn-sandbox-provisioning.json` beside the private environment file,
+containing the API-user reference and conservative remote state. Its presence
+blocks another run. Inspect it only in a private editor; never paste its reference
+or any keys into chat, shared logs, or command arguments.
+
+1. For the **old generic failure**, no recovery record/reference was retained.
+   Check the official subscription and ask MTN support to establish whether the
+   failed attempt created a sandbox user/key. Do not blindly rerun the helper:
+   a new UUID may create another user. Uploading this diagnostic patch makes no
+   provisioning calls and cannot reconstruct the old attempt.
+2. For a **new failure**, use the privately retained reference and the official
+   [sandbox provisioning API](https://momodeveloper.mtn.com/API-collections)
+   to inspect that user with authenticated `GET /v1_0/apiuser/{reference}`, or
+   ask official MTN support to resolve its state. Use a private client with
+   credentials entered securely and request/response logging disabled. Do not
+   print headers or bodies. A transport failure or authorization rejection during
+   inspection is still inconclusive; it does not prove that the user is absent.
+3. If the user exists, recover that user rather than creating another. Resolve
+   whether a key was issued; generating another key may rotate/invalidate the
+   previous one. Follow MTN's documented process/support guidance before doing
+   that. Store the recovered subscription/user/key privately in only the three
+   dedicated `MTN_SANDBOX_*` entries, preserving all other environment entries.
+   The helper refuses existing dedicated entries and has no automatic resume or
+   remote-delete mode. Retain the record until recovery is complete.
+4. Only after remote absence or provider-guided cleanup is established, archive
+   the recovery record privately outside its blocking filename (keep mode 0600).
+   If environment saving failed, privately inspect any `.backend.env.sandbox-*`
+   temporary file: it may contain keys. Resolve those credentials before removing
+   it. If valid dedicated entries were saved, do not provision again.
+5. Once recovery is resolved and the active Collections sandbox subscription or
+   network/TLS cause is corrected, an intentional fresh attempt uses:
+
+```bash
+ssh shanonsimon@ssh-shanonsimon.alwaysdata.net
+/home/shanonsimon/energy-venv/bin/python /home/shanonsimon/energy-sharing/deploy/provision-mtn-sandbox.py --env-file /home/shanonsimon/.config/energy-sharing/backend.env --provision
+```
+
+Enter `SANDBOX` and the subscription key at the hidden prompt. Do not put the key
+in the command, shell history or environment exports. Leave Django/WSGI, database,
+SMTP and scheduled-job settings as they are; this helper-only repair needs no
+migration, service restart, or profile switch.
 
 No credentials were supplied or used here; actual provisioning/payment results
 are not claimed. Missing keys truthfully disable purchase/repayment capabilities,

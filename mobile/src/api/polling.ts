@@ -13,7 +13,8 @@ export class ForegroundPoller {
   constructor(read: () => Promise<boolean>, interval = 15_000, maximum = 120_000,
     schedule = setTimeout, cancel = clearTimeout) {
     this.read = read; this.interval = interval; this.maximum = maximum;
-    this.schedule = schedule; this.cancel = cancel;
+    // Browser timers require the Window/global receiver even when stored on an object.
+    this.schedule = schedule.bind(globalThis); this.cancel = cancel.bind(globalThis);
   }
 
   setActive(active: boolean): void {

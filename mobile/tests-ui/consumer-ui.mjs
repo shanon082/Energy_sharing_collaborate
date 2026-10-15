@@ -9,7 +9,7 @@ assert.ok(["127.0.0.1", "localhost"].includes(new URL(base).hostname), "Use a lo
 const shots = process.env.MOBILE_UI_SCREENSHOTS;
 if (shots) await mkdir(shots, { recursive: true });
 const browser = await chromium.launch({ headless: true,
-  ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : { channel: "chromium" }) });
+  ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
 let checks = 0;
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, deviceScaleFactor: 1 });
@@ -167,8 +167,8 @@ try {
   await page.getByLabel("Email address").fill(user.email);
   await page.locator('input[type="password"]').fill("isolated-test-only");
   await page.locator('form button[type="submit"]').click();
-  await page.getByRole("heading", { name: "Hello, UI." }).waitFor();
-  await page.getByText("Choose a meter on the Meters tab", { exact: false }).waitFor();
+  await page.getByRole("heading", { name: "Hello, UI" }).waitFor();
+  await page.getByRole("heading", { name: "Start with your meter", exact: true }).waitFor();
   await tab("Meters");
   await page.getByRole("button", { name: /Home meter.*UI-METER-7/ }).click();
   await tab("Home");
@@ -182,17 +182,18 @@ try {
   checks++;
 
   await tab("Account");
+  await page.getByRole("button", { name: /Personal details/ }).click();
   await page.getByLabel("Address", { exact: true }).fill("Synthetic profile address");
   await page.getByLabel("Energy preference").selectOption("HYDRO");
   await page.getByRole("button", { name: "Save details", exact: true }).click();
   await page.getByText("Account details saved.", { exact: true }).waitFor();
   failProfile = true;
-  await page.getByRole("button", { name: "Refresh profile", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh account details", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Account details:" }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Save details", exact: true }).isDisabled(), true);
   await page.getByText(/Stale — last fetched/).first().waitFor();
   failProfile = false; detailsAvailable = false;
-  await page.getByRole("button", { name: "Refresh profile", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh account details", exact: true }).click();
   await page.getByRole("heading", { name: "Account details unavailable" }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Save details", exact: true }).count(), 0);
   checks++;
@@ -202,11 +203,11 @@ try {
   await page.getByRole("status").filter({ hasText: /Your meter assignment changed|This meter is no longer assigned/ }).waitFor();
   await tab("Home");
   assert.equal(await page.getByText("2.50 kWh", { exact: true }).count(), 0);
-  await page.getByText("Choose a meter on the Meters tab", { exact: false }).waitFor();
+  await page.getByRole("heading", { name: "Start with your meter", exact: true }).waitFor();
   liveMeters = [];
   await page.getByRole("button", { name: "Refresh account", exact: true }).click();
   await tab("Meters");
-  await page.getByRole("heading", { name: "No meters", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Add your meter", exact: true }).waitFor();
   assert.equal(calls.some((call) => call.path.endsWith("auth/account-details/") || call.path.endsWith("meter/my-meter/")), false);
   assert.equal(calls.some((call) => /share|send-units|transfer-units/.test(call.path)), false);
   checks++;
@@ -217,13 +218,13 @@ try {
   await page.getByRole("button", { name: "Add your meter", exact: true }).click();
   await page.getByRole("button", { name: /Prototype meter.*000245/ }).waitFor();
   await tab("Home");
-  await page.getByRole("heading", { name: "Cloud test-energy entitlement", exact: true }).waitFor();
-  await page.getByText("Hardware connection is pending.", { exact: false }).first().waitFor();
+  await page.getByRole("heading", { name: "Hello, UI", exact: true }).waitFor();
+  await page.getByText("Hardware contact unavailable", { exact: true }).waitFor();
   assert.equal(calls.some(call => call.path.endsWith("meter/sandbox-meter-enrollment/") && call.method === "POST"), true);
   checks++;
   for (const width of [320, 768]) {
     await page.setViewportSize({ width, height: 844 });
-    for (const name of ["Home", "Meters", "Usage", "Credit", "Activity", "Account"]) {
+    for (const name of ["Home", "Meters", "Loans", "Buy Units", "Account"]) {
       await tab(name); await layout(`${name.toLowerCase()}-${width}`);
     }
   }

@@ -1,0 +1,1419 @@
+--- a/mobile/src/Activity.tsx
++++ b/mobile/src/Activity.tsx
+@@ -28,7 +28,7 @@
+ }
+ function Freshness({ feed }: { feed: { fetchedAt: string | null; error: string | null } }) {
+   return <>{feed.error && <p className="error" role="alert">{feed.error} {feed.fetchedAt && "Displayed records are stale."}</p>}
+-    {feed.fetchedAt && <p className="muted small">Fetched {dateTime(feed.fetchedAt)}</p>}</>;
++    {feed.fetchedAt && feed.error && <p className="muted small">Last updated {dateTime(feed.fetchedAt)}</p>}</>;
+ }
+ 
+ export function Activity({ session }: { session: SessionManager }) {
+@@ -65,7 +65,7 @@
+     } catch (cause) { if (owner === session.identity && detailReads.current.current(ticket)) setError(failure(cause)); }
+   };
+   return <>
+-    <h1>Activity</h1><p className="muted">Stored payment records, alerts and historical events.</p>
++    <h1>Activity</h1><p className="muted">Receipts, alerts and account updates.</p>
+     <button className="secondary" disabled={busy} onClick={reload}>{busy ? "Refreshing…" : "Refresh activity"}</button>
+     {error && <p className="error" role="alert">{error}</p>}
+     {detail && <section className="panel"><h2>Receipt details</h2>
+@@ -82,16 +82,16 @@
+       <p className="muted small">Residuals and excess remain recorded for reconciliation. This read does not contact a provider.</p>
+       <button className="secondary" onClick={() => { detailReads.current.invalidate(); setDetail(null); }}>Close receipt</button>
+     </section>}
+-    <section className="panel"><h2>Payment requests and receipts</h2><Freshness feed={receipts} />
++    <section className="panel"><h2>Stored receipts</h2><Freshness feed={receipts} />
+       {!receipts.data ? <p className="muted">{receipts.busy ? "Loading receipts…" : "Receipts unavailable."}</p> : !receipts.data.rows.length ?
+-        <p className="muted">No payment intents recorded.</p> : receipts.data.rows.map((row) =>
++        <p className="muted">No receipts yet.</p> : receipts.data.rows.map((row) =>
+           <div className="list-row" key={row.external_id}><span>
+             {row.purpose === "PURCHASE" ? `Purchase · ${row.meter_no || "meter unavailable"}` : `Loan repayment · ${row.loan_id || "loan unavailable"}`}
+             <small>{row.status} · {dateTime(row.initiated_at)}{row.environment === "SIMULATOR" && " · Simulation only"}</small>
+             <button className="secondary" onClick={() => void showReceipt(row)}>View receipt</button>
+           </span><strong>{ugx(row.amount_ugx)}</strong></div>)}
+       {receipts.data?.next && <button disabled={receipts.busy} onClick={() => void receipts.load(receipts.data?.next)}>More receipts</button>}
+-      <p className="muted small">Pending requests are not paid electricity. Refresh reads stored status; verified settlement runs independently of this screen.</p>
++      <details className="info-disclosure"><summary>About payment status</summary><p>A pending request is not a completed payment. Refresh to read its latest recorded status.</p></details>
+     </section>
+     <section className="panel"><h2>Alerts</h2><Freshness feed={notices} />
+       {notices.data?.rows.some((row) => !row.is_read) && <button className="secondary" disabled={notices.busy || marking || Boolean(notices.error)}
+@@ -101,14 +101,14 @@
+           <div className="list-row" key={row.id}><span>{row.message}<small>{dateTime(row.occurred_at)} · {row.is_read ? "Read" : "Unread"}</small></span></div>)}
+       {notices.data?.next && <button disabled={notices.busy} onClick={() => void notices.load(notices.data?.next)}>More alerts</button>}
+     </section>
+-    <section className="panel"><h2>Historical event log</h2><Freshness feed={history} />
++    <section className="panel"><h2>Earlier account activity</h2><Freshness feed={history} />
+       {!history.data ? <p className="muted">{history.busy ? "Loading history…" : "History unavailable."}</p> : !history.data.rows.length ?
+         <p className="muted">No logged events.</p> : history.data.rows.map((row) =>
+           <div className="list-row" key={row.id}><span>{row.transaction_type_display}<small>{row.status} · {dateTime(row.created_at)}</small>
+             {row.recorded_units !== null && <small>Recorded units: {row.recorded_units}</small>}</span>
+             <strong>{row.recorded_amount === null ? "Amount unavailable" : `Recorded amount: ${row.recorded_amount}`}</strong></div>)}
+       {history.data?.next && <button disabled={history.busy} onClick={() => void history.load(history.data?.next)}>More events</button>}
+-      <p className="muted small">Legacy log units are unconfirmed. Values are shown as recorded, without interpreting them as UGX or kWh. This log does not include every legacy table.</p>
++      <details className="info-disclosure"><summary>About older records</summary><p>Older amounts and units are shown as recorded; their currency and unit type may be unconfirmed.</p></details>
+     </section>
+   </>;
+ }
+--- a/mobile/src/App.tsx
++++ b/mobile/src/App.tsx
+@@ -1,7 +1,6 @@
+ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+ import { Capacitor } from "@capacitor/core";
+ import { App as NativeApp } from "@capacitor/app";
+-import { DISABLED_FEATURES, parseFeatureAvailability, type FeatureAvailability } from "../../frontend/src/lib/features.ts";
+ import { API_BASE_URL } from "./api/config.ts";
+ import { DISABLED_MOBILE_ACTIONS, parseMobileActions, type MobileActions } from "./api/mobile-actions.ts";
+ import SandboxConsumer from "../../frontend/src/components/sandbox-consumer.tsx";
+@@ -15,16 +14,18 @@
+ import { LoanQuote } from "./LoanQuote.tsx";
+ import { PurchasePanel, RepaymentPanel } from "./PaymentActions.tsx";
+ import { Brand, Icon } from "./ui.tsx";
+-import { CONSUMER_TABS, type ConsumerTab } from "./consumer-navigation.ts";
++import { CONSUMER_TABS, activeConsumerTab, type ConsumerTab } from "./consumer-navigation.ts";
+ import { LatestRead } from "./api/read-scope.ts";
+ import { parseMeterDashboard, selectedMeterStillAssigned, parseConsumption, parseLoans, parseMeters,
+   type AllocationStatus, type ConsumptionHistory, type Loan, type MeterInfo } from "./api/contracts.ts";
+ import { ApiError, SessionExpired, SessionManager, TransportError, type ConsumerIdentity } from "./auth/session.ts";
+ import { AndroidSecureStore } from "./auth/secure-store.ts";
+ import { dateTime, energy, ugx } from "./format.ts";
++import { CreditSummary } from "./CreditSummary.tsx";
++import { DemoNotice, PageHeading, MeterSummary, CloudEnergyCard, EmptyState, MenuRow } from "./ConsumerUI.tsx";
+ 
+ const session = new SessionManager(API_BASE_URL, new AndroidSecureStore());
+-type Tab = ConsumerTab;
++type Tab = ConsumerTab | "activity" | "consumption" | "apply";
+ type Resource<T> = { value: T | null; loading: boolean; error: string | null; fetchedAt: string | null };
+ const empty = <T,>(): Resource<T> => ({ value: null, loading: false, error: null, fetchedAt: null });
+ 
+@@ -39,13 +40,8 @@
+ 
+ function StateLine<T>({ data, offline }: { data: Resource<T>; offline: boolean }) {
+   if (data.loading && data.value === null) return <p className="muted" role="status">Loading…</p>;
+-  if (data.error || data.fetchedAt) return <>
+-    {data.error && <p className="error" role="alert">{data.error}</p>}
+-    {data.fetchedAt && <p className={data.error || data.loading ? "stale" : "muted"}>
+-      {data.error || data.loading ? "Stale — last fetched " : "Fetched "}{dateTime(data.fetchedAt)}
+-    </p>}
+-  </>;
+-  if (offline && data.value === null) return <p className="muted">The API could not be reached. No account data is stored on this device.</p>;
++  if (data.error) return <p className="error" role="alert">{data.error}{data.fetchedAt && <> Last updated {dateTime(data.fetchedAt)}.</>}</p>;
++  if (offline && data.value === null) return <p className="muted">Connection unavailable. Tap Refresh to try again.</p>;
+   return null;
+ }
+ 
+@@ -96,13 +92,15 @@
+   const [offline, setOffline] = useState(false);
+   const [tab, setTab] = useState<Tab>("dashboard");
+   const [changingPassword, setChangingPassword] = useState(false);
++  const [showProfile, setShowProfile] = useState(false);
++  const [showAddMeter, setShowAddMeter] = useState(false);
++  const [creditRevision, setCreditRevision] = useState(0);
+   const [meters, setMeters] = useState<Resource<MeterInfo[]>>(empty);
+   const [loans, setLoans] = useState<Resource<Loan[]>>(empty);
+   const [selectedMeter, setSelectedMeter] = useState<string | null>(null);
+   const [allocation, setAllocation] = useState<Resource<AllocationStatus>>(empty);
+   const [consumption, setConsumption] = useState<Resource<ConsumptionHistory>>(empty);
+-  const [features, setFeatures] = useState<FeatureAvailability>(DISABLED_FEATURES);
+-  const [featuresVerified, setFeaturesVerified] = useState(false);
++  const [capabilitiesReady, setCapabilitiesReady] = useState(false);
+   const [sandbox, setSandbox] = useState<SandboxCapabilities>(NO_SANDBOX);
+   const [mobileActions, setMobileActions] = useState<MobileActions>(DISABLED_MOBILE_ACTIONS);
+   const booted = useRef(false);
+@@ -115,8 +113,8 @@
+     setAccount(null); setMeters(empty()); setLoans(empty()); setAllocation(empty());
+     setConsumption(empty()); setSelectedMeter(null); selectedRef.current = null;
+     meterReads.current.invalidate(); selectedReads.current.invalidate(); setMeterNotice(null);
+-    setChangingPassword(false); setSandbox(NO_SANDBOX);
+-    setTab("dashboard");
++    setChangingPassword(false); setShowProfile(false); setShowAddMeter(false); setSandbox(NO_SANDBOX);
++    setTab("dashboard"); setCapabilitiesReady(false);
+   }, []);
+ 
+   const expire = useCallback(() => {
+@@ -127,13 +125,11 @@
+     try {
+       const data = await session.publicGet<{ features?: unknown; mobile_actions?: unknown; sandbox?: unknown }>("features/");
+       setOffline(false);
+-      setFeatures(parseFeatureAvailability(data.features)); setFeaturesVerified(true);
+       setMobileActions(parseMobileActions(data.mobile_actions));
+-      setSandbox(sandboxCapabilities(data.sandbox));
++      setSandbox(sandboxCapabilities(data.sandbox)); setCapabilitiesReady(true);
+     } catch (error) {
+       if (error instanceof TransportError) setOffline(true);
+-      setFeatures(DISABLED_FEATURES); setFeaturesVerified(false);
+-      setMobileActions(DISABLED_MOBILE_ACTIONS); setSandbox(NO_SANDBOX);
++      setMobileActions(DISABLED_MOBILE_ACTIONS); setSandbox(NO_SANDBOX); setCapabilitiesReady(false);
+     }
+   }, []);
+ 
+@@ -231,11 +227,12 @@
+     meterReads.current.invalidate();
+     setMeters(old => ({ value: [...(old.value ?? []).filter(item => item.id !== linked.id), linked],
+       loading: false, error: null, fetchedAt: new Date().toISOString() }));
+-    chooseMeter(linked);
++    chooseMeter(linked); setShowAddMeter(false); setCreditRevision(value => value + 1);
+   };
+ 
+   const refresh = () => {
+     if (phase !== "signed_in") return;
++    setCreditRevision(value => value + 1);
+     void loadFeatures(); void loadMeters(); void loadLoans();
+     if (selectedRef.current) void loadSelected(selectedRef.current);
+   };
+@@ -295,12 +292,15 @@
+     let removed = false;
+     let listener: { remove: () => Promise<void> } | undefined;
+     void NativeApp.addListener("backButton", () => {
+-      if (phase === "signed_in" && changingPassword) setChangingPassword(false);
++      if (phase === "signed_in" && showAddMeter) setShowAddMeter(false);
++      else if (phase === "signed_in" && showProfile) setShowProfile(false);
++      else if (phase === "signed_in" && changingPassword) setChangingPassword(false);
++      else if (phase === "signed_in" && tab === "apply") setTab("loans");
+       else if (phase === "signed_in" && tab !== "dashboard") setTab("dashboard");
+       else void NativeApp.minimizeApp();
+     }).then((handle) => { if (removed) void handle.remove(); else listener = handle; });
+     return () => { removed = true; if (listener) void listener.remove(); };
+-  }, [phase, tab, changingPassword]);
++  }, [phase, tab, changingPassword, showProfile, showAddMeter]);
+ 
+   const login = async (email: string, password: string) => {
+     setBusy(true); setAuthError(null);
+@@ -337,133 +337,115 @@
+     onCancel={() => setChangingPassword(false)} />;
+ 
+   const meter = meters.value?.find((item) => item.meter_number === selectedMeter) ?? null;
+-  return <div className="app-shell">
+-    <header className="topbar"><Brand /><div className="header-actions">
++  const title = { dashboard: "Home", meters: "My Meters", loans: "Loans", apply: "Apply for Loan", purchase: "Buy Units", account: "Account", activity: "Activity", consumption: "Usage" }[tab];
++  const navigate = (next: Tab) => { setTab(next); setShowProfile(false); setShowAddMeter(false); window.scrollTo({ top: 0, behavior: "instant" }); };
++  return <div className="app-shell consumer-redesign">
++    <header className="topbar"><div className="topbar-identity"><Brand /><span className="topbar-page">{title}</span></div><div className="header-actions">
+       <button className="icon-button" aria-label="Refresh account" onClick={refresh}><Icon name="refresh" /></button>
+-      <button className="icon-button" aria-label="Activity and notifications" onClick={() => setTab("activity")}><Icon name="bell" /></button>
+-      <button className="avatar-button" aria-label="Your account" onClick={() => setTab("account")}>{account?.first_name?.charAt(0) || "U"}</button>
++      <button className="icon-button" aria-label="Activity and notifications" onClick={() => navigate("activity")}><Icon name="bell" /></button>
++      <button className="avatar-button" aria-label="Your account" onClick={() => navigate("account")}>{account?.first_name?.charAt(0) || "U"}</button>
+     </div></header>
+-    {offline && <div className="offline" role="status">A request could not reach the API. Displayed values may be stale; tap Refresh to retry.</div>}
+-    <main className="content">
+-      {sandbox.enabled && <p className="tag" role="status">{sandbox.provider === "LOCAL_DEMO" ? "UGX DEMO / NO REAL MONEY · local simulator · no physical commands" : "EUR TEST / MTN SANDBOX · no physical commands"}</p>}
++    <main className="content" id="main-content">
++      {sandbox.enabled && <DemoNotice local={sandbox.provider === "LOCAL_DEMO"} />}
++      {offline && <div className="offline" role="status">Connection interrupted. Some values may be out of date. <button className="text-button" onClick={refresh}>Retry</button></div>}
+       {meterNotice && <p className="tag" role="status">{meterNotice}</p>}
+       {tab === "dashboard" && <>
+-        <div className="page-heading"><span className="eyebrow">YOUR ENERGY AT A GLANCE</span>
+-          <h1>Hello, {account?.first_name || "there"}.</h1>
+-          <p className="muted">Your electricity account, in one place.</p></div>
+-        <Panel title="Selected meter">
+-          {meter ? <p><strong>{meter.label}</strong><br /><span className="muted">{meter.meter_number} · {meter.architecture}</span></p>
+-            : <p className="muted">Choose a meter on the Meters tab to view its entitlement.</p>}
+-          <button className="secondary" onClick={() => setTab("meters")}>Choose meter</button>
+-          {meter?.ownership_provenance === "SELF_DECLARED" && <p className="muted">Meter linked for prototype testing. Ownership and live readings are not verified with the electricity provider.</p>}
+-        </Panel>
+-        {meters.value && !meters.value.some(item => item.status === "ACTIVE") && <MeterOnboarding session={session} hasMeter={false} onRefresh={refresh} onLinked={enrolledMeter} />}
+-        {meter && <Panel title={meter.sandbox_inventory ? "Cloud test-energy entitlement" : "Energy entitlement"}>
+-          <StateLine data={allocation} offline={offline} />
+-          {allocation.value && <>
+-            <div className="metrics">
+-              <div><span>Available to request</span><strong>{energy(allocation.value.available_kwh)}</strong></div>
+-              <div><span>Reserved / unresolved</span><strong>{energy(allocation.value.pending_kwh)}</strong></div>
+-              <div><span>Confirmed applied</span><strong>{meter.sandbox_inventory && allocation.value.contact_source === "UNAVAILABLE" ? "Unavailable" : energy(allocation.value.confirmed_kwh)}</strong></div>
+-            </div>
+-            <p className="muted">Last {allocation.value.contact_source === "SIMULATOR" ? "simulator" : "meter"} contact: {dateTime(allocation.value.last_meter_contact)}</p>
+-            <p className="muted">Contact: {allocation.value.contact_status === "RECENT" ? "Recent simulator contact" : allocation.value.contact_status === "STALE" ? "Stale — not evidence of current connectivity" : "Unavailable"}. Foreground reads refresh with backoff.</p>
+-            <p className="muted">Physical meter-reported credit: {allocation.value.meter_reported_remaining_wh == null ? "Unavailable" : `${allocation.value.meter_reported_remaining_wh} Wh`}</p>
+-            {allocation.value.contact_source === "SIMULATOR" && <>
+-              <p>Simulator credit from applied energy and accepted consumption deltas: {allocation.value.simulator_remaining_wh == null ? "Unavailable" : `${allocation.value.simulator_remaining_wh} Wh`}</p>
+-              {allocation.value.consumption_reconciliation_required && <p className="tag">A reset or counter baseline needs reconciliation. Remaining credit is withheld.</p>}
+-              <p className="muted">Simulator reported relay: {allocation.value.reported_relay_state || "Unavailable"} · measured {dateTime(allocation.value.last_measurement_at)}. Requested relay state is not feedback.</p>
+-            </>}
+-            {allocation.value.delivery_environment === "SIMULATOR" &&
+-              <p className="tag">Simulation only — no physical meter accuracy is established.</p>}
+-            {allocation.value.delivery_environment === "UNAVAILABLE" &&
+-              <p className="muted">Hardware connection is pending. Actual usage and physical meter balance are unavailable. Cloud test allocations do not load electricity onto a real meter.</p>}
+-          </>}
+-        </Panel>}
+-        {meter && <DeliveryPanel key={meter.id} session={session} meter={meter}
+-          allocation={allocation.value} onReserved={() => void loadSelected(meter)} />}
+-        {meter && !sandbox.enabled && <PurchasePanel key={`purchase-${meter.meter_number}`} session={session}
+-          meterNo={meter.meter_number} enabled={mobileActions.purchase}
+-          onActivity={() => setTab("activity")} />}
+-        <Panel title="Loan position"><StateLine data={loans} offline={offline} />
+-          {loans.value && (loans.value.length ? loans.value.map((loan) =>
+-            <div className="list-row" key={loan.id}><span>{loan.loan_id} · {loan.status}</span>
+-              <strong>{ugx(loan.outstanding_ugx)}</strong></div>) : <p className="muted">No loan records.</p>)}
+-        </Panel>
+-      </>}
+-
+-      {tab === "meters" && <><h1>Meters</h1><p className="muted">Select the meter whose records you want to view.</p>
++        <PageHeading eyebrow="YOUR ENERGY, SIMPLIFIED" title={`Hello, ${account?.first_name || "there"}`} text="Everything you need to keep going." />
++        <MeterSummary meter={meter} onChange={() => navigate("meters")} />
+         <StateLine data={meters} offline={offline} />
+-        {meters.value && (meters.value.length ? meters.value.map((item) =>
+-          <button className={`meter-choice ${selectedMeter === item.meter_number ? "chosen" : ""}`}
+-            key={item.id} onClick={() => chooseMeter(item)}>
+-            <strong>{item.label}</strong><span>{item.meter_number} · {item.sandbox_inventory ? "SANDBOX INVENTORY" : item.architecture} · {item.status}</span>
+-            <small>{selectedMeter === item.meter_number ? "Selected" : "Tap to select"}</small>
+-          </button>) : <Panel title="No meters"><p className="muted">No meter is assigned to this account.</p></Panel>)}
+-      </>}
+-
+-      {tab === "meters" && meters.value && <MeterOnboarding session={session} hasMeter={meters.value.some(item => item.status === "ACTIVE")} onRefresh={refresh} onLinked={enrolledMeter} />}
+-
+-      {tab === "consumption" && <><h1>Consumption history</h1>
+-        {meter?.sandbox_inventory && <p className="muted">Actual usage is unavailable without device evidence. Hardware connection is pending; stored or simulated readings below are not live utility readings.</p>}
+-        {!meter ? <Panel title="Choose a meter"><p className="muted">Select a meter first.</p><button onClick={() => setTab("meters")}>Select meter</button></Panel>
+-          : <><p className="muted">{meter.label} · {meter.meter_number}</p><StateLine data={consumption} offline={offline} />
+-            {consumption.value && <>
+-              {!consumption.value.consumer_attribution_available &&
+-                <p className="muted small">Stored history for this assigned meter. Historical consumer attribution is unavailable.</p>}
+-              <Panel title="Stored daily usage">
+-                {consumption.value.daily_usage.length ? consumption.value.daily_usage.map((row) =>
+-                  <div className="list-row" key={row.date}><span>{row.date}<small>{row.source === "STUB" ? "Development stub" : row.source}</small></span>
+-                    <strong>{energy(row.kwh)}</strong></div>) : <p className="muted">No stored daily usage is available.</p>}
+-              </Panel>
+-              <Panel title="Simulator counter readings">
+-                <p className="tag">Simulated cumulative Wh; resets and reordered events are labelled. These are not physical accuracy results.</p>
+-                {consumption.value.simulator_telemetry.length ? consumption.value.simulator_telemetry.map((row) =>
+-                  <div className="list-row" key={row.event_id}><span>{dateTime(row.measured_at)}<small>{row.classification}</small></span>
+-                    <strong>{row.cumulative_wh} Wh</strong></div>) : <p className="muted">No simulator readings.</p>}
+-              </Panel>
+-            </>}
+-          </>}
+-      </>}
+-
+-      {tab === "loans" && <><h1>Loans and repayments</h1><StateLine data={loans} offline={offline} />
+-        {!sandbox.enabled && <LoanQuote session={session} meters={meters.value} selectedMeter={selectedMeter} />}
+-        {loans.value && (loans.value.length ? loans.value.map((loan) => <Panel key={loan.id} title={loan.loan_id}>
+-          <div className="metrics two"><div><span>Status</span><strong>{loan.status}</strong></div>
+-            <div><span>Outstanding</span><strong>{ugx(loan.outstanding_ugx)}</strong></div></div>
+-          <p className="muted">Approved: {ugx(loan.amount_approved_ugx)} · Due: {dateTime(loan.due_at)}</p>
+-          <h3>Repayment history</h3>
+-          {loan.repayments.length ? loan.repayments.map((row) =>
+-            <div className="list-row" key={row.id}><span>{dateTime(row.paid_at)}<small>{row.status} · Applied {ugx(row.applied_ugx)}
+-              {row.excess_ugx && <> · Excess {ugx(row.excess_ugx)}</>}</small></span><strong>{ugx(row.received_ugx)}</strong></div>)
+-            : <p className="muted">No repayments recorded.</p>}
+-          <RepaymentPanel session={session} loan={loan} enabled={mobileActions.repayment}
+-            onActivity={() => setTab("activity")} />
+-        </Panel>) : <Panel title="No loans"><p className="muted">No loan records are available.</p></Panel>)}
+-      </>}
+-
+-      {sandbox.enabled && account && (tab === "loans" || tab === "activity" || tab === "dashboard") && <SandboxConsumer
+-        key={`${account.id}:${sandbox.provider ?? "MTN_SANDBOX"}`} client={session} owner={account.id} meters={meters.value ?? []} selectedMeter={meter}
+-        capabilities={sandbox} onChanged={refresh} />}
+-
+-      {tab === "activity" && <Activity session={session} />}
+-
+-      {tab === "account" && <><h1>Account</h1><Panel title="Consumer profile">
+-        <p><strong>{account?.first_name} {account?.last_name}</strong><br />{account?.email}</p>
+-        <p className="muted">Role: {account?.user_role}</p>
+-        <p className="muted">Email: {account?.email_verified ? "Verified" : "Verification status unavailable"}</p>
+-      </Panel><ProfileEditor session={session} onExpired={expire} /><Panel title="Security">
+-        <button className="secondary" onClick={() => setChangingPassword(true)}>Change password</button>
+-      </Panel><Panel title="Feature availability">
+-        <p className="muted">{featuresVerified ? "Supplied by Django" : "Could not verify; deferred features remain hidden."}</p>
+-        <p className="muted">{Object.values(features).filter(Boolean).length} deferred features enabled on the server. Mobile purchase and repayment requests are {mobileActions.purchase || mobileActions.repayment ? "available only through verified provider flow" : "disabled pending policy approval and provider setup"}; {sandbox.enabled ? "sandbox loan applications are available under test terms" : "loan applications remain unavailable"}.</p>
+-      </Panel><Panel title="Session"><button className="danger" onClick={() => void logout()}>Log out</button>
+-        <p className="muted small">Offline logout clears this device; server revocation needs a connection.</p></Panel></>}
++        {meter ? <><CloudEnergyCard value={allocation.value?.available_kwh} pending={allocation.value?.pending_kwh} loading={allocation.loading} onDetails={() => navigate("meters")} />
++          <StateLine data={allocation} offline={offline} /></> : <EmptyState icon="meter" title="Start with your meter" text="Link your meter number to get started." action="Add your meter" onAction={() => { navigate("meters"); setShowAddMeter(true); }} />}
++        <div className="home-actions">
++          <button className="action-tile" onClick={() => navigate(sandbox.enabled ? "apply" : "loans")}><span className="action-symbol"><Icon name="loan" /></span><strong>Apply for Loan</strong><span>Electricity when you need it</span><Icon name="arrow" /></button>
++          <button className="action-tile" onClick={() => navigate("purchase")}><span className="action-symbol"><Icon name="bolt" /></span><strong>Buy Units</strong><span>Top up your cloud energy</span><Icon name="arrow" /></button>
++        </div>
++        {!capabilitiesReady ? <section className="panel"><h2>Credit overview</h2><p className="muted">Refresh to load your account capabilities.</p></section> : !sandbox.enabled && <CreditSummary session={session} revision={creditRevision} onExpired={expire} onLoans={() => navigate("loans")} demo={false} />}
++
++      </>}
++
++      {sandbox.enabled && (tab === "loans" || tab === "apply" || tab === "purchase") && <>
++        <PageHeading title={tab === "purchase" ? "Buy Units" : "Loans"} text={tab === "purchase" ? "Top up your cloud energy." : "Your electricity credit and repayments."} />
++        <MeterSummary meter={meter} onChange={() => navigate("meters")} />
++      </>}
++      {sandbox.enabled && tab === "activity" && <PageHeading title="Activity" text="Payments, receipts and account updates." />}
++      {sandbox.enabled && account && <SandboxConsumer
++        key={`${account.id}:${sandbox.provider ?? "MTN_SANDBOX"}`} client={session} owner={account.id}
++        meters={meters.value ?? []} selectedMeter={meter} capabilities={sandbox} onChanged={refresh}
++        refreshVersion={creditRevision} view={tab === "dashboard" ? "home" : ["loans", "apply", "purchase", "activity"].includes(tab) ? tab as "loans" | "apply" | "purchase" | "activity" : "hidden"}
++        onNavigate={destination => navigate(destination)}
++      />}
++      {tab === "dashboard" && <>
++        <section className="panel menu-card"><MenuRow icon="loan" title="My loans & repayments" text="Check your balance, due date and loan history" onClick={() => navigate("loans")} />
++          <MenuRow icon="activity" title="Activity & receipts" text="Review payments and account updates" onClick={() => navigate("activity")} /></section>
++        <div className="connection-note"><Icon name="meter" /><div><strong>{allocation.value?.contact_source === "SIMULATOR" ? "Simulator readings available" : allocation.value?.last_meter_contact ? "Stored meter readings" : "Meter not connected"}</strong><p>{allocation.value?.last_meter_contact ? `Last contact ${dateTime(allocation.value.last_meter_contact)}` : "Live balance and usage will appear after hardware connection."}</p></div><button className="text-button" onClick={() => navigate("consumption")}>Usage</button></div>
++      </>}
++
++      {tab === "meters" && <>
++        <PageHeading title="My Meters" text="Select a meter or link a new one." />
++        <div className="section-title"><p className="muted">{meters.value ? `${meters.value.length} meter${meters.value.length === 1 ? "" : "s"} on your account` : "Your registered meters"}</p></div>
++        <button className="primary-button" aria-expanded={showAddMeter} onClick={() => setShowAddMeter(value => !value)}><Icon name={showAddMeter ? "back" : "plus"} />{showAddMeter ? "Back to meters" : "Add new meter"}</button>
++        {(showAddMeter || meters.value?.length === 0) && <MeterOnboarding session={session} hasMeter={Boolean(meters.value?.length)} onRefresh={refresh} onLinked={enrolledMeter} />}
++        <StateLine data={meters} offline={offline} />
++        {meters.value?.map(item => <button className={`meter-choice ${selectedMeter === item.meter_number ? "chosen" : ""}`} key={item.id} onClick={() => chooseMeter(item)} aria-pressed={selectedMeter === item.meter_number}>
++          <span className="meter-card-heading"><span className="row-icon"><Icon name="meter" /></span><span><strong>{item.label || "My meter"}</strong><small className="meter-number">{item.meter_number}</small></span><span className={selectedMeter === item.meter_number ? "selected-tick" : "choice-circle"}>{selectedMeter === item.meter_number && <Icon name="check" />}</span></span>
++          <span className="meter-id"><span>{item.status.replaceAll("_", " ")}</span><span className="status-pill neutral">{selectedMeter === item.meter_number ? "Selected" : "Tap to select"}</span></span>
++        </button>)}
++        {meter && <><Panel title={meter.label || "Meter details"}>
++          <p className="meter-number muted">{meter.meter_number}</p><StateLine data={allocation} offline={offline} />
++          <div className="detail-grid"><div><span>Cloud energy available</span><strong>{energy(allocation.value?.available_kwh)}</strong></div><div><span>Reserved energy</span><strong>{energy(allocation.value?.pending_kwh)}</strong></div><div><span>Physical meter balance</span><strong>{allocation.value?.meter_reported_remaining_wh == null ? "Not connected" : `${allocation.value.meter_reported_remaining_wh} Wh`}</strong></div></div>
++          <div className="button-pair"><button onClick={() => navigate("purchase")}>Buy Units</button><button className="secondary" onClick={() => navigate("consumption")}>View usage</button></div>
++          <details className="info-disclosure"><summary>Meter information</summary><p>Cloud allocations are separate from electricity applied to the physical meter.</p>
++            {meter.ownership_provenance === "SELF_DECLARED" && <p>Linked using the number you provided. Ownership has not been checked with the utility.</p>}
++            <p>Last contact: {dateTime(allocation.value?.last_meter_contact)}.</p>
++            <p>Recorded application: {allocation.value?.contact_source === "UNAVAILABLE" ? "Unavailable" : energy(allocation.value?.confirmed_kwh)}.</p>
++            {allocation.value?.contact_source === "SIMULATOR" && <p>Contact and delivery readings are simulated.</p>}
++          </details>
++        </Panel><details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
++      </>}
++
++      {tab === "consumption" && <>
++        <button className="text-button" onClick={() => navigate("meters")}><Icon name="back" />My Meters</button>
++        <PageHeading title="Energy usage" text={meter ? `${meter.label} · ${meter.meter_number}` : "Select a meter to see its readings."} />
++        {!meter ? <EmptyState icon="meter" title="Choose your meter" text="Usage belongs to the selected meter." action="Select meter" onAction={() => navigate("meters")} /> : <>
++          <StateLine data={consumption} offline={offline} />
++          <Panel title="Stored daily usage">{consumption.value?.daily_usage.length ? <>
++            {!consumption.value.consumer_attribution_available && <p className="muted small">Meter history; previous consumer attribution is unavailable.</p>}
++            {consumption.value.daily_usage.map(row => <div className="list-row" key={row.date}><span>{row.date}<small>{row.source === "STUB" ? "Sample reading" : row.source}</small></span><strong>{energy(row.kwh)}</strong></div>)}
++          </> : <div className="empty-inline"><Icon name="chart" /><h3>No readings yet</h3><p className="muted">Actual consumption appears when meter readings become available.</p></div>}</Panel>
++          {!!consumption.value?.simulator_telemetry.length && <details className="panel info-disclosure"><summary>Simulated readings</summary>{consumption.value.simulator_telemetry.map(row => <div className="list-row" key={row.event_id}><span>{dateTime(row.measured_at)}<small>{row.classification}</small></span><strong>{row.cumulative_wh} Wh</strong></div>)}</details>}
++        </>}
++      </>}
++
++      {(tab === "loans" || tab === "purchase") && <>
++        {!sandbox.enabled && <PageHeading title={tab === "loans" ? "Loans" : "Buy Units"} text={tab === "loans" ? "Apply for electricity credit or manage your repayments." : "Choose an amount and review your electricity purchase."} />}
++        {!sandbox.enabled && <MeterSummary meter={meter} onChange={() => navigate("meters")} />}
++        {capabilitiesReady && !sandbox.enabled && tab === "loans" && <>
++          <LoanQuote session={session} meters={meters.value} selectedMeter={selectedMeter} />
++        </>}
++        {tab === "loans" && <details className="panel info-disclosure" open={!sandbox.enabled}><summary>{sandbox.enabled ? "Earlier loan records" : "Loan records & repayments"}</summary>
++          <StateLine data={loans} offline={offline} />
++          {loans.value?.length === 0 && <p className="muted">No records in this loan history.</p>}
++          {loans.value?.map(loan => <Panel key={loan.id} title={loan.loan_id}><span className="status-pill neutral">{loan.status}</span><p className="muted">Outstanding</p><strong className="loan-amount">{ugx(loan.outstanding_ugx)}</strong><p className="muted">Due {dateTime(loan.due_at)}</p><RepaymentPanel session={session} loan={loan} enabled={mobileActions.repayment} onActivity={() => navigate("activity")} /><details className="info-disclosure"><summary>Repayment history</summary>{loan.repayments.map(row => <div className="list-row" key={row.id}><span>{dateTime(row.paid_at)}<small>{row.status} · Applied {ugx(row.applied_ugx)}{row.excess_ugx && <> · Excess {ugx(row.excess_ugx)}</>}</small></span><strong>{ugx(row.received_ugx)}</strong></div>)}</details></Panel>)}
++        </details>}
++        {capabilitiesReady && !sandbox.enabled && tab === "purchase" && (meter ? <PurchasePanel key={meter.id} session={session} meterNo={meter.meter_number} enabled={mobileActions.purchase} onActivity={() => navigate("activity")} /> : <EmptyState icon="meter" title="Select a meter first" text="Your units will be allocated to this meter." action="Choose meter" onAction={() => navigate("meters")} />)}
++      </>}
++      {tab === "activity" && <>
++        <button className="text-button" onClick={() => navigate("dashboard")}><Icon name="back" />Home</button>
++        {sandbox.enabled ? <details className="panel info-disclosure"><summary>Account alerts & earlier records</summary><Activity session={session} /></details> : <Activity session={session} />}
++      </>}
++      {tab === "account" && <>
++        <PageHeading title="Account" text="Your details, preferences and security." />
++        <section className="panel profile-card"><span className="profile-avatar">{account?.first_name?.charAt(0) || "U"}{account?.last_name?.charAt(0)}</span><h2>{account?.first_name} {account?.last_name}</h2><p className="muted">{account?.email}</p><span className="status-pill neutral">{account?.email_verified ? "Email verified" : "Email verification pending"}</span></section>
++        <section className="panel menu-card"><MenuRow icon="user" title="Personal details" text="Address and account preferences" onClick={() => setShowProfile(value => !value)} expanded={showProfile} />
++          <MenuRow icon="lock" title="Change password" text="Keep your account secure" onClick={() => setChangingPassword(true)} />
++          <MenuRow icon="meter" title="My meters" text="Manage and select your meter" onClick={() => navigate("meters")} />
++          <MenuRow icon="activity" title="Activity & receipts" text="Payment records and notifications" onClick={() => navigate("activity")} /></section>
++        {showProfile && <ProfileEditor session={session} onExpired={expire} />}
++        <details className="panel info-disclosure"><summary>Help & information</summary><h3>Where is my credit score?</h3><p>Your stored credit assessment appears on Home. You do not need to fill in a loan questionnaire.</p><h3>Where are my units?</h3><p>Cloud energy shows your allocation. Physical meter balance requires a hardware connection.</p><h3>What if a payment is pending?</h3><p>Check its receipt in Loans or Buy Units before starting another payment.</p></details>
++        <button className="logout-button" onClick={() => void logout()}><Icon name="logout" />Log out</button>
++        <p className="muted small centered">Offline logout clears this device. Server revocation needs a connection.</p>
++      </>}
+     </main>
+-    <nav className="bottom-nav" aria-label="Main navigation">
+-      {CONSUMER_TABS.map((item) =>
+-        <button key={item.id} aria-current={tab === item.id ? "page" : undefined} onClick={() => setTab(item.id)}>
+-          <Icon name={item.icon} /><span>{item.label}</span></button>)}
+-    </nav>
++    <nav className="bottom-nav" aria-label="Main navigation">{CONSUMER_TABS.map(item => <button key={item.id} aria-current={activeConsumerTab(tab) === item.id ? "page" : undefined} onClick={() => navigate(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
+   </div>;
+ }
+--- /dev/null
++++ b/mobile/src/ConsumerUI.tsx
+@@ -0,0 +1,23 @@
++import { Icon, type IconName } from "./ui.tsx";
++import { energy } from "./format.ts";
++
++export function PageHeading({ title, text, eyebrow }: { title: string; text?: string; eyebrow?: string }) {
++  return <div className="page-heading">{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h1>{title}</h1>{text && <p className="muted">{text}</p>}</div>;
++}
++export function DemoNotice({ local = true }: { local?: boolean }) {
++  return <details className="demo-notice"><summary><span className="demo-dot" />Demo mode <Icon name="help" /></summary><div>
++    <strong>No real money is deducted.</strong><p>{local ? "Payments and credit assessments use simulated information." : "Payments use the MTN sandbox."} Cloud units do not confirm physical meter delivery.</p>
++  </div></details>;
++}
++export function EmptyState({ icon, title, text, action, onAction }: { icon: IconName; title: string; text: string; action?: string; onAction?: () => void }) {
++  return <section className="panel empty-card"><span className="empty-icon"><Icon name={icon} /></span><h2>{title}</h2><p className="muted">{text}</p>{action && <button className="primary-button" onClick={onAction}>{action}<Icon name="arrow" /></button>}</section>;
++}
++export function MeterSummary({ meter, onChange }: { meter: { label: string; meter_number: string } | null; onChange: () => void }) {
++  return <button className="selected-meter" onClick={onChange}><span className="row-icon"><Icon name="meter" /></span><span><small>Selected meter</small><strong>{meter?.label || "Choose your meter"}</strong>{meter && <small className="meter-number">{meter.meter_number}</small>}</span><span className="text-accent">{meter ? "Change" : "Select"}</span><Icon name="arrow" /></button>;
++}
++export function CloudEnergyCard({ value, pending, loading, onDetails }: { value?: string | null; pending?: string | null; loading?: boolean; onDetails: () => void }) {
++  return <section className="energy-hero"><div className="energy-hero-heading"><span><Icon name="bolt" />Cloud energy</span><span className="hero-pill">Allocation</span></div><div className="energy-hero-value">{value == null ? (loading ? "Loading…" : "Unavailable") : energy(value)}</div><p>Available for your selected meter</p><div className="energy-hero-footer"><span>Reserved <strong>{energy(pending)}</strong></span><button onClick={onDetails}>Details <Icon name="arrow" /></button></div></section>;
++}
++export function MenuRow({ icon, title, text, onClick, expanded }: { icon: IconName; title: string; text: string; onClick: () => void; expanded?: boolean }) {
++  return <button className="menu-row" onClick={onClick} aria-expanded={expanded}><span className="row-icon"><Icon name={icon} /></span><span><strong>{title}</strong><small>{text}</small></span><Icon name="arrow" /></button>;
++}
+--- /dev/null
++++ b/mobile/src/CreditSummary.tsx
+@@ -0,0 +1,48 @@
++import { useEffect, useRef, useState } from "react";
++import { SessionExpired, type SessionManager } from "./auth/session.ts";
++import { LatestRead } from "./api/read-scope.ts";
++import { Icon } from "./ui.tsx";
++import { dateTime, ugx } from "./format.ts";
++
++// Uses only fields already consumed by the supplied LoanQuote component.
++// No guessed sandbox response shape, fallback score or extra POST is introduced.
++type Credit = { score: number | null; limit: string | null; reason: string | null; calculatedAt: string | null; factors: Record<string, number> };
++export function parseCreditSummary(input: unknown): Credit {
++  if (!input || typeof input !== "object") throw new Error("Your assessment is temporarily unavailable.");
++  const value = input as Record<string, unknown>;
++  if (!(value.score === null || typeof value.score === "number" && Number.isFinite(value.score) && value.score >= 0 && value.score <= 100)) throw new Error("Your assessment is temporarily unavailable.");
++  const factors: Record<string, number> = {};
++  if (value.factors && typeof value.factors === "object") for (const [key, score] of Object.entries(value.factors)) {
++    if (typeof score === "number" && Number.isFinite(score)) factors[key] = score;
++  }
++  return { score: value.score as number | null,
++    limit: typeof value.max_loan_ugx === "string" && /^\d+(\.\d+)?$/.test(value.max_loan_ugx) ? value.max_loan_ugx : null,
++    reason: typeof value.reason === "string" ? value.reason : null,
++    calculatedAt: typeof value.calculated_at === "string" ? value.calculated_at : null, factors };
++}
++export function CreditSummary({ session, revision, onExpired, onLoans, demo }: { session: SessionManager; revision: number; onExpired: () => void; onLoans: () => void; demo: boolean }) {
++  const [data, setData] = useState<Credit | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [retry, setRetry] = useState(0);
++  const reads = useRef(new LatestRead());
++  useEffect(() => {
++    const scope = reads.current, ticket = scope.begin(), owner = session.identity;
++    setLoading(true); setError(null);
++    void session.get<unknown>("loans/mobile-eligibility/").then(result => {
++      if (owner === session.identity && scope.current(ticket)) setData(parseCreditSummary(result));
++    }).catch(cause => {
++      if (owner !== session.identity || !scope.current(ticket)) return;
++      if (cause instanceof SessionExpired) { onExpired(); return; }
++      setData(null); setError(cause instanceof Error ? cause.message : "Assessment unavailable.");
++    }).finally(() => { if (owner === session.identity && scope.current(ticket)) setLoading(false); });
++    return () => scope.invalidate();
++  }, [session, revision, retry, onExpired]);
++  return <section className="panel credit-summary"><div className="section-title"><h2>Credit overview</h2><span className="row-icon"><Icon name="shield" /></span></div>
++    {error ? <><p className="error" role="alert">{error}</p><button className="text-button" onClick={() => setRetry(value => value + 1)}>Retry assessment</button></> : <>
++      <div className="credit-summary-grid"><div><span className="muted">Your score</span><strong className="credit-score">{loading ? "…" : data?.score ?? "—"}{data?.score != null && !loading && <small>/100</small>}</strong></div><div><span className="muted">Borrowing limit</span><strong className="credit-limit">{loading ? "Loading…" : ugx(data?.limit)}</strong><button className="text-button" onClick={onLoans}>View loans <Icon name="arrow" /></button></div></div>
++      {!loading && data?.score == null && <p className="muted">Your assessment is not ready. Link a meter, then check again.</p>}
++      <details className="info-disclosure"><summary>How your score is calculated</summary>{demo && <p className="small">Simulated assessment · no external account verification.</p>}{data?.reason && <p>{data.reason}</p>}{Object.entries(data?.factors ?? {}).map(([factor, value]) => <div className="list-row" key={factor}><span>{factor.replaceAll("_", " ")}</span><strong>{value}</strong></div>)}<p className="muted small">Assessed {dateTime(data?.calculatedAt)}. Final eligibility is checked when you apply.</p></details>
++    </>}
++  </section>;
++}
+--- a/mobile/src/Onboarding.tsx
++++ b/mobile/src/Onboarding.tsx
+@@ -42,10 +42,10 @@
+     } finally { if (owner === session.identity) setBusy(false); }
+   };
+   return <section className="panel form-panel"><h2>{hasMeter ? "Add another meter" : "Add your meter"}</h2>
+-    <p className="muted">{selfEnrollment ? "For this prototype, we assume the number you enter belongs to you. Linking enables cloud test allocations; hardware connection is pending." : "Physical enrollment records a request; staff must verify your right to use the meter before assignment."}</p>
+-    {selfEnrollment && <p className="muted">{PROTOTYPE_OWNERSHIP_NOTICE}</p>}
++    <p className="muted">{selfEnrollment ? "Enter the number printed on your meter." : "Enter your meter number to request verification."}</p>
++    {selfEnrollment && <details className="info-disclosure"><summary>About linking your meter</summary><p>{PROTOTYPE_OWNERSHIP_NOTICE}</p></details>}
+     <form className="form-panel" onSubmit={(event) => void submit(event)}>
+-      <label>Meter number <input value={number} maxLength={100} required autoComplete="off"
++      <label>Meter number <input value={number} maxLength={100} required autoComplete="off" placeholder="e.g. 02356709867"
+         onChange={(event) => setNumber(event.target.value)} /></label>
+       <button disabled={busy || selfEnrollment === null}>{busy ? "Recording…" : selfEnrollment ? "Add your meter" : "Request meter verification"}</button>
+     </form>
+@@ -56,7 +56,7 @@
+       <span><strong>{enrollmentLabel(row.status)}</strong>
+         {row.decision_reason && <small>{row.decision_reason}</small>}</span>
+       {selfEnrollment && row.status === "PENDING" && <button type="button" className="secondary" disabled={busy}
+-        onClick={() => { setNumber(row.meter_number); setNotice("Review the number and tap Add your meter to explicitly retry using the prototype ownership assumption."); }}>Retry as prototype meter</button>}
++        onClick={() => { setNumber(row.meter_number); setNotice("Check the number, then tap Add your meter to retry."); }}>Retry linking</button>}
+     </div>)}
+     <button className="secondary" onClick={() => { void load(); onRefresh(); }}>Refresh meters</button>
+   </section>;
+--- a/mobile/src/PreviewApp.tsx
++++ b/mobile/src/PreviewApp.tsx
+@@ -1,302 +1,80 @@
+-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+-import { Brand, Icon, type IconName } from "./ui.tsx";
++import { useCallback, useState, type FormEvent } from "react";
++import { Icon } from "./ui.tsx";
+ import { CONSUMER_TABS, previewParent, previewTab, type PreviewScreen } from "./consumer-navigation.ts";
+-import { isPositiveWholeUgx, wholeUgxWithinDebt } from "./api/payment-guards.ts";
++import { CloudEnergyCard, EmptyState, MenuRow, MeterSummary, PageHeading } from "./ConsumerUI.tsx";
++import { ugx } from "./format.ts";
+ import { useNativeBack } from "./use-native-back.ts";
+ 
+-// Presentation fixtures only. This component has no session or API client and
+-// never creates a payment, debt, allocation or device command.
+-const meters = [
+-  { id: "SAMPLE-M001", name: "Home meter", location: "Main residence", available: "12.40", reserved: "1.50", applied: "8.20" },
+-  { id: "SAMPLE-M002", name: "Shop meter", location: "Small business", available: "4.60", reserved: "0.00", applied: "3.10" },
++// Presentation fixtures only. No session, API, provider, debt or meter writes.
++// Preview terms below are examples, never a source of authenticated loan terms.
++const sampleMeters = [
++  { label: "Home meter", meter_number: "02356709867", units: "12.40" },
++  { label: "Shop meter", meter_number: "02356709868", units: "4.60" },
+ ];
+-const receipts = [
+-  { id: "SAMPLE-P001", label: "Electricity purchase", amount: "5,000", type: "purchase", status: "Settled", date: "09 Oct · 09:30", icon: "bolt" as const },
+-  { id: "SAMPLE-P002", label: "Loan repayment", amount: "2,500", type: "repayment", status: "Settled", date: "08 Oct · 14:15", icon: "loan" as const },
+-  { id: "SAMPLE-P003", label: "Electricity purchase", amount: "3,000", type: "purchase", status: "Pending", date: "07 Oct · 11:20", icon: "bolt" as const },
++const sampleReceipts = [
++  { title: "Electricity purchase", amount: "5000", date: "12 Oct · 09:30", icon: "bolt" as const },
++  { title: "Loan repayment", amount: "2500", date: "11 Oct · 14:15", icon: "loan" as const },
+ ];
+-const money = (amount: string) => `UGX ${amount.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+-
+-function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+-  return <section className={`panel ${className}`}>{children}</section>;
+-}
+-function Heading({ eyebrow, title, text }: { eyebrow?: string; title: string; text?: string }) {
+-  return <div className="page-heading">{eyebrow && <span className="eyebrow">{eyebrow}</span>}
+-    <h1>{title}</h1>{text && <p className="muted">{text}</p>}</div>;
+-}
+-function SectionTitle({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
+-  return <div className="section-title"><h2>{title}</h2>{action && <button className="text-button" onClick={onAction}>{action} <Icon name="arrow" /></button>}</div>;
+-}
+-function MenuRow({ icon, title, subtitle, onClick }: { icon: IconName; title: string; subtitle?: string; onClick: () => void }) {
+-  return <button className="menu-row" onClick={onClick}><span className="row-icon"><Icon name={icon} /></span>
+-    <span><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</span><Icon name="arrow" /></button>;
+-}
+-function UsageChart() {
+-  const values = [44, 72, 51, 93, 62, 82, 57];
+-  return <div className="usage-chart" role="img" aria-label="Sample weekly consumption: Monday 0.8, Tuesday 1.3, Wednesday 0.9, Thursday 1.7, Friday 1.1, Saturday 1.5, Sunday 1.0 kWh">
+-    <div className="chart-grid"><span>2 kWh</span><span>1 kWh</span><span>0</span></div>
+-    <div className="chart-bars">{values.map((height, index) => <div className="chart-column" key={index}>
+-      <div className={`chart-bar${index === 5 ? " highlighted" : ""}`} style={{ height: `${height}%` }} />
+-      <span>{["M", "T", "W", "T", "F", "S", "S"][index]}</span>
+-    </div>)}</div>
+-  </div>;
+-}
+ 
+ export function PreviewApp({ onExit }: { onExit: () => void }) {
+   const [screen, setScreen] = useState<PreviewScreen>("dashboard");
+   const [meterIndex, setMeterIndex] = useState(0);
+-  const [scenario, setScenario] = useState<"sample" | "empty" | "offline">("sample");
+-  const [amount, setAmount] = useState("");
+-  const [phone, setPhone] = useState("");
+-  const [error, setError] = useState<string | null>(null);
+-  const [notice, setNotice] = useState<string | null>(null);
+-  const [read, setRead] = useState(false);
+-  const [receiptIndex, setReceiptIndex] = useState(0);
+-  const [profile, setProfile] = useState({ first: "Alex", last: "Example", address: "Sample residence" });
+-  const dialogRef = useRef<HTMLElement>(null);
+-  const meter = meters[meterIndex];
+-  const activeTab = previewTab(screen);
+-  const detail = !CONSUMER_TABS.some((tab) => tab.id === screen);
+-
+-  const go = (next: PreviewScreen) => {
+-    setScreen(next); setError(null); window.scrollTo({ top: 0, behavior: "instant" });
+-  };
+-  const back = useCallback(() => {
+-    if (notice) { setNotice(null); return; }
+-    const parent = previewParent(screen);
+-    if (parent) { setScreen(parent); setError(null); } else onExit();
+-  }, [screen, notice, onExit]);
++  const [amount, setAmount] = useState("5000");
++  const [agreed, setAgreed] = useState(false);
++  const [notice, setNotice] = useState("");
++  const meter = sampleMeters[meterIndex];
++  const tab = previewTab(screen);
++  const go = useCallback((next: PreviewScreen) => { setScreen(next); setNotice(""); window.scrollTo(0, 0); }, []);
++  const back = useCallback(() => { const parent = previewParent(screen); if (parent) go(parent); else onExit(); }, [screen, go, onExit]);
+   useNativeBack(back);
+-  useEffect(() => {
+-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") back(); };
+-    window.addEventListener("keydown", escape);
+-    return () => window.removeEventListener("keydown", escape);
+-  }, [back]);
+-  useEffect(() => {
+-    if (!notice) return;
+-    const previous = document.activeElement;
+-    const overflow = document.body.style.overflow;
+-    document.body.style.overflow = "hidden";
+-    dialogRef.current?.querySelector("button")?.focus();
+-    return () => {
+-      document.body.style.overflow = overflow;
+-      if (previous instanceof HTMLElement) previous.focus();
+-    };
+-  }, [notice]);
+-  const review = (event: FormEvent) => {
+-    event.preventDefault(); setError(null);
+-    if (screen === "load") {
+-      if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount) || !/[1-9]/.test(amount)) {
+-        setError("Enter positive energy in 0.01 kWh increments."); return;
+-      }
+-      const increments = (value: string) => {
+-        const [whole, fraction = ""] = value.split(".");
+-        return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+-      };
+-      if (increments(amount) > increments(meter.available)) {
+-        setError("This example request exceeds the selected meter’s available entitlement."); return;
+-      }
+-      go("load-review"); return;
+-    }
+-    if (!isPositiveWholeUgx(amount)) { setError("Enter a positive whole-UGX amount."); return; }
+-    if (screen === "repay" && !wholeUgxWithinDebt(amount, "7500.00")) {
+-      setError("This example loan has UGX 7,500 outstanding."); return;
+-    }
+-    go(screen === "purchase" ? "purchase-review" : screen === "apply" ? "apply-review" : "repay-review");
+-  };
+-  const unavailable = () => setNotice("This is a design preview. Connect the approved Django workflow to submit this action. No payment, loan or meter request has been sent.");
+-  const empty = <Card className="empty-card"><span className="empty-icon"><Icon name={activeTab === "loans" ? "loan" : activeTab === "meters" ? "meter" : "activity"} /></span>
+-    <h2>Nothing here yet</h2><p className="muted">This is the empty-state design. Your records will appear here when account data is available.</p>
+-    <button className="secondary" onClick={() => setScenario("sample")}>View sample records</button></Card>;
+-
+-  return <div className="app-shell preview-shell">
++  const amountNumber = Number(amount);
++  const validAmount = /^\d+$/.test(amount) && amountNumber >= 1000 && amountNumber <= 50000;
++  const isApplying = ["apply", "apply-review", "apply-confirm"].includes(screen);
++  const step = screen === "apply" ? 0 : screen === "apply-review" ? 1 : 2;
++  const review = (event: FormEvent, target: PreviewScreen) => { event.preventDefault(); if (validAmount) go(target); };
++  const amountInput = <><label>Amount (UGX)<input inputMode="numeric" pattern="[0-9]+" value={amount} onChange={event => setAmount(event.target.value)} required aria-describedby="amount-help" /></label><p id="amount-help" className="muted small">Sample range: UGX 1,000–50,000.</p><div className="amount-chips">{["5000", "10000", "20000"].map(value => <button type="button" className={amount === value ? "active" : ""} key={value} onClick={() => setAmount(value)}>{ugx(value)}</button>)}</div></>;
++  const title = { dashboard: "Home", meters: "My Meters", loans: "Loans", purchase: "Buy Units", account: "Account" }[tab];
++  const showPreviewResult = () => setNotice("Preview complete. No request was submitted and no money or units changed.");
++  return <div className="app-shell consumer-redesign preview-shell">
+     <div className="preview-banner"><span><span className="preview-dot" />Design preview · sample data</span><button onClick={onExit}>Exit preview</button></div>
+-    <header className="topbar"><Brand /><div className="header-actions">
+-      <button className="icon-button notification-button" aria-label="Preview notifications" onClick={() => go("notifications")}><Icon name="bell" />{!read && <span />}</button>
+-      <button className="avatar-button" aria-label="Preview account" onClick={() => go("account")}>{profile.first.charAt(0)}{profile.last.charAt(0)}</button>
+-    </div></header>
++    <header className="topbar"><div className="topbar-identity"><span className="brand-lockup"><Icon name="bolt" />gPawa<span className="brand-dot">.</span></span><span className="topbar-page">{title}</span></div><div className="header-actions"><button className="icon-button" aria-label="Notifications" onClick={() => go("notifications")}><Icon name="bell" /></button><button className="avatar-button" aria-label="Your account" onClick={() => go("account")}>A</button></div></header>
+     <main className="content">
+-      {detail && <button className="text-button back-link" onClick={back}><Icon name="back" />Back</button>}
+-      {scenario === "offline" && <div className="offline-preview" role="status"><Icon name="phone" /><span>Offline example. Displayed sample values are stale. Requests are not queued.</span><button onClick={() => setScenario("sample")}>Retry</button></div>}
+       {screen === "dashboard" && <>
+-        <Heading eyebrow="YOUR ENERGY AT A GLANCE" title={`Hello, ${profile.first}.`} text="A little clarity for your everyday power." />
+-        {scenario === "empty" ? empty : <>
+-          <section className="balance-card"><div className="balance-top"><span><Icon name="bolt" />Available electricity</span><span className="balance-tag">SAMPLE</span></div>
+-            <div className="balance-amount">{meter.available}<span>kWh</span></div><p>Entitlement available to request for your meter</p>
+-            <div className="balance-divider" /><div className="balance-split"><div><span>Reserved / unresolved</span><strong>{meter.reserved} kWh</strong></div>
+-              <div><span>Confirmed applied</span><strong>{meter.applied} kWh</strong></div></div>
+-          </section>
+-          <button className="selected-meter" onClick={() => go("meters")}><span className="row-icon"><Icon name="meter" /></span>
+-            <span><strong>{meter.name}</strong><small>{meter.id} · sample simulator</small></span><span className="text-accent">Change</span></button>
+-        </>}
+-        <div className="quick-actions">
+-          <button onClick={() => { setAmount(""); go("purchase"); }}><span className="quick-icon blue"><Icon name="plus" /></span><strong>Buy electricity</strong></button>
+-          <button onClick={() => go("loans")}><span className="quick-icon green"><Icon name="loan" /></span><strong>Electricity credit</strong></button>
+-          <button onClick={() => { setAmount(""); go("load"); }}><span className="quick-icon amber"><Icon name="meter" /></span><strong>Load meter</strong></button>
+-        </div>
+-        <Card><SectionTitle title="This week’s usage" action="Details" onAction={() => go("consumption")} />
+-          <div className="chart-summary"><strong>{scenario === "empty" ? "Unavailable" : "8.30"}<small> kWh</small></strong><span className="status-pill">Sample week</span></div>
+-          {scenario === "empty" ? <p className="muted">No consumption records available.</p> : <UsageChart />}
+-        </Card>
+-        <Card className="credit-promo"><span className="promo-symbol"><Icon name="loan" /></span><div><h2>Power when you need it</h2><p>Explore eligibility and see your electricity-credit options.</p>
+-          <button className="text-button" onClick={() => go("loans")}>Explore electricity credit <Icon name="arrow" /></button></div></Card>
+-        <Card><SectionTitle title="Recent activity" action="View all" onAction={() => go("activity")} />
+-          {scenario === "empty" ? <p className="muted">No activity yet.</p> : receipts.slice(0, 2).map((row, index) => <button className="transaction-row" key={row.id} onClick={() => { setReceiptIndex(index); go("receipt"); }}>
+-            <span className="row-icon"><Icon name={row.icon} /></span><span><strong>{row.label}</strong><small>{row.date} · Sample</small></span><b>UGX {row.amount}</b>
+-          </button>)}
+-        </Card>
++        <PageHeading eyebrow="YOUR ENERGY, SIMPLIFIED" title="Hello, Alex" text="Everything you need to keep going." />
++        <MeterSummary meter={meter} onChange={() => go("meters")} />
++        <CloudEnergyCard value={meter.units} pending="1.50" onDetails={() => go("meters")} />
++        <div className="home-actions"><button className="action-tile" onClick={() => go("apply")}><span className="action-symbol"><Icon name="loan" /></span><strong>Apply for Loan</strong><span>Electricity when you need it</span><Icon name="arrow" /></button><button className="action-tile" onClick={() => go("purchase")}><span className="action-symbol"><Icon name="bolt" /></span><strong>Buy Units</strong><span>Top up your cloud energy</span><Icon name="arrow" /></button></div>
++        <section className="panel"><div className="section-title"><h2>Credit overview</h2><span className="status-pill">Eligible</span></div><div className="credit-summary-grid"><div><span className="muted">Your score</span><strong className="credit-score">85<small>/100</small></strong></div><div><span className="muted">Sample borrowing limit</span><strong className="credit-limit">UGX 5,000</strong><button className="text-button" onClick={() => go("apply")}>View your options <Icon name="arrow" /></button></div></div><details className="info-disclosure"><summary>How your score is calculated</summary><p>This preview uses a sample score. The app uses your stored server assessment; no questionnaire is required.</p></details></section>
++        <section className="panel"><div className="section-title"><h2>Current loan</h2><span className="status-pill neutral">Active</span></div><div className="list-row"><span>Outstanding</span><strong>UGX 2,750</strong></div><div className="list-row"><span>Due date</span><strong>19 Oct 2026</strong></div><button className="secondary" onClick={() => go("repay")}>Make a repayment <Icon name="arrow" /></button></section>
++        <div className="section-title"><h2>Recent activity</h2><button className="text-button" onClick={() => go("activity")}>View all</button></div><section className="panel menu-card">{sampleReceipts.map(receipt => <MenuRow key={receipt.title} icon={receipt.icon} title={receipt.title} text={`${ugx(receipt.amount)} · ${receipt.date}`} onClick={() => go("receipt")} />)}</section>
++        <div className="connection-note"><Icon name="meter" /><div><strong>Meter not connected</strong><p>Live usage will appear after hardware connection.</p></div><button className="text-button" onClick={() => go("consumption")}>Usage</button></div>
+       </>}
+-
+-      {screen === "meters" && <>
+-        <Heading eyebrow="CONNECTED TO YOUR EVERYDAY" title="Your meters" text="Choose which meter you want to view or load." />
+-        {scenario === "empty" ? empty : meters.map((row, index) => <button className={`meter-choice${meterIndex === index ? " chosen" : ""}`} key={row.id} onClick={() => setMeterIndex(index)}>
+-          <span className="meter-card-heading"><span className="row-icon"><Icon name="meter" /></span><span><strong>{row.name}</strong><small>{row.location}</small></span>
+-            {meterIndex === index ? <span className="selected-tick"><Icon name="check" /></span> : <span className="choice-circle" />}</span>
+-          <span className="meter-id">{row.id}<span className="status-pill">Sample simulator</span></span>
+-          <span className="meter-card-bottom"><span>Available <b>{row.available} kWh</b></span><span>Last contact <b>Sample · 10:42</b></span></span>
+-        </button>)}
+-        <Card><SectionTitle title="Selected meter delivery" /><div className="metrics two"><div><span>Reserved / unresolved</span><strong>{scenario === "empty" ? "Unavailable" : `${meter.reserved} kWh`}</strong></div>
+-          <div><span>Confirmed applied</span><strong>{scenario === "empty" ? "Unavailable" : `${meter.applied} kWh`}</strong></div></div>
+-          <p className="muted small">A queued request is separate from an application acknowledgement.</p>
+-          <button className="primary-button" onClick={() => { setAmount(""); go("load"); }}>Preview meter loading <Icon name="arrow" /></button></Card>
+-        <p className="form-hint"><Icon name="shield" />Meter assignment and replacement are managed by authorized staff.</p>
+-      </>}
+-
+-      {screen === "consumption" && <>
+-        <Heading eyebrow="SMALL INSIGHTS, BETTER CONTROL" title="Your energy usage" text={`${meter.name} · ${meter.id}`} />
+-        {scenario === "empty" ? empty : <>
+-          <Card><SectionTitle title="Weekly overview" /><div className="chart-summary"><strong>8.30<small> kWh</small></strong><span className="status-pill">Sample week</span></div><UsageChart /></Card>
+-          <div className="metrics two"><div><span>Example daily average</span><strong>1.19 kWh</strong></div><div><span>Example highest day</span><strong>1.70 kWh</strong></div></div>
+-          <Card><SectionTitle title="Daily consumption" />{["1.00", "1.50", "1.10", "1.70", "0.90", "1.30", "0.80"].map((value, index) =>
+-            <div className="list-row" key={index}><span>Sample day {7 - index}<small>Illustrative stored reading</small></span><strong>{value} kWh</strong></div>)}</Card>
+-          <Card><SectionTitle title="Meter contact" /><div className="contact-row"><span className="contact-dot" /><span>Sample contact · 09 Oct, 10:42</span></div>
+-            <p className="muted small">Simulator examples demonstrate the interface. Physical accuracy and connectivity have not been verified.</p></Card>
++      {screen === "meters" && <><PageHeading title="My Meters" text="Select a meter or link a new one." /><button className="primary-button" onClick={() => go("load")}><Icon name="plus" />Add new meter</button>{sampleMeters.map((item, index) => <button className={`meter-choice ${index === meterIndex ? "chosen" : ""}`} key={item.meter_number} onClick={() => setMeterIndex(index)} aria-pressed={index === meterIndex}><span className="meter-card-heading"><span className="row-icon"><Icon name="meter" /></span><span><strong>{item.label}</strong><small>{item.meter_number}</small></span><span className={index === meterIndex ? "selected-tick" : "choice-circle"}>{index === meterIndex && <Icon name="check" />}</span></span><span className="meter-id"><span>{item.units} kWh cloud energy</span><span className="status-pill neutral">{index === meterIndex ? "Selected" : "Select"}</span></span></button>)}<section className="panel"><h2>{meter.label}</h2><div className="detail-grid"><div><span>Cloud energy available</span><strong>{meter.units} kWh</strong></div><div><span>Physical meter balance</span><strong>Not connected</strong></div></div><div className="button-pair"><button onClick={() => go("purchase")}>Buy Units</button><button className="secondary" onClick={() => go("consumption")}>View usage</button></div></section></>}
++      {screen === "load" && <><button className="text-button" onClick={back}><Icon name="back" />My meters</button><PageHeading title="Add your meter" text="Enter the number printed on your meter." /><form className="panel form-panel" onSubmit={event => { event.preventDefault(); showPreviewResult(); }}><label>Meter number<input type="text" inputMode="numeric" maxLength={100} placeholder="e.g. 02356709867" required /></label><label>Label (optional)<input placeholder="e.g. Home meter" /></label><button type="submit">Link meter <Icon name="arrow" /></button></form></>}
++      {(screen === "loans" || isApplying || screen === "loan-detail") && <>
++        <PageHeading title="Loans" text="Get electricity now. Repay with a clear plan." />
++        <div className="segmented-control" aria-label="Loan section"><button aria-pressed={!isApplying} onClick={() => go("loans")}>My Loans</button><button aria-pressed={isApplying} onClick={() => { setAgreed(false); go("apply"); }}>Apply for Loan</button></div>
++        {!isApplying ? <><section className="panel"><div className="section-title"><h2>Electricity loan</h2><span className="status-pill neutral">Active</span></div><p className="muted">Home meter · 02356709867</p><div className="detail-grid"><div><span>Outstanding balance</span><strong>UGX 2,750</strong></div></div><div className="list-row"><span>Original amount</span><strong>UGX 5,000</strong></div><div className="list-row"><span>Total repaid</span><strong>UGX 2,500</strong></div><div className="list-row"><span>Due date</span><strong>19 Oct 2026</strong></div><button onClick={() => go("repay")}>Pay Loan <Icon name="arrow" /></button></section><section className="panel"><h2>Loan history</h2><p className="muted">No other sample loans.</p></section></> : <>
++          <ol className="loan-stepper">{["Amount", "Terms", "Confirm"].map((name, index) => <li key={name} className={index === step ? "current" : index < step ? "done" : ""} aria-current={index === step ? "step" : undefined}><span>{index < step ? <Icon name="check" /> : index + 1}</span>{name}</li>)}</ol>
++          <MeterSummary meter={meter} onChange={() => go("meters")} />
++          {screen === "apply" && <form className="panel form-panel" onSubmit={event => review(event, "apply-review")}><h2>How much do you need?</h2>{amountInput}<p className="muted small">No questionnaire. Your stored assessment determines eligibility when you submit.</p><button disabled={!validAmount} type="submit">Review terms <Icon name="arrow" /></button></form>}
++          {screen !== "apply" && <><section className="quote-summary"><div className="review-row"><span>Loan amount</span><strong>{ugx(amount)}</strong></div><div className="review-row"><span>Sample interest (5%)</span><strong>{ugx(String(amountNumber * .05))}</strong></div><div className="review-row"><span>Sample energy</span><strong>{(amountNumber / 1000).toFixed(2)} kWh</strong></div><div className="review-row"><span>Sample loan term</span><strong>7 days</strong></div><div className="quote-total"><span>Total repayment</span><strong>{ugx(String(amountNumber * 1.05))}</strong></div></section><p className="muted small">Illustrative terms only. In the connected app, the backend supplies the quote and approval decision.</p>{screen === "apply-review" ? <form className="form-panel" onSubmit={event => { event.preventDefault(); if (agreed) go("apply-confirm"); }}><label className="check-row"><input type="checkbox" checked={agreed} onChange={event => setAgreed(event.target.checked)} required />I have reviewed the sample terms.</label><button type="submit" disabled={!agreed}>Continue <Icon name="arrow" /></button><button type="button" className="secondary" onClick={() => go("apply")}>Edit amount</button></form> : <><button onClick={showPreviewResult}>Preview submission <Icon name="arrow" /></button><button className="text-button" onClick={() => go("apply-review")}>Back to terms</button></>}</>}
+         </>}
+       </>}
+-
+-      {screen === "loans" && <>
+-        <Heading eyebrow="ELECTRICITY CREDIT" title="A little more power." text="Understand your loan position and explore your options." />
+-        <Card className="eligibility-card"><div className="section-title"><span className="quick-icon green"><Icon name="shield" /></span><span className="status-pill neutral">Backend required</span></div>
+-          <h2>Your eligibility, explained</h2><p className="muted">Complete your profile to receive an assessment. Your score and approved terms will come from your account.</p>
+-          <div className="score-placeholder"><span>Credit score</span><strong>Unavailable</strong></div>
+-          <button className="secondary" onClick={() => go("profile")}>Complete assessment profile <Icon name="arrow" /></button></Card>
+-        <button className="primary-button" onClick={() => { setAmount(""); go("apply"); }}>Preview a credit request <Icon name="plus" /></button>
+-        <SectionTitle title="Your loans" />{scenario === "empty" ? empty : <Card className="loan-card"><div className="section-title"><h2>Sample electricity loan</h2><span className="status-pill">Disbursed · sample</span></div>
+-          <p className="muted small">SAMPLE-L001 · Home meter</p><span className="muted small">Outstanding amount</span><div className="loan-amount">UGX 7,500</div>
+-          <div className="repayment-progress"><span /></div><div className="progress-labels"><span>Sample principal: UGX 10,000</span><span>Applied: UGX 2,500</span></div>
+-          <p className="muted small">Due date and charges need verified backend terms.</p><button className="secondary" onClick={() => go("loan-detail")}>View loan <Icon name="arrow" /></button></Card>}
+-        <Card className="subtle-card"><Icon name="help" /><h2>Clear before you commit</h2><p className="muted">Review your approved amount, tariff, charges and repayment schedule before submitting a real request.</p></Card>
++      {["purchase", "purchase-review", "repay", "repay-review"].includes(screen) && <>
++        <PageHeading title={screen.startsWith("repay") ? "Pay Loan" : "Buy Units"} text={screen.startsWith("repay") ? "Choose how much you would like to repay." : "Choose an amount to top up your energy."} />
++        <MeterSummary meter={meter} onChange={() => go("meters")} />
++        {!screen.endsWith("review") ? <form className="panel form-panel" onSubmit={event => review(event, screen === "repay" ? "repay-review" : "purchase-review")}>
++          {amountInput}<button disabled={!validAmount} type="submit">Review payment <Icon name="arrow" /></button></form> : <><section className="quote-summary"><div className="review-row"><span>Payment amount</span><strong>{ugx(amount)}</strong></div>{screen === "purchase-review" && <div className="review-row"><span>Sample cloud energy</span><strong>{(amountNumber / 1000).toFixed(2)} kWh</strong></div>}<div className="review-row"><span>Payment type</span><strong>{screen === "repay-review" ? "Loan repayment" : "Electricity purchase"}</strong></div></section><p className="muted small">Design preview: no money is deducted, no PIN is requested, and no payment is submitted.</p><div className="payment-buttons"><button onClick={showPreviewResult}>Preview payment</button><button className="secondary" onClick={back}>Edit amount</button></div></>}
+       </>}
+-
+-      {screen === "loan-detail" && <>
+-        <Heading eyebrow="SAMPLE-L001" title="Electricity loan" text="Sample record · no real obligation" />
+-        <section className="balance-card loan-balance"><span className="balance-tag">SAMPLE OUTSTANDING</span><div className="balance-amount">7,500<span>UGX</span></div>
+-          <div className="balance-split"><div><span>Example principal</span><strong>UGX 10,000</strong></div><div><span>Applied repayment</span><strong>UGX 2,500</strong></div></div></section>
+-        <button className="primary-button" onClick={() => { setAmount(""); go("repay"); }}>Preview self-repayment <Icon name="arrow" /></button>
+-        <Card><SectionTitle title="Loan details" />{[["Intended meter", meters[0].id], ["Interest and fees", "Awaiting backend terms"], ["Due date", "Awaiting backend terms"], ["Tariff", "Awaiting backend terms"]].map(([label, value]) =>
+-          <div className="review-row" key={label}><span>{label}</span><strong>{value}</strong></div>)}</Card>
+-        <Card><SectionTitle title="Energy allocation" /><p className="muted">Loan approval, authorized energy and meter application have separate statuses.</p>
+-          <div className="review-row"><span>Delivery status</span><strong>Awaiting real account data</strong></div></Card>
+-        <Card><SectionTitle title="Repayment history" /><div className="list-row"><span>Sample self-repayment<small>08 Oct · Settled example</small></span><strong>UGX 2,500</strong></div></Card>
+-      </>}
+-
+-      {["purchase", "load", "apply", "repay"].includes(screen) && <>
+-        <Heading eyebrow="REVIEW BEFORE YOU CONTINUE" title={screen === "purchase" ? "Buy electricity" : screen === "load" ? "Load your meter" : screen === "apply" ? "Request electricity credit" : "Repay your loan"}
+-          text={screen === "repay" ? "Sample loan SAMPLE-L001 · outstanding UGX 7,500" : "Choose your meter and review the request details."} />
+-        <form className="panel form-panel transaction-form" onSubmit={review}>
+-          <label>{screen === "repay" ? "Loan meter" : "Your meter"}<select value={screen === "repay" ? 0 : meterIndex} disabled={screen === "repay"} onChange={(event) => setMeterIndex(Number(event.target.value))}>
+-            {meters.map((row, index) => <option key={row.id} value={index}>{row.name} · {row.id}</option>)}</select></label>
+-          {screen === "load" && <div className="form-context"><Icon name="bolt" /><span>Example available entitlement<strong>{meter.available} kWh</strong></span></div>}
+-          <label>{screen === "load" ? "Energy amount (kWh)" : "Amount (whole UGX)"}<div className="amount-field"><span>{screen === "load" ? "kWh" : "UGX"}</span>
+-            <input inputMode={screen === "load" ? "decimal" : "numeric"} placeholder={screen === "load" ? "0.00" : "0"} value={amount} maxLength={12} onChange={(event) => setAmount(event.target.value)} required /></div></label>
+-          {screen === "purchase" && <div className="amount-chips">{["5000", "10000", "20000"].map((value) => <button type="button" className={amount === value ? "active" : ""} key={value} onClick={() => setAmount(value)}>{money(value)}</button>)}</div>}
+-          {(screen === "purchase" || screen === "repay") && <label>Mobile Money phone<input type="tel" placeholder="+256 …" value={phone} onChange={(event) => setPhone(event.target.value)} required /></label>}
+-          {screen === "apply" && <div className="form-context"><Icon name="loan" /><span>Interest, fees and repayment term<strong>Awaiting backend quote</strong></span></div>}
+-          <p className="muted small">{screen === "load" ? "Requests use 0.01 kWh steps. Application requires a matching meter acknowledgement." : screen === "apply" ? "This previews the request form. It does not calculate or approve credit terms." : "No collection is started in preview. Only verified provider settlement can update your real account."}</p>
+-          {error && <p className="error" role="alert">{error}</p>}<button className="primary-button" type="submit">Review {screen === "load" ? "load" : screen === "repay" ? "repayment" : "request"}<Icon name="arrow" /></button>
+-        </form>
+-      </>}
+-
+-      {["purchase-review", "load-review", "apply-review", "repay-review"].includes(screen) && <>
+-        <Heading eyebrow="ONE LAST LOOK" title="Review your request" text="Check the selection, amount and purpose." />
+-        <Card className="review-card"><span className="review-symbol"><Icon name={screen === "load-review" ? "meter" : screen === "apply-review" ? "loan" : "bolt"} /></span>
+-          <span className="muted small">{screen === "load-review" ? "Energy to reserve" : "Requested amount"}</span><h2 className="review-amount">{screen === "load-review" ? `${amount} kWh` : money(amount)}</h2>
+-          {[["Purpose", screen === "purchase-review" ? "Electricity purchase" : screen === "load-review" ? "Own-meter loading" : screen === "apply-review" ? "Electricity loan" : "Self-repayment"], ["Meter", screen === "repay-review" ? `${meters[0].name} · ${meters[0].id}` : `${meter.name} · ${meter.id}`],
+-            ...(screen === "repay-review" ? [["Loan", "SAMPLE-L001"]] : []),
+-            ...(screen === "purchase-review" || screen === "repay-review" ? [["Mobile Money phone", phone]] : []),
+-            ...(screen === "purchase-review" ? [["Electricity and residual", "Awaiting tariff quote"]] : []),
+-            ...(screen === "apply-review" ? [["Rate, charges and term", "Awaiting approved quote"]] : []),
+-          ].map(([label, value]) => <div className="review-row" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+-          <div className="integration-notice"><Icon name="shield" /><p>Preview only. Submission will become available after the backend workflow and financial policy are approved.</p></div>
+-          <button className="primary-button" onClick={unavailable}>About this preview <Icon name="arrow" /></button><button className="text-button" onClick={back}>Edit request</button>
+-        </Card>
+-      </>}
+-
+-      {screen === "activity" && <>
+-        <Heading eyebrow="EVERYTHING IN ONE PLACE" title="Your activity" text="Payments, receipts and account updates." />
+-        <button className="alert-shortcut" onClick={() => go("notifications")}><span className="row-icon"><Icon name="bell" /></span><span><strong>Notifications</strong><small>{read ? "All sample alerts read" : "2 sample updates"}</small></span><Icon name="arrow" /></button>
+-        {scenario === "empty" ? empty : <Card><SectionTitle title="Payment receipts" />{receipts.map((row, index) => <button className="transaction-row" key={row.id} onClick={() => { setReceiptIndex(index); go("receipt"); }}>
+-          <span className="row-icon"><Icon name={row.icon} /></span><span><strong>{row.label}</strong><small>{row.date}</small><span className={`status-pill${row.status === "Pending" ? " pending" : ""}`}>{row.status} · sample</span></span><b>UGX {row.amount}</b>
+-        </button>)}</Card>}
+-        <p className="form-hint"><Icon name="shield" />A pending payment or phone approval is separate from verified settlement.</p>
+-      </>}
+-      {screen === "receipt" && <>
+-        <Heading title="Payment receipt" text="Sample receipt · not proof of a real payment" />
+-        <Card className="review-card"><span className={`review-symbol${receipts[receiptIndex].status === "Pending" ? " amber" : ""}`}><Icon name={receipts[receiptIndex].status === "Pending" ? "activity" : "check"} /></span>
+-          <span className="status-pill">{receipts[receiptIndex].status} · sample</span><h2 className="review-amount">UGX {receipts[receiptIndex].amount}</h2>
+-          {[["Purpose", receipts[receiptIndex].label], ["Reference", receipts[receiptIndex].id], ["Currency", "UGX"], ["Meter", meters[0].id], ["Energy / residual", "Awaiting backend receipt"]].map(([label, value]) =>
+-            <div className="review-row" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+-          <p className="muted small">Real receipts will show the full amount received, the amount applied and any residual requiring reconciliation.</p></Card>
+-      </>}
+-      {screen === "notifications" && <>
+-        <Heading title="Notifications" text="Helpful updates about your electricity account." />
+-        <button className="text-button" disabled={read} onClick={() => setRead(true)}>{read ? "Sample alerts marked read" : "Mark sample alerts as read"}</button>
+-        <Card>{["Your sample payment receipt is ready to view.", "Your sample meter delivery is awaiting an application acknowledgement."].map((message, index) =>
+-          <div className="notification-row" key={message}><span className="row-icon"><Icon name={index === 0 ? "activity" : "meter"} /></span><div><strong>{message}</strong><p className="muted small">Sample update · {read ? "Read" : "Unread"}</p></div>{!read && <span className="unread-dot" />}</div>)}</Card>
+-      </>}
+-
+-      {screen === "account" && <>
+-        <Heading eyebrow="MADE FOR YOUR EVERYDAY" title="Your account" />
+-        <Card className="profile-card"><span className="profile-avatar">{profile.first.charAt(0)}{profile.last.charAt(0)}</span><h2>{profile.first} {profile.last}</h2><p className="muted">alex@example.invalid</p><span className="status-pill neutral">Sample consumer profile</span></Card>
+-        <Card className="menu-card"><MenuRow icon="user" title="Personal details" subtitle="Your profile and assessment" onClick={() => go("profile")} />
+-          <MenuRow icon="lock" title="Account security" subtitle="Password and sign-in" onClick={() => go("security")} />
+-          <MenuRow icon="meter" title="Your meters" subtitle="View assigned meters" onClick={() => go("meters")} />
+-          <MenuRow icon="help" title="Help and information" subtitle="How electricity credit works" onClick={() => go("help")} /></Card>
+-        <button className="logout-button" onClick={onExit}><Icon name="logout" />Leave design preview</button>
+-        <p className="centered muted small">gPawa consumer app · interface preview</p>
+-      </>}
+-      {screen === "profile" && <>
+-        <Heading title="Personal details" text="Edit this sample profile to explore the form." />
+-        <form className="panel form-panel" onSubmit={(event) => { event.preventDefault(); setNotice("Sample profile updated in this preview only. Your real account has not changed."); }}>
+-          <div className="field-pair"><label>First name<input value={profile.first} onChange={(event) => setProfile({ ...profile, first: event.target.value })} required /></label>
+-            <label>Last name<input value={profile.last} onChange={(event) => setProfile({ ...profile, last: event.target.value })} required /></label></div>
+-          <label>Email<input value="alex@example.invalid" readOnly /></label><label>Address<input value={profile.address} onChange={(event) => setProfile({ ...profile, address: event.target.value })} /></label>
+-          <button className="primary-button" type="submit">Save sample details <Icon name="check" /></button></form>
+-        <Card><SectionTitle title="Credit assessment" /><p className="muted">Income, expenditure and energy-use questions will use the backend’s permitted choices. No score is created from this design preview.</p></Card>
+-      </>}
+-      {screen === "security" && <>
+-        <Heading title="Account security" text="Keep access to your account under your control." />
+-        <Card className="menu-card"><MenuRow icon="lock" title="Change password" subtitle="Available in your signed-in account" onClick={() => setNotice("Leave preview and sign in to change your real password. This preview does not store passwords.")} />
+-          <MenuRow icon="shield" title="Email verification" subtitle="Verify before account access" onClick={() => setNotice("Use the verification page from Sign in to verify a real email link.")} /></Card>
+-        <Card className="subtle-card"><Icon name="shield" /><h2>Credentials stay protected</h2><p className="muted">The Android app uses secure storage for refresh credentials. Preview never signs you in or reads your account.</p></Card>
+-      </>}
+-      {screen === "help" && <>
+-        <Heading title="Here to help" text="A few things to know about your electricity account." />
+-        {[ ["What do the energy balances mean?", "Available energy is entitlement you can request for delivery. Reserved energy is committed to a delivery request. Applied energy has an application acknowledgement."],
+-          ["When is a payment complete?", "Django must verify a successful provider payment before purchased energy or loan debt can change. Check Activity if a payment is pending."],
+-          ["Where do credit terms come from?", "Your account assessment and approved backend quote provide the amount, charges, tariff and repayment term. This preview offers no real credit terms."],
+-          ["Can I share or transfer energy?", "Energy sharing and consumer meter-to-meter transfers are disabled. The app supports viewing and loading your own assigned meter."],
+-          ["Where is the privacy information?", "Final consumer privacy information and support contact details must be supplied before release. This preview collects no account information."],
+-        ].map(([title, text]) => <details className="help-item" key={title}><summary>{title}</summary><p>{text}</p></details>)}
+-      </>}
+-      <details className="preview-controls"><summary>Preview display states</summary><div>{(["sample", "empty", "offline"] as const).map((value) =>
+-        <button key={value} className={scenario === value ? "active" : ""} aria-pressed={scenario === value} onClick={() => setScenario(value)}>{value === "sample" ? "Sample records" : value === "empty" ? "Empty account" : "Offline / stale"}</button>)}</div></details>
++      {screen === "account" && <><PageHeading title="Account" text="Your details, preferences and security." /><section className="panel profile-card"><span className="profile-avatar">AE</span><h2>Alex Example</h2><p className="muted">alex@example.com</p><span className="status-pill neutral">Email verified</span></section><section className="panel menu-card"><MenuRow icon="user" title="Personal details" text="Address and account preferences" onClick={() => go("profile")} /><MenuRow icon="lock" title="Change password" text="Keep your account secure" onClick={() => go("security")} /><MenuRow icon="meter" title="My meters" text="Manage your linked meters" onClick={() => go("meters")} /><MenuRow icon="activity" title="Activity & receipts" text="Payments and account updates" onClick={() => go("activity")} /><MenuRow icon="help" title="Help & information" text="Find answers to common questions" onClick={() => go("help")} /></section><button className="logout-button" onClick={onExit}><Icon name="logout" />Exit preview</button></>}
++      {screen === "profile" && <><button className="text-button" onClick={back}><Icon name="back" />Account</button><PageHeading title="Personal details" /><form className="panel form-panel" onSubmit={event => { event.preventDefault(); showPreviewResult(); }}><label>First name<input defaultValue="Alex" /></label><label>Last name<input defaultValue="Example" /></label><label>Email<input type="email" value="alex@example.com" readOnly /></label><label>Address<input placeholder="Your address" /></label><button>Preview save</button></form></>}
++      {screen === "security" && <><button className="text-button" onClick={back}><Icon name="back" />Account</button><PageHeading title="Change password" /><EmptyState icon="lock" title="Use your signed-in account" text="Password changes are unavailable in this design preview." /></>}
++      {screen === "help" && <><button className="text-button" onClick={back}><Icon name="back" />Account</button><PageHeading title="Help & information" /><section className="panel"><h2>Where is my credit score?</h2><p className="muted">Find your assessment on Home. No questionnaire is needed.</p><h2>What are cloud units?</h2><p className="muted">An energy allocation recorded for your meter. Physical readings appear only after a hardware connection.</p></section></>}
++      {screen === "consumption" && <><button className="text-button" onClick={back}><Icon name="back" />My meters</button><PageHeading title="Energy usage" text={meter.label} /><EmptyState icon="chart" title="No meter readings yet" text="Your usage and last-contact time will appear when the meter is connected." /></>}
++      {["activity", "notifications", "receipt"].includes(screen) && <><button className="text-button" onClick={() => go("dashboard")}><Icon name="back" />Home</button><PageHeading title={screen === "notifications" ? "Notifications" : "Activity & receipts"} />{sampleReceipts.map(receipt => <section className="panel" key={receipt.title}><div className="section-title"><h2>{receipt.title}</h2><span className="status-pill">Completed</span></div><div className="list-row"><strong>{ugx(receipt.amount)}</strong><span>{receipt.date}</span></div><p className="muted small">Sample receipt · Home meter</p></section>)}</>}
++      {notice && <section className="panel" role="status"><Icon name="check" /><p>{notice}</p><button className="secondary" onClick={() => go("dashboard")}>Back to Home</button></section>}
+     </main>
+-    <nav className="bottom-nav" aria-label="Preview navigation">{CONSUMER_TABS.map((tab) => <button key={tab.id} aria-current={activeTab === tab.id ? "page" : undefined} onClick={() => go(tab.id)}>
+-      <Icon name={tab.icon} /><span>{tab.label}</span></button>)}</nav>
+-    {notice && <div className="dialog-backdrop"><section ref={dialogRef} className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-dialog-title" onKeyDown={(event) => {
+-      if (event.key === "Tab") event.preventDefault();
+-    }}><span className="review-symbol"><Icon name="shield" /></span><h2 id="preview-dialog-title">Design preview</h2><p>{notice}</p>
+-      <button className="primary-button" onClick={() => setNotice(null)}>Got it <Icon name="check" /></button></section></div>}
++    <nav className="bottom-nav" aria-label="Main navigation">{CONSUMER_TABS.map(item => <button key={item.id} aria-current={tab === item.id ? "page" : undefined} onClick={() => go(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>)}</nav>
+   </div>;
+ }
+--- a/mobile/src/Profile.tsx
++++ b/mobile/src/Profile.tsx
+@@ -66,12 +66,11 @@
+   };
+ 
+   return <>
+-    <p className="muted">Assessment is automatic after meter enrollment. View your stored score and explanation in Dashboard or Loans. No financial or consumption questionnaire is required.</p>
+     {loading && <p className="muted" role="status">Loading account details…</p>}
+     {notice && <p className="tag" role="status">{notice}</p>}
+     <button type="button" className="secondary" disabled={loading || busy} onClick={() => void load()}>Refresh account details</button>
+     {error && <p className="error" role="alert">Account details: {error}</p>}
+-    {fetched && <p className={error || loading ? "stale" : "muted"}>{error || loading ? "Stale — last fetched " : "Fetched "}{dateTime(fetched)}</p>}
++    {fetched && error && <p className="stale">Last updated {dateTime(fetched)}</p>}
+     {details && !details.details_available && <section className="panel"><h2>Account details unavailable</h2>
+       <p className="muted">No account-details record is available. Ask support to review your account.</p></section>}
+     {details?.values && <form className="panel form-panel" onSubmit={(event) => void save(event)}>
+--- a/mobile/src/consumer-navigation.ts
++++ b/mobile/src/consumer-navigation.ts
+@@ -3,31 +3,28 @@
+ export const CONSUMER_TABS = [
+   { id: "dashboard", label: "Home", icon: "home" },
+   { id: "meters", label: "Meters", icon: "meter" },
+-  { id: "consumption", label: "Usage", icon: "chart" },
+-  { id: "loans", label: "Credit", icon: "loan" },
+-  { id: "activity", label: "Activity", icon: "activity" },
++  { id: "loans", label: "Loans", icon: "loan" },
++  { id: "purchase", label: "Buy Units", icon: "bolt" },
+   { id: "account", label: "Account", icon: "user" },
+ ] as const satisfies ReadonlyArray<{ id: string; label: string; icon: IconName }>;
+ export type ConsumerTab = typeof CONSUMER_TABS[number]["id"];
+-export type PreviewScreen = ConsumerTab | "purchase" | "purchase-review" | "load" |
+-  "load-review" | "apply" | "apply-review" | "loan-detail" | "repay" |
++export type PreviewScreen = ConsumerTab | "consumption" | "activity" | "purchase-review" | "load" |
++  "load-review" | "apply" | "apply-review" | "apply-confirm" | "loan-detail" | "repay" |
+   "repay-review" | "profile" | "security" | "help" | "notifications" | "receipt";
+-
++export function activeConsumerTab(screen: string): ConsumerTab {
++  if (screen.startsWith("purchase")) return "purchase";
++  if (["meters", "consumption", "load", "load-review"].includes(screen)) return "meters";
++  if (["loans", "apply", "apply-review", "apply-confirm", "loan-detail", "repay", "repay-review"].includes(screen)) return "loans";
++  if (["account", "profile", "security", "help"].includes(screen)) return "account";
++  return "dashboard";
++}
+ export function previewParent(screen: PreviewScreen): PreviewScreen | null {
+   const parents: Partial<Record<PreviewScreen, PreviewScreen>> = {
+-    purchase: "dashboard", "purchase-review": "purchase", load: "meters", "load-review": "load",
+-    apply: "loans", "apply-review": "apply", "loan-detail": "loans", repay: "loan-detail",
++    "purchase-review": "purchase", load: "meters", "load-review": "load", consumption: "meters",
++    apply: "loans", "apply-review": "apply", "apply-confirm": "apply-review", "loan-detail": "loans", repay: "loan-detail",
+     "repay-review": "repay", profile: "account", security: "account", help: "account",
+     notifications: "activity", receipt: "activity",
+   };
+   return parents[screen] ?? (screen === "dashboard" ? null : "dashboard");
+ }
+-
+-export function previewTab(screen: PreviewScreen): ConsumerTab {
+-  if (screen.startsWith("purchase")) return "dashboard";
+-  if (screen.startsWith("load")) return "meters";
+-  if (["apply", "apply-review", "loan-detail", "repay", "repay-review"].includes(screen)) return "loans";
+-  if (["profile", "security", "help"].includes(screen)) return "account";
+-  if (["notifications", "receipt"].includes(screen)) return "activity";
+-  return screen as ConsumerTab;
+-}
++export const previewTab = (screen: PreviewScreen): ConsumerTab => activeConsumerTab(screen);
+--- a/mobile/src/format.ts
++++ b/mobile/src/format.ts
+@@ -1,11 +1,18 @@
++/** Display formatting only. Financial calculations stay on the server. */
++function decimalText(value: string | null | undefined): string | null {
++  if (value == null || !/^-?\d+(?:\.\d+)?$/.test(value.trim())) return null;
++  const [whole, fraction] = value.trim().split(".");
++  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
++  return grouped + (fraction && /[1-9]/.test(fraction) ? `.${fraction}` : "");
++}
+ export function energy(value: string | null | undefined): string {
+-  return value == null ? "Unavailable" : `${value} kWh`;
++  const formatted = decimalText(value);
++  return formatted == null ? "Unavailable" : `${formatted.includes(".") ? formatted : `${formatted}.00`} kWh`;
+ }
+-
+ export function ugx(value: string | null | undefined): string {
+-  return value == null ? "Unavailable" : `UGX ${value}`;
++  const formatted = decimalText(value);
++  return formatted == null ? "Unavailable" : `UGX ${formatted}`;
+ }
+-
+ export function dateTime(value: string | null | undefined): string {
+   if (!value) return "Unavailable";
+   const date = new Date(value);
+--- a/mobile/src/style.css
++++ b/mobile/src/style.css
+@@ -328,3 +328,193 @@
+ @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+ 
+ .form-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
++
++/* October consumer redesign. Scoped: welcome / login / signup remain unchanged. */
++.consumer-redesign {
++  --ink: #17243b; --muted: #667a98; --accent: #096cf0; --line: #dce5f0;
++  color: var(--ink); background: linear-gradient(180deg, #eaf2fb 0, #f5f8fc 520px);
++  min-height: 100svh; padding-bottom: calc(102px + env(safe-area-inset-bottom));
++}
++.consumer-redesign [hidden] { display: none !important; }
++.consumer-redesign h1 { font-size: clamp(1.65rem, 6.4vw, 2rem); letter-spacing: -.045em; line-height: 1.2; }
++.consumer-redesign h2 { font-size: 1.1rem; }
++.consumer-redesign h3 { font-size: 1rem; }
++.consumer-redesign p { line-height: 1.55; }
++.consumer-redesign .muted { font-size: .88rem; }
++.consumer-redesign .small { font-size: .78rem; }
++.consumer-redesign .eyebrow { color: #526c92; font-size: .65rem; letter-spacing: .13em; }
++.consumer-redesign .topbar { background: #eaf1faee; border-color: #dce5ef; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; }
++.topbar-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
++.topbar-page { font-size: .75rem; color: var(--muted); padding-left: 12px; border-left: 1px solid #ccd8e7; }
++.consumer-redesign .brand-lockup { font-size: 1.4rem; color: #17243b; }
++.consumer-redesign .brand-dot { color: #1683ef; }
++.consumer-redesign .brand-lockup img { width: 28px; height: 28px; }
++.consumer-redesign .header-actions { gap: 5px; }
++.consumer-redesign .header-actions .icon-button { width: 44px; height: 44px; background: #f7faff; border: 1px solid #e1e8f2; border-radius: 12px; }
++.consumer-redesign .avatar-button { width: 44px; height: 44px; background: #dceaff; color: #1e58a1; }
++.consumer-redesign .content { max-width: 680px; padding: 16px 18px 24px; }
++.consumer-redesign .page-heading { margin: 18px 0 22px; }
++.consumer-redesign button { background: linear-gradient(110deg, #36b6e6, #2874ce); border-radius: 12px; min-height: 48px; }
++.consumer-redesign .primary-button { background: linear-gradient(110deg, #36b6e6, #2874ce); box-shadow: 0 5px 12px #286ecd14; }
++.consumer-redesign button.secondary { background: #f3f7fc; border: 1px solid #dae4f1; color: #1c3555; }
++.consumer-redesign .text-button { background: transparent; color: var(--accent); padding: 7px 0; }
++.consumer-redesign button:focus-visible, .consumer-redesign summary:focus-visible, .consumer-redesign a:focus-visible { outline: 3px solid #0670ed; outline-offset: 3px; }
++.consumer-redesign input:focus, .consumer-redesign select:focus, .consumer-redesign textarea:focus { outline: 2px solid #1683ff; }
++.consumer-redesign input, .consumer-redesign select, .consumer-redesign textarea { background: #f8fafe; border: 1px solid #dbe4f0; border-radius: 11px; color: var(--ink); }
++.consumer-redesign input[type=checkbox] { width: 20px; min-height: 20px; height: 20px; accent-color: #0877f8; }
++.consumer-redesign .form-panel { display: grid; gap: 16px; }
++.consumer-redesign label { display: grid; gap: 8px; font-size: .92rem; line-height: 1.5; }
++.consumer-redesign label.check-row { display: flex; gap: 10px; align-items: flex-start; }
++.consumer-redesign .panel { border-radius: 17px; border-color: #dce4ef; padding: 20px; margin: 16px 0; box-shadow: 0 3px 8px #20385d05; min-width: 0; }
++.consumer-redesign .panel .panel { box-shadow: none; }
++.consumer-redesign .row-icon { background: #eaf3ff; color: #1677df; border-radius: 12px; width: 44px; height: 44px; }
++.consumer-redesign .status-pill { background: #e7f6ec; color: #226f44; font-size: .72rem; padding: 5px 9px; border-radius: 20px; }
++.consumer-redesign .status-pill.neutral { background: #eaf2ff; color: #365b8d; }
++.consumer-redesign .status-pill.pending { background: #fff3dc; color: #8a5b13; }
++.consumer-redesign .selected-meter { margin: 0 0 16px; padding: 15px; gap: 12px; background: #fff; border-radius: 15px; }
++.consumer-redesign .selected-meter strong { font-size: .96rem; margin-top: 3px; }
++.consumer-redesign .selected-meter small { font-size: .75rem; margin: 2px 0; }
++.consumer-redesign .selected-meter .icon:last-child { width: 16px; }
++.consumer-redesign .selected-meter > span:nth-child(2) { min-width: 0; }
++.meter-number { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
++.consumer-redesign .text-accent { color: #0877ec; font-size: .76rem; }
++.demo-notice { position: relative; margin: 0 0 10px auto; width: fit-content; max-width: 100%; }
++.demo-notice > summary { display: flex; align-items: center; gap: 7px; padding: 6px 10px; min-height: 36px; border: 1px solid #d5e0ed; border-radius: 20px; color: #526682; background: #f6f9fd; font-size: .72rem; cursor: pointer; list-style: none; }
++.demo-notice > summary::-webkit-details-marker { display: none; }
++.demo-notice > summary .icon { width: 14px; height: 14px; }
++.demo-dot { width: 6px; height: 6px; background: #e29b2f; border-radius: 50%; }
++.demo-notice > div { max-width: 340px; padding: 14px; margin-top: 8px; background: #fff; border: 1px solid var(--line); border-radius: 12px; font-size: .82rem; }
++.demo-notice p { margin-bottom: 0; }
++.energy-hero { position: relative; overflow: hidden; padding: 22px; border-radius: 20px; background: linear-gradient(120deg, #155fc4, #1386d7 70%, #2fadda); color: #fff; box-shadow: 0 10px 24px #1767c824; }
++.energy-hero-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
++.energy-hero-heading > span:first-child { display: flex; align-items: center; gap: 7px; font-size: .9rem; }
++.hero-pill { border: 1px solid #ffffff50; background: #ffffff14; padding: 4px 8px; font-size: .65rem; border-radius: 20px; }
++.energy-hero-value { margin: 24px 0 5px; font-size: clamp(1.8rem, 8vw, 2.8rem); font-weight: 750; letter-spacing: -.05em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
++.energy-hero > p { font-size: .8rem; color: #e1f2ff; margin: 0 0 22px; }
++.energy-hero-footer { border-top: 1px solid #ffffff35; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
++.energy-hero-footer > span { font-size: .77rem; color: #e2efff; }
++.energy-hero-footer strong { display: block; font-size: .95rem; color: white; margin-top: 4px; }
++.consumer-redesign .energy-hero-footer button { display: flex; gap: 7px; align-items: center; background: #ffffff16; border: 1px solid #ffffff40; font-size: .76rem; min-height: 44px; padding: 9px 12px; }
++.home-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
++.consumer-redesign .action-tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 17px 14px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 16px; text-align: left; }
++.action-symbol { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #0a73dd; background: #e9f3ff; }
++.action-tile:nth-child(2) .action-symbol { background: #e3f7fc; color: #148ba8; }
++.action-tile > strong { font-size: .88rem; }
++.action-tile > span:not(.action-symbol) { font-size: .72rem; font-weight: 400; color: var(--muted); line-height: 1.45; }
++.action-tile > .icon { position: absolute; top: 21px; right: 14px; width: 16px; color: #6086b6; }
++.credit-summary-grid { display: grid; grid-template-columns: .85fr 1.15fr; gap: 14px; align-items: center; }
++.credit-summary-grid > div + div { border-left: 1px solid var(--line); padding-left: 18px; }
++.credit-summary-grid .muted { display: block; font-size: .78rem; }
++.credit-score { font-size: 2.7rem; letter-spacing: -.06em; display: block; line-height: 1.4; color: #176ecd; }
++.credit-score small { font-size: .85rem; color: var(--muted); letter-spacing: normal; font-weight: 500; }
++.credit-limit { display: block; font-size: 1.1rem; margin-top: 8px; overflow-wrap: anywhere; }
++.credit-summary-grid .text-button { font-size: .78rem; min-height: 44px; }
++.info-disclosure { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; color: var(--muted); font-size: .82rem; }
++.info-disclosure > summary { cursor: pointer; padding: 9px 0; font-size: .83rem; font-weight: 600; color: #344e70; min-height: 44px; }
++.info-disclosure p { font-size: .82rem; }
++.connection-note { display: flex; align-items: flex-start; gap: 10px; padding: 16px 2px; color: #536c8a; }
++.connection-note > .icon { width: 20px; margin-top: 2px; }
++.connection-note > div { flex: 1; }
++.connection-note strong { font-size: .83rem; }
++.connection-note p { font-size: .76rem; margin: 4px 0; }
++.connection-note button { font-size: .76rem; }
++.consumer-redesign .meter-choice { background: #fff; color: var(--ink); padding: 18px; border-radius: 16px; gap: 16px; }
++.consumer-redesign .meter-choice.chosen { border: 2px solid #2183ff; padding: 17px; background: #e9f2ff; box-shadow: 0 3px 9px #247ce510; }
++.consumer-redesign .meter-card-heading > span:nth-child(2) { min-width: 0; }
++.consumer-redesign .meter-card-heading strong { color: var(--ink); font-size: 1rem; }
++.consumer-redesign .meter-card-heading small { font-size: .8rem; }
++.consumer-redesign .selected-tick { background: #1279ec; }
++.consumer-redesign .meter-id { font-size: .8rem !important; font-weight: 500; }
++.detail-grid { display: grid; gap: 10px; margin: 18px 0; }
++.detail-grid > div { border: 1px solid #dce5f1; padding: 14px; border-radius: 12px; }
++.detail-grid span { display: block; color: var(--muted); font-size: .8rem; }
++.detail-grid strong { display: block; font-size: 1.1rem; margin-top: 6px; }
++.button-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0 8px; }
++.consumer-redesign .menu-card { padding: 3px 18px; }
++.consumer-redesign .menu-row { background: transparent; color: var(--ink); padding: 17px 0; border-radius: 0; }
++.consumer-redesign .menu-row strong { font-size: .88rem; }
++.consumer-redesign .menu-row small { font-size: .74rem; line-height: 1.5; }
++.consumer-redesign .profile-avatar { color: #206ec3; background: linear-gradient(135deg, #ddecff, #e4f5ff); border-radius: 50%; }
++.consumer-redesign .logout-button { background: #fff2f2; color: #ad343d; border: 1px solid #f0d4d7; }
++.consumer-redesign .list-row { font-size: .86rem; }
++.consumer-redesign .list-row strong { font-size: .87rem; }
++.consumer-redesign .list-row small { font-size: .75rem; }
++.consumer-redesign .transaction-row { background: transparent; color: var(--ink); }
++.consumer-redesign .transaction-row strong { font-size: .87rem; }
++.consumer-redesign .transaction-row small { font-size: .75rem; line-height: 1.4; }
++.consumer-redesign .transaction-row b { font-size: .84rem; white-space: normal; text-align: right; overflow-wrap: anywhere; }
++.consumer-redesign .bottom-nav { max-width: 680px; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); border: 1px solid #dce4ef; border-bottom: 0; background: #fff; border-radius: 20px 20px 0 0; box-shadow: 0 -5px 24px #1c335c09; }
++.consumer-redesign .bottom-nav button { background: transparent; color: #667996; gap: 6px; border-radius: 12px; font-size: .69rem; min-height: 58px; padding: 9px 2px; }
++.consumer-redesign .bottom-nav button[aria-current=page] { background: #eaf3ff; color: #096ded; }
++.consumer-redesign .bottom-nav .icon { width: 22px; height: 22px; }
++.consumer-redesign .offline { border-radius: 12px; margin: 10px 0; }
++.consumer-redesign .offline .text-button { display: inline; margin-left: 8px; }
++.consumer-redesign .finance-workspace { min-width: 0; }
++.consumer-redesign .finance-workspace form { min-width: 0; }
++.consumer-redesign .empty-icon { color: #307cc2; background: #edf5ff; }
++.empty-inline { text-align: center; padding: 24px 8px; color: var(--muted); }
++.empty-inline > .icon { color: #7b9cbe; width: 32px; height: 32px; }
++.consumer-redesign .segmented-control { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: #e5ecf5; border-radius: 12px; padding: 5px; margin-bottom: 22px; }
++.consumer-redesign .segmented-control button { background: transparent; color: #526b8d; box-shadow: none; min-height: 44px; padding: 9px; font-weight: 500; }
++.consumer-redesign .segmented-control button[aria-pressed=true] { color: var(--ink); background: #fff; box-shadow: 0 2px 5px #20325216; }
++.loan-stepper { display: grid; grid-template-columns: repeat(3,1fr); list-style: none; padding: 0; margin: 25px 0; }
++.loan-stepper li { position: relative; display: grid; justify-items: center; gap: 8px; font-size: .74rem; color: var(--muted); text-align: center; }
++.loan-stepper li:not(:last-child)::after { content: ''; position: absolute; top: 18px; left: calc(50% + 25px); width: calc(100% - 50px); height: 3px; border-radius: 5px; background: #d5e1ef; }
++.loan-stepper li > span { display: grid; place-items: center; width: 38px; height: 38px; border: 2px solid #d4dfed; border-radius: 50%; background: #f5f9ff; font-weight: 600; font-size: 1rem; }
++.loan-stepper li.current { color: #0874f5; }
++.loan-stepper li.current > span { border-color: #1681ff; background: #e4efff; }
++.loan-stepper li.done > span { color: #fff; background: #32a8e4; border-color: #32a8e4; }
++.loan-stepper li.done::after { background: #32a8e4; }
++.consumer-redesign .quote-summary { border-radius: 17px; border: 1px solid var(--line); padding: 6px 18px; background: white; margin: 20px 0; }
++.quote-summary .review-row { font-size: .88rem; }
++.quote-summary .review-row > span { flex-basis: 55%; }
++.quote-summary .review-row strong { font-size: .88rem; }
++.quote-total { display: flex; justify-content: space-between; gap: 18px; padding: 20px 0; font-size: .92rem; font-weight: 600; }
++.quote-total strong { color: #168fe0; font-size: 1.1rem; text-align: right; }
++.consumer-redesign .amount-chips button { background: #edf4ff; color: #3466a1; border: 1px solid #d7e5f8; min-height: 44px; font-size: .75rem; }
++.consumer-redesign .amount-chips button.active { background: #dfefff; color: #0967cc; border-color: #549af0; }
++.consumer-redesign .preview-banner { background: #eaf2ff; color: #41618c; border-color: #d5e1f3; font-size: .74rem; min-height: 44px; }
++.consumer-redesign .preview-banner button { background: transparent; color: #225da5; min-height: 36px; }
++.consumer-redesign.preview-shell .topbar { top: calc(44px + env(safe-area-inset-top)); }
++.consumer-redesign .preview-controls button { background: #eef4fc; color: #48678f; }
++.consumer-redesign .preview-controls button.active { background: #dbeaff; color: #175cae; }
++.consumer-redesign .preview-dialog .text-button { justify-content: center; width: 100%; }
++@media (max-width: 370px) {
++  .consumer-redesign .content { padding: 14px; }
++  .consumer-redesign .panel { padding: 16px; }
++  .consumer-redesign .menu-card { padding: 3px 14px; }
++  .topbar-page { display: none; }
++  .consumer-redesign .topbar { padding-left: 14px; padding-right: 14px; }
++  .credit-limit { font-size: 1rem; }
++  .consumer-redesign .action-tile { padding: 15px 12px; }
++}
++@media (min-width: 700px) {
++  .consumer-redesign .topbar { padding-left: max(24px, calc((100vw - 644px)/2)); padding-right: max(24px, calc((100vw - 644px)/2)); }
++  .consumer-redesign .content { padding: 20px 24px; }
++}
++
++.consumer-redesign .payment-buttons { display: grid; gap: 10px; }
++.consumer-redesign .payment-buttons > button { width: 100%; }
++
++/* Connected finance screens. These selectors do not affect the default Next.js view. */
++.consumer-redesign .mobile-finance { min-width: 0; }
++.consumer-redesign .finance-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
++.consumer-redesign .finance-toolbar .text-button { font-size: .8rem; }
++.consumer-redesign .mobile-finance .form-panel { display: grid; gap: 16px; }
++.consumer-redesign .mobile-finance .form-panel > button { width: 100%; }
++.consumer-redesign .loan-balance { display: block; font-size: 1.7rem; margin: 8px 0 18px; letter-spacing: -.04em; overflow-wrap: anywhere; }
++.consumer-redesign .payment-amount { font-size: 1.35rem; display: block; margin: 16px 0 4px; }
++.consumer-redesign .reference { overflow-wrap: anywhere; font-size: .75rem; color: var(--muted); }
++.consumer-redesign .payment-disclosure { padding: 12px; border-radius: 10px; background: #eef5ff; color: #3a5d88; font-size: .8rem; }
++.consumer-redesign .pending-summary { background: #fff5e4; color: #715627; padding: 14px; border: 1px solid #efdfc1; border-radius: 12px; margin: 10px 0; }
++.consumer-redesign .pending-summary strong { font-size: .9rem; }
++.consumer-redesign .pending-summary p { font-size: .8rem; margin: 5px 0; }
++.consumer-redesign .payment-progress { display: flex; gap: 12px; padding: 16px 0; }
++.consumer-redesign .payment-progress .loading-spinner { width: 24px; height: 24px; margin: 4px 0; flex: 0 0 24px; }
++.consumer-redesign .payment-progress strong { font-size: .9rem; }
++.consumer-redesign .payment-progress p, .consumer-redesign .payment-progress small { font-size: .78rem; margin: 4px 0; color: var(--muted); }
++.consumer-redesign .receipt-filters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 16px 0; }
++.consumer-redesign .receipt-filters button { font-size: .76rem; padding: 10px 5px; }
++.consumer-redesign .receipt-filters button[aria-pressed=true] { background: #e1efff; border-color: #7caeea; color: #145fb2; }
++.consumer-redesign .mobile-finance .section-title { flex-wrap: wrap; }
++.consumer-redesign .mobile-finance .quote-summary { margin: 0; }
+--- a/frontend/src/components/sandbox-consumer.tsx
++++ b/frontend/src/components/sandbox-consumer.tsx
+@@ -3,15 +3,18 @@
+ import { parseStoredDemoAssessment, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, testPhone,
+   type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote } from "../lib/sandbox";
+ 
++import SandboxMobileView, { type ConsumerFinanceView, type FinanceDestination } from "./sandbox-mobile-view";
++
+ const describe = (error: unknown) => error instanceof Error ? error.message : "Sandbox request failed. Refresh to recover stored status.";
+ const when = (time: string | null) => time ? new Date(time).toLocaleString() : "Unavailable";
+ const DEMO_PENDING = "Demo payment: simulating phone authorization. No PIN or real money is required.";
+ const DEMO_SUCCESS = "Demo payment successful — no real money was deducted.";
+ 
+ /** Shared UI; transport is injected. No Next server/cookie or mobile token imports. */
+-export default function SandboxConsumer({ client, owner, meters, selectedMeter, capabilities, onChanged }: {
++export default function SandboxConsumer({ client, owner, meters, selectedMeter, capabilities, onChanged, view = "all", onNavigate, refreshVersion = 0 }: {
+   client: SandboxClient; owner: number; meters: TestMeter[]; selectedMeter: TestMeter | null;
+   capabilities: SandboxCapabilities; onChanged?: () => void;
++  view?: ConsumerFinanceView | "all"; onNavigate?: (view: FinanceDestination) => void; refreshVersion?: number;
+ }) {
+   const demo = capabilities.provider === "LOCAL_DEMO";
+   const environment = demo ? "UGX_DEMO" : "MTN_SANDBOX";
+@@ -19,6 +22,7 @@
+   const validAmount = demo ? testDemoAmount : testAmount;
+   const money = (value: string | null | undefined) => testMoney(value, currency);
+   const [clock, setClock] = useState(Date.now);
++  const formVersion = useRef(0);
+   const nextAttempt = useRef(new Map<string, number>());
+   const [assessment, setAssessment] = useState<Assessment | null>(null);
+   const [policy, setPolicy] = useState<TestPolicy | null>(null);
+@@ -102,9 +106,9 @@
+       }
+     }
+   }, [client, owner, environment, demo]);
+-  useEffect(() => { void refresh(); }, [refresh, selectedMeter?.id]);
+-  useEffect(() => {
+-    const changed = () => { setQuote(null); setAccepted(false); };
++  useEffect(() => { void refresh(); }, [refresh, selectedMeter?.id, refreshVersion]);
++  useEffect(() => {
++    const changed = () => { formVersion.current++; setQuote(null); setAccepted(false); };
+     changed();
+   }, [selectedMeter?.id]);
+   useEffect(() => {
+@@ -114,6 +118,18 @@
+     const interval = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 30000);
+     return () => { window.clearInterval(interval); window.removeEventListener("offline", onOffline); window.removeEventListener("online", onOnline); };
+   }, [refresh]);
++  // A single mounted controller serves the mobile tabs; navigation never initiates a payment.
++  useEffect(() => {
++    const next = view === "purchase" ? "PURCHASE" : view === "apply" || view === "loans" ? "LOAN" : null;
++    if (next && next !== purpose) { formVersion.current++; setPurpose(next); setQuote(null); setAccepted(false); }
++  }, [view, purpose]);
++  useEffect(() => {
++    if (!quote) return;
++    setClock(Date.now());
++    const timer = window.setInterval(() => setClock(Date.now()), 1000);
++    return () => window.clearInterval(timer);
++  }, [quote]);
++
+   const perform = async (work: () => Promise<void>) => {
+     if (inFlight.current || reading.current || offline) return;
+     inFlight.current = true;
+@@ -126,14 +142,15 @@
+   const getQuote = (event: FormEvent) => {
+     event.preventDefault();
+     if (!selectedMeter?.sandbox_inventory || !validAmount(amount)) { setError("Add or select a linked prototype meter and enter a positive matching test amount."); return; }
+-    const meterId = selectedMeter.id; const identity = epoch.current;
++    const meterId = selectedMeter.id; const identity = epoch.current; const revision = formVersion.current; const intent = purpose;
+     void perform(async () => {
+       const q = await client.post<TestQuote>("sandbox/quotes/", { meter_id: meterId, amount, purpose });
+-      if (current(identity) && destination.current === meterId) { setQuote(q); setAccepted(false); }
++      if (current(identity) && destination.current === meterId && formVersion.current === revision && q.terms.purpose === intent) { setQuote(q); setAccepted(false); }
+     });
+   };
+   const submit = () => {
+-    if (!quote || !accepted || (purpose === "PURCHASE" && !demo && !testPhone(phone))) return;
++    if (!quote || !accepted || quote.terms.purpose !== purpose || Date.parse(quote.expires_at) <= Date.now() ||
++      (purpose === "PURCHASE" && !demo && !testPhone(phone))) return;
+     const terms = quote; const kind = purpose; const identity = epoch.current;
+     void perform(async () => {
+       const key = readRetry(owner, kind, environment) || crypto.randomUUID(); writeRetry(owner, kind, key, environment);
+@@ -202,6 +219,21 @@
+   const selectedLoan = loans.find(row => row.id === loanId && row.environment === environment && row.status === "DISBURSED");
+   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
+   const stale = !!error || offline;
++  if (view !== "all") return <SandboxMobileView
++    view={view} navigate={onNavigate ?? (() => {})} demo={demo} currency={currency} environment={environment}
++    capabilities={capabilities} assessment={assessment} policy={policy} loans={loans} payments={payments}
++    meters={meters} selectedMeter={selectedMeter} purpose={purpose} amount={amount}
++    setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
++    quote={quote} clearQuote={() => { formVersion.current++; setQuote(null); setAccepted(false); }}
++    accepted={accepted} setAccepted={setAccepted} phone={phone} setPhone={setPhone}
++    loanId={loanId} selectLoan={id => { setLoanId(id); setRepayment(""); setRepayAccepted(false); }}
++    repayment={repayment} setRepayment={setRepayment} repayAccepted={repayAccepted} setRepayAccepted={setRepayAccepted}
++    blocked={blocked} busy={busy} refreshing={refreshing} offline={offline} unresolved={unresolved} pending={pending}
++    error={error} notice={notice} fetched={fetched} clock={clock} validAmount={validAmount} validPhone={testPhone(phone)}
++    refresh={() => void refresh()} getQuote={getQuote} submit={submit} repay={repay}
++    checkPayment={row => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); })}
++  />;
++
+   return <section className="sandbox-consumer panel">
+     <h2>{demo ? "UGX DEMO / NO REAL MONEY" : "EUR TEST / MTN SANDBOX"}</h2>
+     <p>{demo ? "Local simulator. No real money or actual phone authorization. You may apply for one UGX demo loan alongside an existing EUR loan, without converting or closing it." : "EUR test currency only."} Core UGX debt, wallets and real scores remain separate. Cloud allocation is not confirmed meter delivery.</p>
+--- /dev/null
++++ b/frontend/src/components/sandbox-mobile-view.tsx
+@@ -0,0 +1,142 @@
++"use client";
++
++import { useState, type FormEvent } from "react";
++import { demoCountdown, type Assessment, type SandboxCapabilities, type TestCurrency, type TestEnvironment,
++  type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote } from "../lib/sandbox";
++
++export type ConsumerFinanceView = "home" | "loans" | "apply" | "purchase" | "activity" | "hidden";
++export type FinanceDestination = "loans" | "apply" | "purchase" | "activity" | "meters";
++export type MobileFinanceProps = {
++  view: ConsumerFinanceView; navigate: (view: FinanceDestination) => void;
++  demo: boolean; currency: TestCurrency; environment: TestEnvironment; capabilities: SandboxCapabilities;
++  assessment: Assessment | null; policy: TestPolicy | null; loans: TestLoan[]; payments: TestPayment[];
++  meters: TestMeter[]; selectedMeter: TestMeter | null; purpose: "LOAN" | "PURCHASE";
++  amount: string; setAmount: (value: string) => void; quote: TestQuote | null; clearQuote: () => void;
++  accepted: boolean; setAccepted: (value: boolean) => void; phone: string; setPhone: (value: string) => void;
++  loanId: string; selectLoan: (id: string) => void; repayment: string; setRepayment: (value: string) => void;
++  repayAccepted: boolean; setRepayAccepted: (value: boolean) => void;
++  blocked: boolean; busy: boolean; refreshing: boolean; offline: boolean; unresolved: boolean; pending: boolean;
++  error: string | null; notice: string | null; fetched: string | null; clock: number;
++  validAmount: (value: string) => boolean; validPhone: boolean;
++  refresh: () => void; getQuote: (event: FormEvent) => void; submit: () => void; repay: (event: FormEvent) => void;
++  checkPayment: (row: TestPayment) => void;
++};
++
++/** Display exact strings; no lending calculation or currency conversion occurs here. */
++function money(value: string | null | undefined, currency: TestCurrency): string {
++  if (value == null || !/^\d+(?:\.\d+)?$/.test(value)) return "Unavailable";
++  const [whole, fraction] = value.split(".");
++  return `${currency === "EUR" ? "EUR TEST" : "UGX"} ${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction && /[1-9]/.test(fraction) ? `.${fraction}` : ""}`;
++}
++const when = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Unavailable";
++const label = (status: string) => ({ DISBURSED: "Active", COMPLETED: "Repaid", REJECTED: "Not approved", SETTLED: "Completed", PENDING: "Pending", FAILED: "Failed" }[status] ?? status);
++function InfoRow({ title, value }: { title: string; value: string }) { return <div className="review-row"><span>{title}</span><strong>{value}</strong></div>; }
++
++export default function SandboxMobileView(p: MobileFinanceProps) {
++  const [showRepayment, setShowRepayment] = useState(false);
++  const [reviewRepayment, setReviewRepayment] = useState(false);
++  const [confirming, setConfirming] = useState(false);
++  const [filter, setFilter] = useState<"all" | "PURCHASE" | "LOAN_REPAYMENT">("all");
++  const currentLoans = p.loans.filter(loan => loan.environment === p.environment);
++  const oldLoans = p.loans.filter(loan => loan.environment !== p.environment);
++  const currentLoan = currentLoans.find(loan => loan.status === "DISBURSED");
++  const selectedLoan = currentLoans.find(loan => loan.id === p.loanId && loan.status === "DISBURSED");
++  const ready = p.assessment && (!p.demo || p.assessment.assessment_status === "READY");
++  const score = ready && !p.assessment?.starter ? p.assessment?.score : null;
++  const allowed = p.purpose === "LOAN" ? p.capabilities.loans : p.capabilities.purchases;
++  const activeQuote = p.quote?.terms.purpose === p.purpose ? p.quote : null;
++  const expired = activeQuote ? Date.parse(activeQuote.expires_at) <= p.clock : false;
++  const chooseRepayment = (loan: TestLoan) => {
++    p.selectLoan(loan.id); setShowRepayment(true); setReviewRepayment(false); p.navigate("loans");
++  };
++  const disclosure = p.demo ? "Demo payment: no real money is deducted and no phone PIN is required." : "MTN sandbox payment in EUR TEST. No real money is collected.";
++  const phoneField = !p.demo && <label>MTN sandbox number<input inputMode="numeric" autoComplete="off" value={p.phone} onChange={e => p.setPhone(e.target.value)} required /><small className="muted">Use your configured test scenario number, 10–15 digits. Never enter a PIN.</small></label>;
++  const assessmentCard = <section className="panel credit-summary" aria-label="Credit overview">
++    <div className="section-title"><h2>Credit overview</h2>{ready && <span className={`status-pill ${p.assessment?.eligible ? "" : "pending"}`}>{p.assessment?.eligible ? "Eligible" : "Not eligible"}</span>}</div>
++    <div className="credit-summary-grid"><div><span className="muted">Your score</span><strong className="credit-score">{!p.fetched ? "…" : score ?? "—"}{score != null && <small>/100</small>}</strong></div><div><span className="muted">Borrowing limit</span><strong className="credit-limit">{money(p.assessment?.maximum, p.currency)}</strong><button type="button" className="text-button" onClick={() => p.navigate("apply")}>View loan options →</button></div></div>
++    {p.assessment?.reason && <p className="muted small">{p.assessment.reason}</p>}
++    {!ready && p.fetched && <p className="muted">Assessment {p.assessment?.assessment_status?.toLowerCase() || "unavailable"}. Link your meter and refresh.</p>}
++    {p.assessment?.starter && <p className="muted small">Starter allowance; no established credit score yet.</p>}
++    <details className="info-disclosure"><summary>How your score is calculated</summary>
++      <p>{p.demo ? "Demo assessment — simulated account information." : "Sandbox assessment."} No questionnaire is needed.</p>
++      {Object.entries(p.assessment?.factors ?? {}).map(([key, value]) => <InfoRow key={key} title={key.replaceAll("_", " ")} value={`${value}${p.assessment?.categories?.[key] ? ` · ${p.assessment.categories[key]}` : ""}`} />)}
++      <InfoRow title="Purchase contribution" value={p.assessment?.purchase_points == null ? "Unavailable" : `${p.assessment.purchase_points} points`} />
++      <p className="small">Assessed {when(p.assessment?.assessed_at)} · {p.assessment?.scoring_policy_version || p.assessment?.policy_id}</p>
++      {p.policy && <p className="small">Settled billed purchases: {money(p.assessment?.qualifying_billed_test ?? p.assessment?.qualifying_billed_eur, p.currency)}. One point per {money(p.policy.purchase_per_point, p.currency)}, capped at {p.policy.purchase_score_cap}. Refreshing does not award points.</p>}
++    </details>
++  </section>;
++
++  const paymentCard = (row: TestPayment) => <article className="panel payment-card" key={row.reference}>
++    <div className="section-title"><h3>{row.purpose === "PURCHASE" ? "Electricity purchase" : "Loan repayment"}</h3><span className={`status-pill ${row.status === "PENDING" ? "pending" : row.status === "FAILED" ? "neutral" : ""}`}>{label(row.status)}</span></div>
++    <strong className="payment-amount">{money(row.amount, row.currency)}</strong><p className="muted small">{when(row.initiated_at)} · {row.currency === "UGX" ? "UGX demo" : "EUR test"}</p>
++    {row.status === "PENDING" && row.environment === "UGX_DEMO" && <div className="payment-progress" role="status"><span className="loading-spinner" /><div><strong>Processing payment</strong><p>{(demoCountdown(row, p.clock) ?? 0) > 0 ? `Please wait · ${demoCountdown(row, p.clock)} seconds` : "Waiting for server confirmation"}</p><small>No real money or phone PIN is required.</small></div></div>}
++    {row.status === "SETTLED" && <p className="small">{row.environment === "UGX_DEMO" ? "Demo payment successful. No real money was deducted." : "Sandbox payment verified."}</p>}
++    {row.status === "FAILED" && <p className="muted">Payment failed. Review the receipt before trying again.</p>}
++    {row.status === "PENDING" && row.environment !== p.environment && <p className="muted small">This earlier payment belongs to a different test environment. It has not been cancelled or converted.</p>}
++    <details className="info-disclosure"><summary>Receipt details</summary><p className="reference">Reference: {row.reference}</p><InfoRow title="Meter" value={p.meters.find(meter => meter.id === row.meter_id)?.meter_number ?? `Meter ID ${row.meter_id}`} />
++      {row.purpose === "PURCHASE" ? <><InfoRow title="Billed for energy" value={money(row.billed, row.currency)} /><InfoRow title="Rounding remainder" value={money(row.residual, row.currency)} /><InfoRow title="Cloud energy allocated" value={row.allocated_kwh == null ? "Unavailable" : `${row.allocated_kwh} kWh`} /></> : <><InfoRow title="Applied to debt" value={money(row.applied, row.currency)} /><InfoRow title="Excess received" value={money(row.excess, row.currency)} /></>}
++      <p className="muted small">Remainders and excess are recorded for reconciliation. Cloud allocation does not confirm physical delivery.</p><InfoRow title="Settled" value={when(row.settled_at)} /><p className="small">{row.environment} · {row.submission_state}</p>{row.reconciliation_error && <p className="error">{row.reconciliation_error}</p>}
++    </details>
++    {row.status === "PENDING" && row.environment === p.environment && <button type="button" className="secondary" disabled={p.busy || p.refreshing || p.offline || (p.demo && demoCountdown(row, p.clock) !== 0)} onClick={() => p.checkPayment(row)}>Check payment status</button>}
++  </article>;
++
++  const loanCard = (loan: TestLoan, historical = false) => <article className="panel loan-card" key={loan.id}>
++    <div className="section-title"><h3>Electricity loan</h3><span className={`status-pill ${loan.status === "REJECTED" ? "pending" : "neutral"}`}>{label(loan.status)}</span></div>
++    <p className="muted small">Meter {p.meters.find(meter => meter.id === loan.meter_id)?.meter_number ?? loan.meter_id}{historical ? ` · ${loan.currency} test history` : ""}</p>
++    <span className="muted small">Outstanding balance</span><strong className="loan-balance">{money(loan.outstanding, loan.currency)}</strong>
++    <InfoRow title="Principal" value={money(loan.principal, loan.currency)} /><InfoRow title="Total repayment" value={money(loan.total_due, loan.currency)} /><InfoRow title="Due" value={when(loan.due_at)} />
++    <p className="muted small">{loan.reason}</p>
++    {!historical && loan.status === "DISBURSED" && <button type="button" className="primary-button" disabled={!p.capabilities.repayments} onClick={() => chooseRepayment(loan)}>Pay Loan →</button>}
++    <details className="info-disclosure"><summary>Loan details & repayments</summary><p className="reference">Reference: {loan.id}</p><InfoRow title="Accepted policy" value={loan.terms.policy.id} /><InfoRow title="Cloud allocation" value={loan.allocated_kwh == null ? "None" : `${loan.allocated_kwh} kWh`} /><InfoRow title="Closed" value={when(loan.closed_at)} />
++      {p.payments.filter(row => row.loan_id === loan.id).map(row => <div className="list-row" key={row.reference}><span>{label(row.status)}<small>Applied {money(row.applied, row.currency)} · excess {money(row.excess, row.currency)}</small></span><strong>{money(row.amount, row.currency)}</strong></div>)}
++      <p className="muted small">Cloud allocation is separate from physical meter delivery.</p>
++    </details>
++  </article>;
++
++  if (p.view === "hidden") return null;
++  return <section className="mobile-finance" aria-label="Energy finance">
++    <div className="finance-toolbar"><span className="muted small">{p.refreshing ? "Updating…" : p.fetched ? `Updated ${new Date(p.fetched).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Loading your account…"}</span><button type="button" className="text-button" disabled={p.busy || p.refreshing} onClick={p.refresh}>Refresh</button></div>
++    {(p.offline || (p.error && p.fetched)) && <p className="stale" role="status">Displayed records may be out of date. Last updated {when(p.fetched)}.</p>}
++    {p.error && <p className="error" role="alert">{p.error}</p>}{p.notice && !(p.pending && p.notice.startsWith("Demo payment:")) && <p className="tag" role="status">{p.notice}</p>}
++    {p.unresolved && <p className="muted small">A previous request needs checking. Refresh before starting another.</p>}
++    {p.pending && <div className="pending-summary"><strong>Payment pending</strong><p>We’re waiting for its confirmed outcome before allowing another payment.</p>{p.view === "home" && <button className="text-button" onClick={() => p.navigate("activity")}>View payment →</button>}</div>}
++
++    {p.view === "home" && <>{assessmentCard}{currentLoan ? loanCard(currentLoan) : p.fetched && <section className="panel"><h2>No active loan</h2><p className="muted">Review your options when you need electricity credit.</p><button className="secondary" onClick={() => p.navigate("apply")}>Apply for Loan →</button></section>}
++      <div className="section-title"><h2>Recent activity</h2><button className="text-button" onClick={() => p.navigate("activity")}>View all</button></div>{p.payments.length ? p.payments.slice(0, 2).map(paymentCard) : <p className="muted">{p.fetched ? "No payments yet." : "Loading payments…"}</p>}
++    </>}
++
++    {(p.view === "loans" || p.view === "apply") && <div className="segmented-control" aria-label="Loan section"><button aria-pressed={p.view === "loans"} onClick={() => { setShowRepayment(false); p.navigate("loans"); }}>My Loans</button><button aria-pressed={p.view === "apply"} onClick={() => { setConfirming(false); p.navigate("apply"); }}>Apply for Loan</button></div>}
++    {p.view === "loans" && <>
++      {showRepayment && !p.pending ? <section className="panel"><button type="button" className="text-button" onClick={() => setShowRepayment(false)}>← My Loans</button><h2>Pay Loan</h2>
++        <form className="form-panel" onSubmit={event => { if (!reviewRepayment) { event.preventDefault(); setReviewRepayment(true); } else p.repay(event); }}>
++          {!reviewRepayment ? <><label>Your loan<select value={p.loanId} onChange={event => { p.selectLoan(event.target.value); setReviewRepayment(false); }} required><option value="">Choose a loan</option>{currentLoans.filter(loan => loan.status === "DISBURSED").map(loan => <option key={loan.id} value={loan.id}>{money(loan.outstanding, loan.currency)} · {loan.id}</option>)}</select></label>{selectedLoan && <InfoRow title="Outstanding" value={money(selectedLoan.outstanding, p.currency)} />}<label>Repayment amount ({p.currency})<input inputMode={p.demo ? "numeric" : "decimal"} value={p.repayment} onChange={event => { p.setRepayment(event.target.value); p.setRepayAccepted(false); }} required /></label><button type="submit" disabled={p.blocked || !p.capabilities.repayments || !selectedLoan || !p.validAmount(p.repayment)}>Review repayment →</button></> : <>
++            <InfoRow title="Repayment amount" value={money(p.repayment, p.currency)} /><InfoRow title="Outstanding" value={money(selectedLoan?.outstanding, p.currency)} /><p className="muted small">Repayment reduces this loan only. Any excess is recorded for reconciliation, with no automatic refund or energy credit.</p>{phoneField}<p className="payment-disclosure">{disclosure}</p><label className="check-row"><input type="checkbox" checked={p.repayAccepted} onChange={event => p.setRepayAccepted(event.target.checked)} />I accept these test repayment terms.</label><button type="submit" disabled={p.blocked || !p.capabilities.repayments || !selectedLoan || !p.validAmount(p.repayment) || !p.repayAccepted || (!p.demo && !p.validPhone)}>{p.busy ? "Submitting…" : "Confirm repayment"}</button><button type="button" className="secondary" disabled={p.busy} onClick={() => { setReviewRepayment(false); p.setRepayAccepted(false); }}>Edit amount</button>
++          </>}
++        </form>
++      </section> : <>{!p.fetched ? <p role="status">Loading loans…</p> : currentLoans.length ? currentLoans.map(loan => loanCard(loan)) : <section className="panel empty-card"><h2>No loan applications yet</h2><p className="muted">See your borrowing options and review the terms.</p><button onClick={() => p.navigate("apply")}>Apply for Loan →</button></section>}</>}
++      {p.payments.filter(row => row.purpose === "LOAN_REPAYMENT" && row.environment === p.environment).slice(0, 5).map(paymentCard)}
++      {oldLoans.length > 0 && <details className="panel info-disclosure"><summary>Earlier test-currency loans</summary>{oldLoans.map(loan => loanCard(loan, true))}</details>}
++    </>}
++
++    {(p.view === "apply" || p.view === "purchase") && <>
++      {p.view === "apply" && <ol className="loan-stepper">{["Amount", "Terms", "Confirm"].map((name, index) => { const step = !activeQuote ? 0 : confirming ? 2 : 1; return <li key={name} className={index === step ? "current" : index < step ? "done" : ""} aria-current={index === step ? "step" : undefined}><span>{index + 1}</span>{name}</li>; })}</ol>}
++      {!p.selectedMeter?.sandbox_inventory ? <section className="panel empty-card"><h2>Select your meter</h2><p className="muted">Link or select a meter before continuing.</p><button onClick={() => p.navigate("meters")}>Choose meter →</button></section> : <>
++        {p.view === "apply" && !ready && assessmentCard}
++        {!allowed && <p className="muted" role="status">{p.view === "apply" ? "Loan applications" : "Purchases"} are currently unavailable. Refresh to check again.</p>}
++        {!activeQuote ? !p.pending && <form className="panel form-panel" onSubmit={event => { setConfirming(false); p.getQuote(event); }}><h2>{p.view === "apply" ? "How much do you need?" : "How much would you like to buy?"}</h2><label>Amount ({p.currency})<input inputMode={p.demo ? "numeric" : "decimal"} value={p.amount} onChange={event => p.setAmount(event.target.value)} required /></label><p className="muted small">{p.demo ? "Enter whole shillings." : "Use EUR test amounts."} Range {money(p.policy?.minimum, p.currency)}–{money(p.policy?.maximum, p.currency)}.</p>{p.view === "apply" && <p className="muted small">Your limit: {money(p.assessment?.maximum, p.currency)}. Eligibility is checked when you submit.</p>}<button type="submit" disabled={p.blocked || !p.policy || !allowed || !p.validAmount(p.amount) || (p.view === "apply" && !ready)}>{p.busy ? "Getting quote…" : "Review terms →"}</button></form> : <section className="panel form-panel"><h2>{p.view === "apply" ? confirming ? "Confirm your application" : "Review loan terms" : "Review your purchase"}</h2>
++          <div className="quote-summary"><InfoRow title={p.view === "apply" ? "Loan principal" : "Payment amount"} value={money(activeQuote.terms.amount, p.currency)} /><InfoRow title="Cloud energy" value={`${activeQuote.terms.energy_kwh} kWh`} />{p.view === "apply" && <><InfoRow title={`Interest (${activeQuote.terms.policy.interest_percent}%)`} value={money(activeQuote.terms.interest, p.currency)} /><InfoRow title="Fee" value={money(activeQuote.terms.fee, p.currency)} /><InfoRow title="Loan term" value={`${activeQuote.terms.policy.due_days} days`} /><div className="quote-total"><span>Total repayment</span><strong>{money(activeQuote.terms.total_due, p.currency)}</strong></div></>}</div>
++          <details className="info-disclosure"><summary>Pricing & policy details</summary><InfoRow title="Price per kWh" value={money(activeQuote.terms.policy.rate_per_kwh, p.currency)} /><InfoRow title="Billed" value={money(activeQuote.terms.billed, p.currency)} /><InfoRow title="Rounding remainder" value={money(activeQuote.terms.residual, p.currency)} /><p>Remainder retained for reconciliation; no automatic refund or energy conversion.</p><p>{activeQuote.terms.policy.rounding} · {activeQuote.terms.policy.id}</p><p>Overdue charge {activeQuote.terms.policy.penalty_percent}%. Cloud allocation does not confirm physical delivery.</p></details>
++          <p className={expired ? "error" : "muted small"}>{expired ? "This quote expired. Get a fresh quote." : `Quote valid until ${when(activeQuote.expires_at)}`}</p>
++          {p.view === "purchase" && phoneField}<p className="payment-disclosure">{p.view === "apply" ? "Demo loan: these are test obligations and cloud units, not real-money credit or physical meter delivery." : disclosure}</p>
++          {!confirming && <label className="check-row"><input type="checkbox" checked={p.accepted} onChange={event => p.setAccepted(event.target.checked)} />I accept these test terms.</label>}
++          <button type="button" disabled={p.blocked || !allowed || !p.accepted || expired || (p.view === "purchase" && !p.demo && !p.validPhone)} onClick={() => { if (p.view === "apply" && !confirming) setConfirming(true); else p.submit(); }}>{p.busy ? "Submitting…" : p.view === "apply" ? confirming ? "Submit application" : "Continue →" : "Confirm purchase"}</button>
++          <button type="button" className="secondary" disabled={p.busy} onClick={() => { p.clearQuote(); setConfirming(false); }}>Edit amount</button>
++        </section>}
++      </>}
++      {p.view === "purchase" && p.payments.filter(row => row.purpose === "PURCHASE" && row.environment === p.environment).slice(0, 5).map(paymentCard)}
++      {p.view === "apply" && p.notice && <button className="secondary" onClick={() => p.navigate("loans")}>View loan decision →</button>}
++    </>}
++
++    {p.view === "activity" && <><h2>Payments & receipts</h2><div className="receipt-filters" aria-label="Receipt filters">{([['all', 'All'], ['PURCHASE', 'Purchases'], ['LOAN_REPAYMENT', 'Repayments']] as const).map(([value, name]) => <button key={value} className="secondary" aria-pressed={filter === value} onClick={() => setFilter(value)}>{name}</button>)}</div>{p.payments.filter(row => filter === "all" || row.purpose === filter).map(paymentCard)}{p.fetched && !p.payments.some(row => filter === "all" || row.purpose === filter) && <p className="muted">No matching payments yet.</p>}</>}
++  </section>;
++}

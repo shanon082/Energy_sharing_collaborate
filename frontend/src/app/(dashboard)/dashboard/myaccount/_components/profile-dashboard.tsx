@@ -276,7 +276,7 @@ const ProfileDashboard = ({ profile }: ProfileDashboardProps) => {
                 </div>
                 <div className="bg-yellow-50 p-3 rounded-lg">
                   <p className="text-sm text-yellow-600">Credit Score</p>
-                  <p className="text-xl font-bold text-yellow-900">{profile.loanStats.credit_score || 0}/100</p>
+                  <p className="text-xl font-bold text-yellow-900">{profile.loanStats.credit_score === undefined ? "Unavailable" : `${profile.loanStats.credit_score}/100`}</p>
                 </div>
               </div>
             </div>

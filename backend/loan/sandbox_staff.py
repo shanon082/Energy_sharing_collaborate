@@ -19,5 +19,5 @@ def decisions(request):
     if not getattr(settings, "CONSUMER_SANDBOX_ENABLED", False):
         raise PermissionDenied("Sandbox profile is disabled.")
     rows = SandboxLoan.objects.order_by("-created_at")[:100]
-    audits = AuditLog.objects.filter(details__environment="MTN_SANDBOX").order_by("-timestamp")[:100]
+    audits = AuditLog.objects.filter(details__environment__in=["MTN_SANDBOX", "UGX_DEMO"]).order_by("-timestamp")[:100]
     return render(request, "loan/sandbox_decisions.html", {"loans": [loan_record(row) for row in rows], "audits": audits})

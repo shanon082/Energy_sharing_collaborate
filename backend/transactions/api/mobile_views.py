@@ -45,7 +45,7 @@ def receipt_record(intent):
 
 
 def owned_receipts(user):
-    return PaymentIntent.objects.filter(owner=user).exclude(provider="MTN_SANDBOX").select_related("meter", "repayment", "repayment__loan")
+    return PaymentIntent.objects.filter(owner=user).exclude(provider__in=["MTN_SANDBOX", "LOCAL_DEMO"]).select_related("meter", "repayment", "repayment__loan")
 
 
 class MobilePaymentReceiptsView(APIView):

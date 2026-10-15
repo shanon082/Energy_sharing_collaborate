@@ -6,7 +6,7 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_URL = "https://sandbox.momodeveloper.mtn.com"
 
 
-def sandbox_configuration(environ):
+def sandbox_configuration(environ, *, validate_credentials=True):
     if any(environ.get(name) for name in ("MTN_API_KEY", "MTN_API_SECRET", "MTN_SUBSCRIPTION_KEY", "MTN_API_USER_ID", "MTN_PRIMARY_KEY", "MTN_COLLECTION_PRIMARY_KEY")):
         raise ImproperlyConfigured("Legacy/production MTN credential variables are forbidden; provision dedicated MTN_SANDBOX credentials")
     if environ.get("MTN_ENVIRONMENT", "sandbox") != "sandbox" or environ.get("MTN_BASE_URL", BASE_URL).rstrip("/") != BASE_URL:
@@ -15,7 +15,7 @@ def sandbox_configuration(environ):
         raise ImproperlyConfigured("MTN sandbox requires the exact HTTPS sandbox endpoint and EUR test currency")
     config = {"BASE_URL": BASE_URL, "ENVIRONMENT": "sandbox", "CURRENCY": "EUR",
               **{key: environ.get("MTN_SANDBOX_" + key, "") for key in ("SUBSCRIPTION_KEY", "API_USER_ID", "API_KEY")}}
-    if config["API_USER_ID"]:
+    if validate_credentials and config["API_USER_ID"]:
         try:
             uuid.UUID(config["API_USER_ID"])
         except ValueError:

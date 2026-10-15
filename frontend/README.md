@@ -112,3 +112,31 @@ npm i baseline-browser-mapping@latest -D
 
 - [Next.js documentation](https://nextjs.org/docs)
 - [Next.js deployment](https://nextjs.org/docs/app/building-your-application/deploying)
+
+
+## Development chunk-load recovery
+
+`npm run dev` uses Next.js's supported `--webpack` development compiler to avoid
+intermittent Turbopack chunk-loading failures seen in this project's auth layout.
+Production `npm run build` is unchanged. No dependency upgrade, static export,
+authentication bypass or type-check suppression is involved. The auth layout uses
+the root layout's fonts; its unused Inter download has been removed.
+
+Stop the existing project dev server first (Ctrl+C in its terminal), then restart
+with `npm run dev` and hard-refresh the browser (Ctrl+Shift+R). Do not run multiple
+servers from the same output directory. If a clean restart is needed, preserve
+only the generated development output rather than deleting source or dependencies:
+
+```bash
+# From frontend/, with the development server stopped:
+mv .next/dev /tmp/gpawa-next-dev-backup-$(date +%Y%m%d-%H%M%S)
+npm run dev
+```
+
+The old development cache remains in the backup path. Production output and the
+Android build are unaffected. For deliberate Turbopack troubleshooting, stop the
+Webpack server, move aside its generated .next/dev output in the same way, then
+use `npm run dev:turbopack`. Only one compiler may use .next/dev at a time.
+The initial failure was captured in the dev log; a later request served that
+exact JavaScript asset and /auth/login/ with HTTP200. That establishes an
+intermittent loading failure, not a reproducible PublicHeader component exception.

@@ -58,11 +58,14 @@ class FeatureAvailabilityView(APIView):
         except PaymentSettlementError:
             pass
         from mtn_momo.sandbox import configured
+        from backend.demo_config import test_domain, LOCAL_DEMO
+        currency, environment, provider = test_domain()
         sandbox_enabled = getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
+        test_payments = sandbox_enabled and (provider == LOCAL_DEMO or configured())
         response = Response({
-            "sandbox": {"enabled": sandbox_enabled, "currency": "EUR", "label": "SANDBOX / NO REAL MONEY",
-                        "loans": sandbox_enabled, "purchases": configured(), "repayments": configured(),
-                        "provider": "MTN_SANDBOX", "physical_delivery": False,
+            "sandbox": {"enabled": sandbox_enabled, "currency": currency, "environment": environment, "label": "UGX DEMO / NO REAL MONEY" if provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
+                        "loans": sandbox_enabled, "purchases": test_payments, "repayments": test_payments,
+                        "provider": provider, "physical_delivery": False,
                         "self_declared_meter_enrollment": sandbox_enabled},
             "features": {key: feature_enabled(key) for key in FEATURE_ENV_VARS},
             "consumer_capabilities": {

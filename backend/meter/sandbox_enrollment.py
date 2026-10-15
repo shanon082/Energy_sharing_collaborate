@@ -49,6 +49,7 @@ def enroll_sandbox_meter(owner, raw_number):
         existing = Meter.all_objects.annotate(normalized_number=Trim("meter_no")).filter(normalized_number=number).first()
         if existing:
             if sandbox_meter_authorized(existing, owner):
+                _complete_assessment(owner, existing)
                 return existing, False
             raise MeterUnavailable()
         # Old renamed/deleted records and string-keyed core balances are not
@@ -67,4 +68,12 @@ def enroll_sandbox_meter(owner, raw_number):
                 SandboxMeterEnrollment.objects.create(meter=meter, owner=owner, prior_request=prior)
         except IntegrityError:
             raise MeterUnavailable() from None
+        _complete_assessment(owner, meter)
         return meter, True
+
+
+def _complete_assessment(owner, meter):
+    from backend.demo_config import provider_mode
+    if provider_mode() == "LOCAL_DEMO":
+        from loan.demo_assessment import complete_demo_assessment
+        complete_demo_assessment(owner, meter)

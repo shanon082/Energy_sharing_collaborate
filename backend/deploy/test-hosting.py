@@ -71,6 +71,9 @@ from django.test.utils import get_runner
 settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 settings.DATABASES['default']['CONN_MAX_AGE'] = 0
 settings.PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+if '--make-migrations' in sys.argv:
+    call_command('makemigrations', 'loan', 'meter', 'transactions')
+    raise SystemExit(0)
 if getattr(settings, 'ALWAYSDATA_TESTING', False):
     # Exercise real manifest/WhiteNoise rendering without generating repository
     # artifacts or relying on previously collected development static files.

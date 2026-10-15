@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { get } from "@/lib/fetch";
 import { getApiErrorMessage } from "@/lib/api-response";
+import { parseStoredDemoAssessment, testMoney, type Assessment } from "@/lib/sandbox";
 
 interface CreditScoreModalProps {
   isOpen: boolean;
@@ -56,17 +57,25 @@ type CreditScoreData = z.infer<typeof creditScoreSchema>;
 
 export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalProps) {
   const [data, setData] = useState<CreditScoreData | null>(null);
+  const [demoAssessment, setDemoAssessment] = useState<Assessment | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchCreditScore = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setDemoAssessment(null);
+    setData(null);
     try {
       const response = await get<unknown>("loans/credit-score/");
       if (response.error) {
         setError(getApiErrorMessage(response.error, "Credit score is unavailable."));
         setData(null);
+        return;
+      }
+      const demo = z.object({ demo_assessment: z.unknown() }).safeParse(response.data);
+      if (demo.success && demo.data.demo_assessment !== undefined) {
+        setDemoAssessment(parseStoredDemoAssessment(demo.data.demo_assessment));
         return;
       }
       const parsed = creditScoreSchema.safeParse(response.data);
@@ -155,7 +164,7 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
           </div>
           <CardTitle className="text-xl">Your Credit Score</CardTitle>
           <CardDescription>
-            Your current recorded credit signals and account activity
+            {demoAssessment ? "Demo assessment — simulated account information" : "Your current recorded credit signals and account activity"}
           </CardDescription>
         </CardHeader>
 
@@ -165,6 +174,15 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
               <p className="text-muted-foreground">Loading credit score...</p>
             </div>
+          ) : demoAssessment ? (
+            <section className="space-y-3" aria-label="Automatic demo assessment">
+              <p>{demoAssessment.assessment_status === "READY" ? `Demo score ${demoAssessment.score}/100 (base ${demoAssessment.profile_score}, purchase points ${demoAssessment.purchase_points})` : "Score unavailable — assessment pending or unavailable"}</p>
+              <p>{demoAssessment.reason} Maximum: {testMoney(demoAssessment.maximum, "UGX")}.</p>
+              <p>Fixed synthetic payment, energy and financial categories. No utility, bank, telecom or credit-bureau records were retrieved. No questionnaire is required.</p>
+              {demoAssessment.factors && <p>{Object.entries(demoAssessment.factors).map(([key, score]) => `${key.replaceAll("_", " ")}: ${score}`).join(" · ")}</p>}
+              <p>{demoAssessment.scoring_policy_version} · {demoAssessment.assessed_at ? new Date(demoAssessment.assessed_at).toLocaleString() : "Not assessed yet"}</p>
+              <Link href="/dashboard/loans" onClick={onClose} className="underline">View demo eligibility and loan terms</Link>
+            </section>
           ) : error || !data ? (
             <div role="alert" className="py-8 text-center text-sm text-muted-foreground">
               {error || "Credit score is unavailable."}

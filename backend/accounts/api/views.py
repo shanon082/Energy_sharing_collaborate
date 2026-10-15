@@ -1022,6 +1022,9 @@ class UserProfileAPIView(GenericAPIView):
                 logger.info(f"Missing basic fields for user {user.id}")
                 return False
 
+            from backend.demo_config import provider_mode
+            if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+                return all(required_fields)  # Ordinary registration fields, never questionnaire answers.
             has_profile_data = profile_scoring_fields_complete(user)
             if not has_profile_data:
                 logger.info(f"Loan assessment fields incomplete for user {user.id}")
@@ -1037,12 +1040,15 @@ class UserProfileAPIView(GenericAPIView):
 
 
     def post(self, request):
-        """Update user profile data"""
+        """Update historical profile data outside the automatic demo journey."""
+        from backend.demo_config import provider_mode
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            return Response({"code": "QUESTIONNAIRE_RETIRED", "detail": "Demo assessment is automatic."}, status=403)
         try:
             user = request.user
             data = request.data
             
-            logger.info(f"Updating profile for user {user.id} with data: {data}")
+            logger.info("Updating historical profile for user %s", user.pk)
             
             # Use the UpdateUserProfileSerializer
             serializer = UpdateUserProfileSerializer(data=data)
@@ -1103,7 +1109,9 @@ class LoginAPIView(TokenObtainPairView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.user
-        get_or_create_credit_signal(user)
+        from backend.demo_config import provider_mode
+        if not (getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO"):
+            get_or_create_credit_signal(user)
 
         # Staff members with 2FA enabled → issue a challenge token instead of full JWT
         if (user.is_staff_member or user.is_staff or user.is_superuser) and user.totp_enabled:
@@ -1209,8 +1217,10 @@ class CreateUserAPIView(CreateAPIView):
         # Create credit signal for the new user
         try:
             from loan.scoring import get_or_create_dummy_credit_signal
-            credit_signal = get_or_create_dummy_credit_signal(user)
-            logger.info("Registration credit signal initialized for user %s", user.id)
+            from backend.demo_config import provider_mode
+            if not (getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO"):
+                get_or_create_dummy_credit_signal(user)
+            logger.info("Registration credit assessment initialized for user %s", user.id)
         except Exception as e:
             logger.error(f"[REGISTRATION] Failed to create credit signal: {str(e)}")
 
@@ -1629,6 +1639,10 @@ class CreditScoreView(APIView):
     permission_classes = (IsAuthenticated,)
     
     def get(self, request):
+        from backend.demo_config import provider_mode
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            from loan.sandbox_service import assessment
+            return Response({"demo_assessment": assessment(request.user)})
         from loan.credit_score_service import CreditScoreService
         from loan.models import CreditScoreHistory, UserCreditSignal
         from loan.scoring import calculate_weighted_credit_score, get_or_create_dummy_credit_signal

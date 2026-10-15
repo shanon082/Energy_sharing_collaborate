@@ -56,7 +56,7 @@ class MobileLogoutView(APIView):
 
 
 class MobileProfileView(APIView):
-    """Only the existing consumer assessment fields are editable here."""
+    """Historical questionnaire interface; demo assessment never accepts these answers."""
     permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def _consumer(self, request):
@@ -77,6 +77,10 @@ class MobileProfileView(APIView):
     def patch(self, request):
         if not self._consumer(request):
             return Response({"code": "CONSUMER_ONLY"}, status=403)
+        from backend.demo_config import provider_mode
+        from django.conf import settings
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            return Response({"code": "QUESTIONNAIRE_RETIRED", "detail": "Demo assessment is automatic; questionnaire answers cannot set your score."}, status=403)
         serializer = UpdateUserProfileSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         unknown = set(request.data) - set(serializer.fields)

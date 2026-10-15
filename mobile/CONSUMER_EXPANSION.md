@@ -169,3 +169,38 @@ Open that folder in Windows Explorer or copy to your Downloads, then use
 8. Confirm seven optional features and financial/device mutations remain
    inaccessible. Test transaction recovery/receipts with isolated mocks only,
    never real provider collection on the testing host.
+
+## Local UGX payment demo
+
+The shared sandbox screen supports server-selected LOCAL_DEMO: whole UGX DEMO,
+no MSISDN/PIN, five-second processing countdown with server-authoritative
+completion, exact receipt/debt/cloud allocation refresh, account-bound restart
+recovery and truthful connection errors. Existing EUR history remains labelled
+EUR TEST and cannot be repaid with UGX demo money. One active loan in each test
+environment is permitted; core debt still requires independent review.
+See [the local payment runbook](../backend/docs/LOCAL_PAYMENT_DEMO.md) for the
+prototype-only policy, four additive schema migrations, upload steps and finite scheduled
+completion command. Backend deployment and the new APK are both needed to select
+this mode; a client cannot enable it. No physical meter application is claimed.
+
+Signed local-demo APK (13 October 2026):
+`android/app/build/outputs/apk/debug/app-debug.apk`, 4,466,333 bytes;
+SHA-256 `a4ebc1c6283692906d6207bbe70cc7e612acac76cc7bdf96d86cad527483ebfe`.
+Same testing certificate, package org.gpawa.consumer.prototype and alwaysdata
+HTTPS API. Type check, 42 mobile tests, bundle/sync and offline APK assembly
+passed. Backend deployment/scheduled simulator setup must precede phone tests;
+no hosted deployment or runtime phone test was performed in this change.
+
+
+## Automatic demo assessment (same updated APK)
+
+Account retains ordinary address/energy/payment preferences, without the old
+loan-assessment questionnaire or any calls to auth/mobile-profile/. Registration
+creates a PENDING demo record; owned active prototype meter enrollment completes
+it using fixed named synthetic inputs and Django's existing three-factor scoring
+calculator. Dashboard/Loans show “Demo assessment — simulated account information”,
+contributing categories, score, policy and timestamp. Pending/unavailable is never
+shown as score zero or a starter allowance. Login/GET refreshes do not rescore.
+Only source-linked settled UGX demo purchases contribute, once per receipt.
+See [the assessment runbook](../backend/docs/AUTOMATIC_DEMO_ASSESSMENT.md).
+No third-party retrieval, core score rewrite or CRB enablement occurs.

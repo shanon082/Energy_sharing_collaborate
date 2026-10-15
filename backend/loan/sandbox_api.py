@@ -8,6 +8,8 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, NotFound
 
 from accounts.permissions import ConsumerAccountPermission
+from transactions.demo_payments import complete_demo_payment
+from backend.demo_config import LOCAL_DEMO
 from loan.models import SandboxLoan
 from loan.sandbox_service import require_sandbox, policy, assessment, create_quote, apply_loan, loan_record
 from transactions.models import PaymentIntent
@@ -62,16 +64,16 @@ class SandboxLoanRecoveryView(SandboxConsumerView):
 
 class SandboxPaymentView(SandboxConsumerView):
     def get(self, request):
-        rows = PaymentIntent.objects.filter(owner=request.user, provider="MTN_SANDBOX").select_related(
+        rows = PaymentIntent.objects.filter(owner=request.user, provider__in=["MTN_SANDBOX", LOCAL_DEMO]).select_related(
             "sandbox_settlement", "energy_allocation").order_by("-initiated_at")[:100]
         # Pending records are fetched independently, even after 100 historical receipts.
-        pending = PaymentIntent.objects.filter(owner=request.user, provider="MTN_SANDBOX", status="PENDING")
+        pending = PaymentIntent.objects.filter(owner=request.user, provider__in=["MTN_SANDBOX", LOCAL_DEMO], status="PENDING")
         return Response({"payments": [receipt(row) for row in rows], "pending": [receipt(row) for row in pending]})
 
     def post(self, request):
         try:
             intent, created = create_payment(request.user, request.data)
-            if created:
+            if created and intent.provider != LOCAL_DEMO:
                 intent, _ = reconcile_sandbox_payment(intent.pk)
         except PaymentSettlementError as exc:
             return Response({"code": "MTN_SANDBOX_UNAVAILABLE", "message": str(exc)}, status=503)
@@ -80,22 +82,25 @@ class SandboxPaymentView(SandboxConsumerView):
 
 class SandboxPaymentStatusView(SandboxConsumerView):
     def get(self, request, reference):
-        row = PaymentIntent.objects.filter(owner=request.user, provider="MTN_SANDBOX", provider_reference=reference).first()
+        row = PaymentIntent.objects.filter(owner=request.user, provider__in=["MTN_SANDBOX", LOCAL_DEMO], provider_reference=reference).first()
         if not row:
             raise NotFound("Sandbox payment not found.")
         return Response({"payment": receipt(row)})
 
     def post(self, request, reference):
-        row = PaymentIntent.objects.filter(owner=request.user, provider="MTN_SANDBOX", provider_reference=reference).first()
+        row = PaymentIntent.objects.filter(owner=request.user, provider__in=["MTN_SANDBOX", LOCAL_DEMO], provider_reference=reference).first()
         if not row:
             raise NotFound("Sandbox payment not found.")
-        result, _ = reconcile_sandbox_payment(row.pk)
+        try:
+            result, _ = complete_demo_payment(row.pk, owner=request.user) if row.provider == LOCAL_DEMO else reconcile_sandbox_payment(row.pk)
+        except PaymentSettlementError as exc:
+            return Response({"code": "TEST_SETTLEMENT_UNAVAILABLE", "message": str(exc)}, status=409)
         return Response({"payment": receipt(result)})
 
 
 class SandboxPaymentRecoveryView(SandboxConsumerView):
     def get(self, request, request_id):
-        row = PaymentIntent.objects.filter(owner=request.user, provider="MTN_SANDBOX", client_request_id=request_id).first()
+        row = PaymentIntent.objects.filter(owner=request.user, provider__in=["MTN_SANDBOX", LOCAL_DEMO], client_request_id=request_id).first()
         return Response({"payment": receipt(row) if row else None})
 
 
@@ -107,7 +112,7 @@ class SandboxStaffDecisionView(APIView):
         from admin.models import AuditLog
         require_sandbox(); require_reviewer(request.user)
         loans = SandboxLoan.objects.order_by("-created_at")[:100]
-        audit = AuditLog.objects.filter(details__environment="MTN_SANDBOX").order_by("-timestamp")[:100]
+        audit = AuditLog.objects.filter(details__environment__in=["MTN_SANDBOX", "UGX_DEMO"]).order_by("-timestamp")[:100]
         return Response({"loans": [loan_record(row) for row in loans],
             "audit": [{"id": row.pk, "at": row.timestamp.isoformat(), "details": row.details} for row in audit],
             "manual_override_available": False})

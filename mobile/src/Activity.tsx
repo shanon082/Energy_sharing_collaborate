@@ -28,7 +28,7 @@ function useFeed<T>(session: SessionManager, path: string, parse: (data: unknown
 }
 function Freshness({ feed }: { feed: { fetchedAt: string | null; error: string | null } }) {
   return <>{feed.error && <p className="error" role="alert">{feed.error} {feed.fetchedAt && "Displayed records are stale."}</p>}
-    {feed.fetchedAt && <p className="muted small">Fetched {dateTime(feed.fetchedAt)}</p>}</>;
+    {feed.fetchedAt && feed.error && <p className="muted small">Last updated {dateTime(feed.fetchedAt)}</p>}</>;
 }
 
 export function Activity({ session }: { session: SessionManager }) {
@@ -65,7 +65,7 @@ export function Activity({ session }: { session: SessionManager }) {
     } catch (cause) { if (owner === session.identity && detailReads.current.current(ticket)) setError(failure(cause)); }
   };
   return <>
-    <h1>Activity</h1><p className="muted">Stored payment records, alerts and historical events.</p>
+    <h1>Activity</h1><p className="muted">Receipts, alerts and account updates.</p>
     <button className="secondary" disabled={busy} onClick={reload}>{busy ? "Refreshing…" : "Refresh activity"}</button>
     {error && <p className="error" role="alert">{error}</p>}
     {detail && <section className="panel"><h2>Receipt details</h2>
@@ -82,16 +82,16 @@ export function Activity({ session }: { session: SessionManager }) {
       <p className="muted small">Residuals and excess remain recorded for reconciliation. This read does not contact a provider.</p>
       <button className="secondary" onClick={() => { detailReads.current.invalidate(); setDetail(null); }}>Close receipt</button>
     </section>}
-    <section className="panel"><h2>Payment requests and receipts</h2><Freshness feed={receipts} />
+    <section className="panel"><h2>Stored receipts</h2><Freshness feed={receipts} />
       {!receipts.data ? <p className="muted">{receipts.busy ? "Loading receipts…" : "Receipts unavailable."}</p> : !receipts.data.rows.length ?
-        <p className="muted">No payment intents recorded.</p> : receipts.data.rows.map((row) =>
+        <p className="muted">No receipts yet.</p> : receipts.data.rows.map((row) =>
           <div className="list-row" key={row.external_id}><span>
             {row.purpose === "PURCHASE" ? `Purchase · ${row.meter_no || "meter unavailable"}` : `Loan repayment · ${row.loan_id || "loan unavailable"}`}
             <small>{row.status} · {dateTime(row.initiated_at)}{row.environment === "SIMULATOR" && " · Simulation only"}</small>
             <button className="secondary" onClick={() => void showReceipt(row)}>View receipt</button>
           </span><strong>{ugx(row.amount_ugx)}</strong></div>)}
       {receipts.data?.next && <button disabled={receipts.busy} onClick={() => void receipts.load(receipts.data?.next)}>More receipts</button>}
-      <p className="muted small">Pending requests are not paid electricity. Refresh reads stored status; verified settlement runs independently of this screen.</p>
+      <details className="info-disclosure"><summary>About payment status</summary><p>A pending request is not a completed payment. Refresh to read its latest recorded status.</p></details>
     </section>
     <section className="panel"><h2>Alerts</h2><Freshness feed={notices} />
       {notices.data?.rows.some((row) => !row.is_read) && <button className="secondary" disabled={notices.busy || marking || Boolean(notices.error)}
@@ -101,14 +101,14 @@ export function Activity({ session }: { session: SessionManager }) {
           <div className="list-row" key={row.id}><span>{row.message}<small>{dateTime(row.occurred_at)} · {row.is_read ? "Read" : "Unread"}</small></span></div>)}
       {notices.data?.next && <button disabled={notices.busy} onClick={() => void notices.load(notices.data?.next)}>More alerts</button>}
     </section>
-    <section className="panel"><h2>Historical event log</h2><Freshness feed={history} />
+    <section className="panel"><h2>Earlier account activity</h2><Freshness feed={history} />
       {!history.data ? <p className="muted">{history.busy ? "Loading history…" : "History unavailable."}</p> : !history.data.rows.length ?
         <p className="muted">No logged events.</p> : history.data.rows.map((row) =>
           <div className="list-row" key={row.id}><span>{row.transaction_type_display}<small>{row.status} · {dateTime(row.created_at)}</small>
             {row.recorded_units !== null && <small>Recorded units: {row.recorded_units}</small>}</span>
             <strong>{row.recorded_amount === null ? "Amount unavailable" : `Recorded amount: ${row.recorded_amount}`}</strong></div>)}
       {history.data?.next && <button disabled={history.busy} onClick={() => void history.load(history.data?.next)}>More events</button>}
-      <p className="muted small">Legacy log units are unconfirmed. Values are shown as recorded, without interpreting them as UGX or kWh. This log does not include every legacy table.</p>
+      <details className="info-disclosure"><summary>About older records</summary><p>Older amounts and units are shown as recorded; their currency and unit type may be unconfirmed.</p></details>
     </section>
   </>;
 }

@@ -55,10 +55,16 @@ class MobileLoanEligibilityView(APIView):
     def get(self, request):
         if request.user.user_role != User.CLIENT:
             return Response({"code": "CONSUMER_ONLY"}, status=403)
+        from backend.demo_config import provider_mode
+        from django.conf import settings
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            from loan.sandbox_service import assessment
+            result = assessment(request.user)
+            return Response({**result, "source": result["input_source"], "can_apply": result["eligible"], "application_available": True, "application_environment": "UGX_DEMO"})
         calculated_at = timezone.now().isoformat()
         if not profile_scoring_fields_complete(request.user):
             return Response({"score": None, "eligible": False, "can_apply": False,
-                             "reason": "Complete the loan assessment profile before a score is available.",
+                             "reason": "A trusted core assessment source is unavailable. Prototype demo assessment is separate; no questionnaire is required.",
                              "source": None, "calculated_at": calculated_at, "factors": None,
                              "application_available": False})
         access = get_loan_eligibility(request.user)
@@ -91,6 +97,10 @@ class MobileLoanQuoteView(APIView):
     permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def post(self, request):
+        from django.conf import settings
+        from backend.demo_config import provider_mode
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            return Response({"code": "USE_DEMO_QUOTES", "message": "Use sandbox/quotes/ for UGX DEMO terms; core financial quotes remain separate."}, status=409)
         eligibility = MobileLoanEligibilityView().get(request)
         if eligibility.status_code != 200 or not eligibility.data.get("can_apply"):
             return Response({"code": "LOAN_NOT_ELIGIBLE", "message": eligibility.data.get("reason") or

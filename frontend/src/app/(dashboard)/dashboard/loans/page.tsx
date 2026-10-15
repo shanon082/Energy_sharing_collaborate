@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { Suspense } from "react";
+import { Suspense, type ComponentProps } from "react";
 import DesktopSidebar from "../_components/desktop-sidebar";
 import RightHeader from "../_components/right-header";
 import LoansClient from "./_components/loans-client";
@@ -11,7 +11,7 @@ import FeatureUnavailable from "@/components/common/feature-unavailable";
 
 async function getLoans() {
   try {
-    const response = await get<any>("loans/my-loans/");
+    const response = await get<ComponentProps<typeof LoansClient>["loans"] | { results?: ComponentProps<typeof LoansClient>["loans"]; data?: ComponentProps<typeof LoansClient>["loans"] }>("loans/my-loans/");
     if (response.error) return [];
     return Array.isArray(response.data)
       ? response.data
@@ -49,7 +49,7 @@ export default async function LoansPage({
           </div>
           {sandbox.enabled && <SandboxWeb />}
           <Suspense fallback={<div className="p-4 text-muted-foreground">Loading…</div>}>
-            <LoansClient loans={loans} defaultTab={defaultTab} />
+            <LoansClient loans={loans} defaultTab={defaultTab} prototype={sandbox.enabled} />
           </Suspense>
         </main>
       </div>

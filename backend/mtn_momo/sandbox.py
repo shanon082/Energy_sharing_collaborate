@@ -6,12 +6,13 @@ from django.conf import settings
 from django.views.decorators.debug import sensitive_variables
 
 from backend.sandbox_config import BASE_URL
+from backend.demo_config import provider_mode, require_mtn_sandbox
 from transactions.payment_settlement import PaymentSettlementError
 
 
 def configured():
     cfg = getattr(settings, "MTN_SANDBOX_CONFIG", {})
-    return bool(getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
+    return bool(provider_mode() == "MTN_SANDBOX" and getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
         and cfg.get("BASE_URL") == BASE_URL and cfg.get("ENVIRONMENT") == "sandbox" and cfg.get("CURRENCY") == "EUR"
         and all(cfg.get(key) for key in ("SUBSCRIPTION_KEY", "API_USER_ID", "API_KEY")))
 
@@ -25,6 +26,7 @@ def test_msisdn(value):
 
 class MTNSandbox:
     def __init__(self):
+        require_mtn_sandbox()
         if not configured():
             raise PaymentSettlementError("MTN sandbox credentials are missing or its isolated EUR configuration is invalid.")
         self.cfg = settings.MTN_SANDBOX_CONFIG
@@ -32,6 +34,7 @@ class MTNSandbox:
 
     @sensitive_variables()
     def token(self):
+        require_mtn_sandbox()
         try:
             response = requests.post(BASE_URL + "/collection/token/", auth=(self.cfg["API_USER_ID"], self.cfg["API_KEY"]),
                 headers={"Ocp-Apim-Subscription-Key": self.cfg["SUBSCRIPTION_KEY"], "Content-Type": "application/json"}, timeout=(3, 7), allow_redirects=False)
@@ -52,6 +55,7 @@ class MTNSandbox:
 
     @sensitive_variables()
     def initiate(self, intent):
+        require_mtn_sandbox()
         # The caller persists/claims the reference before any network operation.
         try:
             headers = {**self.headers(), "X-Reference-Id": str(intent.provider_reference)}
@@ -66,6 +70,7 @@ class MTNSandbox:
 
     @sensitive_variables()
     def status(self, intent):
+        require_mtn_sandbox()
         try:
             response = requests.get(BASE_URL + "/collection/v1_0/requesttopay/" + str(intent.provider_reference),
                 headers=self.headers(), timeout=(3, 7), allow_redirects=False)

@@ -122,7 +122,8 @@ class PaymentIntent(models.Model):
     )
     meter = models.ForeignKey(Meter, on_delete=models.PROTECT, null=True, blank=True)
     status = models.CharField(max_length=10, choices=STATUSES, default=PENDING)
-    initiated_at = models.DateTimeField(auto_now_add=True)
+    initiated_at = models.DateTimeField(default=timezone.now, editable=False)
+    demo_eligible_at = models.DateTimeField(null=True, blank=True, db_index=True)
     settled_at = models.DateTimeField(null=True, blank=True)
     provider_transaction_id = models.CharField(max_length=100, blank=True)
     # Populated only for new, verified purchases. The full provider receipt is
@@ -144,13 +145,18 @@ class PaymentIntent(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=(
-                    models.Q(purpose="PURCHASE", purchase__isnull=False, repayment__isnull=True, meter__isnull=False, sandbox_loan__isnull=True) & ~models.Q(provider="MTN_SANDBOX")
-                    | models.Q(purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=False, meter__isnull=True, sandbox_loan__isnull=True) & ~models.Q(provider="MTN_SANDBOX")
+                    models.Q(purpose="PURCHASE", purchase__isnull=False, repayment__isnull=True, meter__isnull=False, sandbox_loan__isnull=True) & ~models.Q(provider__in=["MTN_SANDBOX", "LOCAL_DEMO"])
+                    | models.Q(purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=False, meter__isnull=True, sandbox_loan__isnull=True) & ~models.Q(provider__in=["MTN_SANDBOX", "LOCAL_DEMO"])
                     | models.Q(provider="MTN_SANDBOX", currency="EUR", sandbox_quote__isnull=False, purpose="PURCHASE", purchase__isnull=True, repayment__isnull=True, sandbox_loan__isnull=True, meter__isnull=False)
                     | models.Q(provider="MTN_SANDBOX", currency="EUR", sandbox_quote__isnull=False, purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=True, sandbox_loan__isnull=False, meter__isnull=True)
+                    | models.Q(provider="LOCAL_DEMO", currency="UGX", sandbox_quote__isnull=False, purpose="PURCHASE", purchase__isnull=True, repayment__isnull=True, sandbox_loan__isnull=True, meter__isnull=False)
+                    | models.Q(provider="LOCAL_DEMO", currency="UGX", sandbox_quote__isnull=False, purpose="LOAN_REPAYMENT", purchase__isnull=True, repayment__isnull=True, sandbox_loan__isnull=False, meter__isnull=True)
                 ),
                 name="payment_intent_one_purpose",
             ),
+            models.CheckConstraint(condition=(~models.Q(provider="LOCAL_DEMO") | (
+                models.Q(demo_eligible_at__isnull=False) & models.Q(demo_eligible_at__gte=models.F("initiated_at") + timezone.timedelta(seconds=5)))),
+                name="demo_payment_minimum_delay"),
             models.UniqueConstraint(
                 fields=["provider", "provider_transaction_id"],
                 condition=~models.Q(provider_transaction_id=""),

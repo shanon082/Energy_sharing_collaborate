@@ -501,3 +501,5 @@ class PurchaseScoreExclusion(models.Model):
     reason = models.CharField(max_length=16, choices=[("REVERSED", "Reversed"), ("UNCERTAIN", "Uncertain")])
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+from loan.sandbox_models import DemoCreditAssessment  # noqa: F401

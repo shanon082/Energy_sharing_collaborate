@@ -7,6 +7,7 @@ from django.db.models import Q
 from transactions.models import PaymentIntent
 from transactions.sandbox_payments import reconcile_sandbox_payment
 from loan.sandbox_service import require_sandbox
+from backend.demo_config import require_mtn_sandbox
 from mtn_momo.sandbox import MTNSandbox
 
 
@@ -20,6 +21,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         require_sandbox()
+        require_mtn_sandbox()
         if not 1 <= options["limit"] <= 10 or not 25 <= options["max_seconds"] <= 120:
             raise CommandError("Use limit 1–10 and max-seconds 25–120.")
         now = timezone.now()

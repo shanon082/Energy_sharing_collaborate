@@ -32,7 +32,7 @@ from utils.billing import get_monthly_units_consumed
 POLICY, _ = sandbox_configuration({})
 CONFIG = {"BASE_URL": BASE_URL, "ENVIRONMENT": "sandbox", "CURRENCY": "EUR",
           "SUBSCRIPTION_KEY": "synthetic-test-only", "API_USER_ID": "00000000-0000-4000-8000-000000000001", "API_KEY": "synthetic-test-only"}
-SANDBOX = {"CONSUMER_SANDBOX_ENABLED": True, "SANDBOX_POLICY": POLICY, "MTN_SANDBOX_CONFIG": CONFIG}
+SANDBOX = {"CONSUMER_SANDBOX_ENABLED": True, "PROTOTYPE_PAYMENT_PROVIDER": "MTN_SANDBOX", "SANDBOX_POLICY": POLICY, "MTN_SANDBOX_CONFIG": CONFIG}
 
 
 class Fixtures:

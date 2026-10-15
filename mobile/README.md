@@ -1,17 +1,32 @@
 # gPawa consumer Android prototype
 
-The current opt-in sandbox journey and signed APK are documented in
+The latest LOCAL_DEMO UGX flow and automatic assessment are documented in
+[CONSUMER_EXPANSION.md](CONSUMER_EXPANSION.md) and
+[the backend runbook](../backend/docs/LOCAL_PAYMENT_DEMO.md). No questionnaire
+is required; ordinary account preferences remain.
+
+The earlier opt-in sandbox journey and signed APK are documented in
 [SANDBOX.md](SANDBOX.md). It supports immediate SELF_DECLARED meter enrollment,
 automatic selection, EUR TEST loans/purchases/self-repayments and recovery.
 No staff approval, pre-created inventory or simulator is required for new sandbox
 enrollment. The earlier interface/preview notes below are historical; the installed
 consumer welcome screen does not expose the preview link.
 
-This is a separate React, TypeScript and Vite bundle packaged by Capacitor. The existing Next.js web app remains a server-rendered application. The methodology names a Kotlin client; this prototype uses Capacitor as requested and shares only the web app's pure feature-availability parser. Django remains responsible for authentication and all financial and meter decisions.
+This is a separate React, TypeScript and Vite bundle packaged by Capacitor. The existing Next.js web app remains a server-rendered application. The methodology names a Kotlin client; this prototype uses Capacitor as requested and reuses the web app's transport-independent finance controller, contracts and feature-availability parser. Django remains responsible for authentication and all financial and meter decisions.
+
+## Current testing APK — 15 October 2026
+
+The redesigned real-client bundle is integrated. See [VALIDATION.md](VALIDATION.md) for commands and evidence. Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`, **4,476,294 bytes**, SHA-256 `9da05eddf3f92c34d4fe41f3f92d16fed19d36b5b5eabcc59d7b30aacdd23a60`. API: `https://shanonsimon.alwaysdata.net/api/v1`. Original application ID and debug signing certificate are preserved. This is a testing APK; phone checks and the existing Next.js production-build stall remain outstanding.
 
 ## Current scope
 
-The mobile interface follows the existing web app's gPawa logo, navy text, blue-to-green accents and rounded cards. Launch opens a welcome screen with **Get started**, **Sign in**, and **Explore the app preview**. Login, registration, verification and password recovery retain their existing Django contracts. The signed-in navigation has Home, Meters, Usage, Credit, Activity and Account; there is no unit-sharing or transfer action.
+The integrated redesign has five destinations: **Home, Meters, Loans, Buy Units, Account**. Usage and receipts are child screens. Welcome, login and signup are unchanged; welcome has no preview link. Home shows the server-stored assessment, borrowing limit, debt and cloud energy. Loans separates My Loans from Apply for Loan, with quote review and explicit consent. Purchases and self-repayments use LOCAL_DEMO when the server permits it. Pending recovery remains mounted across navigation; a countdown never confirms a payment.
+
+See [INTEGRATION.md](INTEGRATION.md) and [VALIDATION.md](VALIDATION.md) for the current repository integration, tests and signed APK. Demo UGX, earlier EUR test history and physical readings remain distinct. The seven deferred features remain disabled. Browser-preview fixtures are excluded from the installed bundle.
+
+### Earlier prototype scope (historical)
+
+The following preview/core-rollout description predates the current LOCAL_DEMO integration; it is not the installed app's navigation or current hosted-demo capability contract.
 
 **Explore the app preview** is an independent frontend workspace that needs no backend. Its persistent banner labels every page as sample data. It includes dashboard/energy status, meter selection, consumption, credit/loan detail, purchase/application/self-repayment/own-meter-load forms and review pages, activity/receipts, notifications, profile, security and help. Scores, charges and tariffs remain unavailable rather than being invented. Transaction forms end at a review explaining that submission requires the approved backend workflow; they send no API requests, create no obligations and persist no sample records. Profile edits and notification read state stay in memory and disappear on leaving preview. Sample loans and receipts keep their original meter binding when the selected viewing meter changes. Preview controls demonstrate empty and offline/stale layouts.
 
@@ -27,7 +42,7 @@ The app calls Django under `/api/v1/` for authentication, profile, meter/consump
 
 The first backend integration stage is documented in [MOBILE_BACKEND_STAGES.md](../backend/docs/MOBILE_BACKEND_STAGES.md). Login/refresh URLs remain shared with the web app; the backend now validates account state and password revocation and serializes refresh rotation. Existing JWTs from before the revocation setting require one fresh sign-in after the backend restarts. This backend-only stage requires no APK rebuild and introduces no database migration.
 
-Stage 2 connects profile and assigned-meter screens through `auth/mobile-profile/`, `auth/mobile-account-details/`, and `meter/mobile-meters/` with an ID-bound dashboard at `meter/mobile-meters/<id>/`. Profile choices come from Django; privileged fields are not editable. Missing account details are reported without creating records. Explicit meter selection is cleared on reassignment/replacement, and stale profile values show their last fetch time with editing disabled until a successful refresh. Existing web endpoints remain unchanged. This stage introduces no migration; its mobile endpoint changes require rebuilding/syncing the APK. Reload the development backend before installing the updated build.
+Historical Stage 2 (the questionnaire has since been removed) connected profile and assigned-meter screens through `auth/mobile-profile/`, `auth/mobile-account-details/`, and `meter/mobile-meters/` with an ID-bound dashboard at `meter/mobile-meters/<id>/`. Profile choices come from Django; privileged fields are not editable. Missing account details are reported without creating records. Explicit meter selection is cleared on reassignment/replacement, and stale profile values show their last fetch time with editing disabled until a successful refresh. Existing web endpoints remain unchanged. This stage introduces no migration; its mobile endpoint changes require rebuilding/syncing the APK. Reload the development backend before installing the updated build.
 
 Access tokens live only in memory. On Android, the refresh token and user ID use `capacitor-secure-storage-plugin` 0.13.0, whose Android implementation encrypts its private preferences using Android Keystore. This version declares Capacitor 8 compatibility. Browser preview uses memory only because the plugin's web fallback is ordinary browser storage. Android backup is disabled so encrypted preferences cannot be restored without their device key. A single in-flight refresh rotates concurrent GET requests; a mutation is never replayed after a 401. The client verifies the account ID after refresh before showing private data. Staff two-factor accounts use the web app; consumers required to change their password can do so in the app. Unverified accounts receive the server's verification error. Verification/reset email links can be copied into the app for local development; Android App Links require a verified production domain and are not claimed here.
 

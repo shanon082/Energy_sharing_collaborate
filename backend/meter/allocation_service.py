@@ -48,15 +48,15 @@ def authorize_purchase_allocation(intent, units):
     from transactions.models import PaymentIntent
 
     if (intent.purpose != PaymentIntent.PURCHASE or intent.status != PaymentIntent.SETTLED or
-            not intent.meter_id or (not intent.purchase_id and intent.provider != "MTN_SANDBOX")):
+            not intent.meter_id or (not intent.purchase_id and intent.provider not in {"MTN_SANDBOX", "LOCAL_DEMO"})):
         raise AllocationError("A settled, meter-bound purchase is required.")
     meter = Meter.all_objects.get(pk=intent.meter_id)
-    if meter.user_id != intent.owner_id or (intent.provider == "MTN_SANDBOX") != meter.sandbox_inventory:
+    if meter.user_id != intent.owner_id or (intent.provider in {"MTN_SANDBOX", "LOCAL_DEMO"}) != meter.sandbox_inventory:
         raise AllocationError("Meter ownership changed before allocation.")
     allocation, created = EnergyAllocation.objects.get_or_create(
         purchase_intent=intent,
         defaults={"owner_id": intent.owner_id, "meter": meter,
-                  "accounting_environment": "SANDBOX" if intent.provider == "MTN_SANDBOX" else "CORE",
+                  "accounting_environment": "UGX_DEMO" if intent.provider == "LOCAL_DEMO" else "SANDBOX" if intent.provider == "MTN_SANDBOX" else "CORE",
                   "amount_kwh": quantize_source_kwh(units)},
     )
     if not created:
@@ -85,10 +85,11 @@ def authorize_sandbox_loan_allocation(loan, units):
     from loan.sandbox_service import require_sandbox, owned_test_meter
     require_sandbox()
     meter = owned_test_meter(loan.owner, loan.meter_id)
-    if loan.status != "DISBURSED" or loan.currency != "EUR":
-        raise AllocationError("An approved EUR sandbox loan is required.")
+    from backend.demo_config import test_domain
+    if loan.status != "DISBURSED" or (loan.currency, loan.environment) != test_domain()[:2]:
+        raise AllocationError("An approved loan in the current test currency/environment is required.")
     row, created = EnergyAllocation.objects.get_or_create(sandbox_loan=loan,
-        defaults={"owner": loan.owner, "meter": meter, "accounting_environment": "SANDBOX",
+        defaults={"owner": loan.owner, "meter": meter, "accounting_environment": "UGX_DEMO" if loan.environment == "UGX_DEMO" else "SANDBOX",
                   "amount_kwh": parse_requested_kwh(units)})
     if not created and (row.owner_id != loan.owner_id or row.meter_id != loan.meter_id or row.amount_kwh != parse_requested_kwh(units)):
         raise AllocationError("Sandbox source allocation differs from its frozen terms.")

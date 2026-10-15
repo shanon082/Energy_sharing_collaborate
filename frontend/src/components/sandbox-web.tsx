@@ -56,6 +56,6 @@ export default function SandboxWeb() {
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <label>Explicit test meter <select value={selected} onChange={event => setSelected(event.target.value)}>
     <option value="">Choose a linked prototype meter</option>{meters.filter(meter => meter.sandbox_inventory).map(meter => <option key={meter.id} value={meter.id}>{meter.meter_number}</option>)}
-  </select></label><SandboxConsumer key={owner} client={client} owner={owner} meters={meters}
+  </select></label><SandboxConsumer key={`${owner}:${capabilities.provider ?? "MTN_SANDBOX"}`} client={client} owner={owner} meters={meters}
     selectedMeter={meters.find(meter => String(meter.id) === selected) ?? null} capabilities={capabilities} /></div>;
 }

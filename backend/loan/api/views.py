@@ -1,3 +1,4 @@
+from django.conf import settings
 from backend.features import requires_feature
 import logging
 from decimal import Decimal
@@ -630,7 +631,12 @@ class LoanStatsView(APIView):
         try:
             from loan.services import get_user_loan_stats
 
-            stats = get_user_loan_stats(request.user)
+            from backend.demo_config import provider_mode
+            demo = getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO"
+            stats = get_user_loan_stats(request.user, include_credit_assessment=not demo)
+            if demo:
+                stats["accounting_environment"] = "CORE"  # Monetary history is never relabelled as demo.
+                stats["assessment_note"] = "View sandbox/assessment/ for your separate automatic demo score."
             for field in ("total_borrowed", "total_repayments", "outstanding_balance"):
                 stats[field] = str(stats[field])
             return Response(stats, status=200)
@@ -1032,6 +1038,10 @@ class CreditScoreView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
+        from backend.demo_config import provider_mode
+        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            from loan.sandbox_service import assessment
+            return Response({"demo_assessment": assessment(request.user)})
         try:
             user = request.user
 

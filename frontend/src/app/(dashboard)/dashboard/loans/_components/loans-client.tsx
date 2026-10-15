@@ -1,5 +1,6 @@
 "use client";
 
+import type { ComponentProps } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileTextIcon, PlusCircle, Heart } from "lucide-react";
@@ -10,11 +11,12 @@ import { useFeatures } from "@/contexts/features-context";
 import FeatureUnavailable from "@/components/common/feature-unavailable";
 
 interface LoansClientProps {
-  loans: any[];
+  loans: ComponentProps<typeof LoanList>["loans"];
   defaultTab: string;
+  prototype?: boolean;
 }
 
-export default function LoansClient({ loans, defaultTab }: LoansClientProps) {
+export default function LoansClient({ loans, defaultTab, prototype = false }: LoansClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { third_party_repayment } = useFeatures();
@@ -53,7 +55,7 @@ export default function LoansClient({ loans, defaultTab }: LoansClientProps) {
       <TabsContent value="apply">
         <div className="flex justify-center">
           <div className="flex flex-col gap-1 w-full max-w-2xl">
-            <SimpleLoanForm />
+            {prototype ? <p>Use the labelled test assessment and loan form above. Assessment is automatic after meter enrollment; no questionnaire is required. Core loan history remains below My Loans.</p> : <SimpleLoanForm />}
           </div>
         </div>
       </TabsContent>

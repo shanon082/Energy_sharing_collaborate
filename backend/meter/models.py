@@ -144,7 +144,7 @@ class EnergyAllocation(models.Model):
                 condition=(
                     models.Q(purchase_intent__isnull=False, loan_disbursement__isnull=True, sandbox_loan__isnull=True)
                     | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=False, sandbox_loan__isnull=True)
-                    | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=True, sandbox_loan__isnull=False, accounting_environment="SANDBOX")
+                    | models.Q(purchase_intent__isnull=True, loan_disbursement__isnull=True, sandbox_loan__isnull=False, accounting_environment__in=["SANDBOX", "UGX_DEMO"])
                 ),
                 name="allocation_one_source",
             ),

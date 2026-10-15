@@ -206,12 +206,13 @@ def resolve_user_loan_access(user) -> dict:
     }
 
 
-def get_user_loan_stats(user) -> dict:
-    """Same payload as ``GET /api/v1/loans/stats/``."""
-    reconcile_user_loan_statuses(user)
+def get_user_loan_stats(user, *, include_credit_assessment=True) -> dict:
+    """Core history; prototype callers explicitly request no core scoring/mutations."""
+    if include_credit_assessment:
+        reconcile_user_loan_statuses(user)
     loans = LoanApplication.objects.filter(user=user)
 
-    blocking_state = get_blocking_loan_state(user)
+    blocking_state = get_blocking_loan_state(user, reconcile=include_credit_assessment)
     pending_applications = blocking_state["pending_applications"]
     active_loans = blocking_state["active_loans"]
     approved_loans = loans.filter(status="APPROVED").count()
@@ -231,8 +232,8 @@ def get_user_loan_stats(user) -> dict:
 
     outstanding_balance = blocking_state["outstanding_balance"]
 
-    eligibility = get_loan_eligibility(user)
-    repayable = get_repayable_loan(user)
+    eligibility = get_loan_eligibility(user) if include_credit_assessment else {"credit_score": None, "source": "CORE_HISTORY_ONLY", "is_loan_eligible": False}
+    repayable = get_repayable_loan(user, reconcile=include_credit_assessment)
 
     return {
         "active_loans": active_loans,
@@ -263,9 +264,10 @@ def get_disbursed_loan_balances(user):
     return loans_with_balance, total_outstanding
 
 
-def get_repayable_loan(user):
+def get_repayable_loan(user, *, reconcile=True):
     """Most recent disbursed or overdue loan with an outstanding balance."""
-    reconcile_user_loan_statuses(user)
+    if reconcile:
+        reconcile_user_loan_statuses(user)
     for loan in LoanApplication.objects.filter(user=user, status__in=DEBT_LOAN_STATUSES).order_by(
         "-created_at"
     ):

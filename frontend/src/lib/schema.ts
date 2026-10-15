@@ -603,7 +603,7 @@ export const getUserProfile = async (): Promise<UserProfile> => {
           total_borrowed: Number(statsData.total_borrowed || 0),
           total_repayments: Number(statsData.total_repayments || 0),
           outstanding_balance: Number(statsData.outstanding_balance || 0),
-          credit_score: statsData.credit_score ? Number(statsData.credit_score) : undefined,
+          credit_score: statsData.credit_score === null || statsData.credit_score === undefined ? undefined : Number(statsData.credit_score),
         }
       : undefined;
 

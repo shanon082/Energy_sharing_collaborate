@@ -42,10 +42,10 @@ export function MeterOnboarding({ session, hasMeter, onRefresh, onLinked }: {
     } finally { if (owner === session.identity) setBusy(false); }
   };
   return <section className="panel form-panel"><h2>{hasMeter ? "Add another meter" : "Add your meter"}</h2>
-    <p className="muted">{selfEnrollment ? "For this prototype, we assume the number you enter belongs to you. Linking enables cloud test allocations; hardware connection is pending." : "Physical enrollment records a request; staff must verify your right to use the meter before assignment."}</p>
-    {selfEnrollment && <p className="muted">{PROTOTYPE_OWNERSHIP_NOTICE}</p>}
+    <p className="muted">{selfEnrollment ? "Enter the number printed on your meter." : "Enter your meter number to request verification."}</p>
+    {selfEnrollment && <details className="info-disclosure"><summary>About linking your meter</summary><p>{PROTOTYPE_OWNERSHIP_NOTICE}</p></details>}
     <form className="form-panel" onSubmit={(event) => void submit(event)}>
-      <label>Meter number <input value={number} maxLength={100} required autoComplete="off"
+      <label>Meter number <input value={number} maxLength={100} required autoComplete="off" placeholder="e.g. 02356709867"
         onChange={(event) => setNumber(event.target.value)} /></label>
       <button disabled={busy || selfEnrollment === null}>{busy ? "Recording…" : selfEnrollment ? "Add your meter" : "Request meter verification"}</button>
     </form>
@@ -56,7 +56,7 @@ export function MeterOnboarding({ session, hasMeter, onRefresh, onLinked }: {
       <span><strong>{enrollmentLabel(row.status)}</strong>
         {row.decision_reason && <small>{row.decision_reason}</small>}</span>
       {selfEnrollment && row.status === "PENDING" && <button type="button" className="secondary" disabled={busy}
-        onClick={() => { setNumber(row.meter_number); setNotice("Review the number and tap Add your meter to explicitly retry using the prototype ownership assumption."); }}>Retry as prototype meter</button>}
+        onClick={() => { setNumber(row.meter_number); setNotice("Check the number, then tap Add your meter to retry."); }}>Retry linking</button>}
     </div>)}
     <button className="secondary" onClick={() => { void load(); onRefresh(); }}>Refresh meters</button>
   </section>;

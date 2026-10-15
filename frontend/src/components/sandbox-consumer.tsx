@@ -1,23 +1,36 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testPhone,
+import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, testPhone,
   type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote } from "../lib/sandbox";
+
+import SandboxMobileView, { type ConsumerFinanceView, type FinanceDestination } from "./sandbox-mobile-view";
 
 const describe = (error: unknown) => error instanceof Error ? error.message : "Sandbox request failed. Refresh to recover stored status.";
 const when = (time: string | null) => time ? new Date(time).toLocaleString() : "Unavailable";
-const eur = (value: string | null) => value === null ? "Unavailable" : `EUR TEST ${value}`;
+const DEMO_PENDING = "Demo payment: simulating phone authorization. No PIN or real money is required.";
+const DEMO_SUCCESS = "Demo payment successful — no real money was deducted.";
 
 /** Shared UI; transport is injected. No Next server/cookie or mobile token imports. */
-export default function SandboxConsumer({ client, owner, meters, selectedMeter, capabilities, onChanged }: {
+export default function SandboxConsumer({ client, owner, meters, selectedMeter, capabilities, onChanged, view = "all", onNavigate, refreshVersion = 0, mutationsAvailable = true, onError, registerBackHandler }: {
   client: SandboxClient; owner: number; meters: TestMeter[]; selectedMeter: TestMeter | null;
   capabilities: SandboxCapabilities; onChanged?: () => void;
+  view?: ConsumerFinanceView | "all"; onNavigate?: (view: FinanceDestination) => void; refreshVersion?: number;
+  mutationsAvailable?: boolean; onError?: (error: unknown) => void; registerBackHandler?: (handler: (() => boolean) | null) => void;
 }) {
+  const demo = capabilities.provider === "LOCAL_DEMO";
+  const environment = demo ? "UGX_DEMO" : "MTN_SANDBOX";
+  const currency = demo ? "UGX" : "EUR";
+  const validAmount = demo ? testDemoAmount : testAmount;
+  const money = (value: string | null | undefined) => testMoney(value, currency);
+  const [clock, setClock] = useState(Date.now);
+  const formVersion = useRef(0);
+  const nextAttempt = useRef(new Map<string, number>());
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const [policy, setPolicy] = useState<TestPolicy | null>(null);
   const [loans, setLoans] = useState<TestLoan[]>([]);
   const [payments, setPayments] = useState<TestPayment[]>([]);
   const [purpose, setPurpose] = useState<"LOAN" | "PURCHASE">("LOAN");
-  const [amount, setAmount] = useState("2.00");
+  const [amount, setAmount] = useState(demo ? "1000" : "2.00");
   const [phone, setPhone] = useState("");
   const [quote, setQuote] = useState<TestQuote | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -59,44 +72,48 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       const recoveredLoans: TestLoan[] = []; const recoveredPayments: TestPayment[] = [];
       let unknown = false;
       for (const kind of ["LOAN", "PURCHASE", "LOAN_REPAYMENT"] as const) {
-        const id = readRetry(owner, kind);
+        const id = readRetry(owner, kind, environment);
         if (!id) continue;
         if (kind === "LOAN") {
           const recovery = await client.get<{ loan: unknown }>(`sandbox/loan-recovery/${id}/`);
           if (recovery.loan) {
-            recoveredLoans.push(parseTestLoan(recovery.loan));
-            if (current(identity) && token.current === run) writeRetry(owner, kind, null);
+            const loan = parseTestLoan(recovery.loan);
+            if (loan.client_request_id !== id || loan.environment !== environment) throw new Error("Loan recovery belongs to a different request or test environment.");
+            recoveredLoans.push(loan);
+            if (current(identity) && token.current === run) writeRetry(owner, kind, null, environment);
           }
-          else if (current(identity) && token.current === run) writeRetry(owner, kind, null);
+          else if (current(identity) && token.current === run) writeRetry(owner, kind, null, environment);
         } else {
           const recovery = await client.get<{ payment: unknown }>(`sandbox/payment-recovery/${id}/`);
           if (recovery.payment) {
-            const record = parseTestPayment(recovery.payment); recoveredPayments.push(record);
-            if (record.status !== "PENDING" && current(identity) && token.current === run) writeRetry(owner, kind, null);
+            const record = parseTestPayment(recovery.payment);
+            if (record.client_request_id !== id || record.environment !== environment) throw new Error("Payment recovery belongs to a different request or test environment.");
+            recoveredPayments.push(record);
+            if (record.status !== "PENDING" && current(identity) && token.current === run) writeRetry(owner, kind, null, environment);
           }
-          else if (current(identity) && token.current === run) writeRetry(owner, kind, null);
+          else if (current(identity) && token.current === run) writeRetry(owner, kind, null, environment);
         }
       }
       // If any lookup fails, catch retains the handles and blocks another initiation.
-      unknown = ["LOAN", "PURCHASE", "LOAN_REPAYMENT"].some(kind => !!readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT") &&
-        ![...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT")));
+      unknown = ["LOAN", "PURCHASE", "LOAN_REPAYMENT"].some(kind => !!readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", environment) &&
+        ![...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", environment)));
       if (!current(identity) || token.current !== run) return;
-      setAssessment(a.assessment); setPolicy(a.policy);
+      setAssessment(demo ? parseStoredDemoAssessment(a.assessment) : a.assessment); setPolicy(a.policy);
       setLoans([...new Map([...l.loans.map(parseTestLoan), ...recoveredLoans].map(row => [row.id, row])).values()]);
       setPayments([...new Map([...mergePayments(p.payments, p.pending), ...recoveredPayments].map(row => [row.reference, row])).values()]);
       setUnresolved(unknown); setOffline(false); setFetched(new Date().toISOString()); setError(null);
     } catch (cause) {
       if (!current(identity) || token.current !== run) return;
-      setError(describe(cause)); setUnresolved(true);
+      setError(describe(cause)); setUnresolved(true); onError?.(cause);
     } finally {
       if (current(identity) && token.current === run) {
         reading.current = false; setRefreshing(false);
       }
     }
-  }, [client, owner]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  }, [client, owner, environment, demo, onError]);
+  useEffect(() => { void refresh(); }, [refresh, selectedMeter?.id, refreshVersion]);
   useEffect(() => {
-    const changed = () => { setQuote(null); setAccepted(false); };
+    const changed = () => { formVersion.current++; setQuote(null); setAccepted(false); };
     changed();
   }, [selectedMeter?.id]);
   useEffect(() => {
@@ -106,65 +123,140 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     const interval = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 30000);
     return () => { window.clearInterval(interval); window.removeEventListener("offline", onOffline); window.removeEventListener("online", onOnline); };
   }, [refresh]);
-  const perform = async (work: () => Promise<void>) => {
-    if (inFlight.current || reading.current || offline) return;
+  // A single mounted controller serves the mobile tabs; navigation never initiates a payment.
+  useEffect(() => {
+    const next = view === "purchase" ? "PURCHASE" : view === "apply" || view === "loans" ? "LOAN" : null;
+    if (next && next !== purpose) { formVersion.current++; setPurpose(next); setQuote(null); setAccepted(false); }
+  }, [view, purpose]);
+  useEffect(() => {
+    if (!quote) return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [quote]);
+
+  const perform = async (work: () => Promise<void>, recovery = false) => {
+    if (inFlight.current || reading.current || offline || (!recovery && (!mutationsAvailable || unresolved))) return;
     inFlight.current = true;
     const identity = epoch.current;
     setBusy(true); setError(null); setNotice(null);
     try { await work(); }
-    catch (cause) { if (current(identity)) { setError(describe(cause)); setUnresolved(true); } }
+    catch (cause) { if (current(identity)) { setError(describe(cause)); setUnresolved(true); onError?.(cause); } }
     finally { inFlight.current = false; if (current(identity)) setBusy(false); }
   };
   const getQuote = (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedMeter?.sandbox_inventory || !testAmount(amount)) { setError("Add or select a linked prototype meter and enter positive EUR cents."); return; }
-    const meterId = selectedMeter.id; const identity = epoch.current;
+    if (!selectedMeter?.sandbox_inventory || !validAmount(amount)) { setError("Add or select a linked prototype meter and enter a positive matching test amount."); return; }
+    const meterId = selectedMeter.id; const identity = epoch.current; const revision = formVersion.current; const intent = purpose;
     void perform(async () => {
-      const q = await client.post<TestQuote>("sandbox/quotes/", { meter_id: meterId, amount, purpose });
-      if (current(identity) && destination.current === meterId) { setQuote(q); setAccepted(false); }
+      const q = parseTestQuote(await client.post<unknown>("sandbox/quotes/", { meter_id: meterId, amount, purpose }),
+        { owner, meterId, amount, purpose: intent, currency, environment });
+      if (current(identity) && destination.current === meterId && formVersion.current === revision && q.terms.purpose === intent) { setQuote(q); setAccepted(false); }
     });
   };
   const submit = () => {
-    if (!quote || !accepted || (purpose === "PURCHASE" && !testPhone(phone))) return;
+    if (!quote || !accepted || quote.terms.purpose !== purpose || quote.terms.meter_id !== destination.current || Date.parse(quote.expires_at) <= Date.now() ||
+      (purpose === "PURCHASE" && !demo && !testPhone(phone))) return;
+    const meterId = quote.terms.meter_id;
+    if (typeof meterId !== "number") return;
     const terms = quote; const kind = purpose; const identity = epoch.current;
     void perform(async () => {
-      const key = readRetry(owner, kind) || crypto.randomUUID(); writeRetry(owner, kind, key);
+      const key = readRetry(owner, kind, environment) || crypto.randomUUID(); writeRetry(owner, kind, key, environment);
       if (kind === "LOAN") {
         const result = await client.post<{ loan: unknown }>("sandbox/loans/", { quote_id: terms.id, terms_hash: terms.terms_hash,
           client_request_id: key, accept_test_terms: true });
         const decision = parseTestLoan(result.loan);
-        if (current(identity)) setNotice(`${decision.status}: ${decision.reason}`);
+        if (current(identity)) setNotice(`${decision.status === "DISBURSED" ? "Approved" : decision.status === "REJECTED" ? "Not approved" : decision.status}: ${decision.reason}`);
       } else {
         const result = await client.post<{ payment: unknown }>("sandbox/payments/", { purpose: kind, quote_id: terms.id,
-          terms_hash: terms.terms_hash, client_request_id: key, msisdn: phone, accept_test_terms: true });
+          terms_hash: terms.terms_hash, client_request_id: key, ...(demo ? {} : { msisdn: phone }), accept_test_terms: true });
         const payment = parseTestPayment(result.payment);
-        if (current(identity)) setNotice(`Purchase ${payment.status}. Only verified settlement allocates test energy.`);
+        assertTestPaymentBinding(payment, { client_request_id: key, purpose: kind, amount: terms.terms.amount,
+          meter_id: meterId, loan_id: null, currency, environment });
+        if (current(identity)) {
+          setPayments(previous => [payment, ...previous.filter(row => row.reference !== payment.reference)]);
+          setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : `Purchase ${payment.status}. Only verified settlement allocates test energy.`);
+        }
       }
       if (!current(identity)) return;
       setQuote(null); setAccepted(false); inFlight.current = false; await refresh(); onChanged?.();
+      if (kind === "LOAN" && view !== "all" && current(identity)) onNavigate?.("loans");
     });
   };
   const repay = (event: FormEvent) => {
     event.preventDefault();
-    if (!loanId || !testAmount(repayment) || !testPhone(phone) || !repayAccepted) { setError("Choose your test loan, positive EUR cents and an MTN test number; accept the terms."); return; }
+    if (!loanId || !validAmount(repayment) || (!demo && !testPhone(phone)) || !repayAccepted) { setError("Choose your test loan, a positive matching test amount; accept the terms."); return; }
+    const loan = loans.find(row => row.id === loanId && row.environment === environment && row.status === "DISBURSED");
+    if (!loan) { setError("Choose an active loan in the current test currency."); return; }
     const identity = epoch.current;
     void perform(async () => {
-      const key = readRetry(owner, "LOAN_REPAYMENT") || crypto.randomUUID(); writeRetry(owner, "LOAN_REPAYMENT", key);
+      const key = readRetry(owner, "LOAN_REPAYMENT", environment) || crypto.randomUUID(); writeRetry(owner, "LOAN_REPAYMENT", key, environment);
       const result = await client.post<{ payment: unknown }>("sandbox/payments/", { purpose: "LOAN_REPAYMENT", loan_id: loanId,
-        amount: repayment, msisdn: phone, accept_test_terms: true, client_request_id: key });
+        amount: repayment, ...(demo ? {} : { msisdn: phone }), accept_test_terms: true, client_request_id: key });
       const payment = parseTestPayment(result.payment);
+      assertTestPaymentBinding(payment, { client_request_id: key, purpose: "LOAN_REPAYMENT", amount: repayment,
+        meter_id: loan.meter_id, loan_id: loanId, currency, environment });
       if (!current(identity)) return;
-      setNotice(`Repayment ${payment.status}. Pending requests do not reduce debt.`); setRepayAccepted(false); inFlight.current = false; await refresh();
+      setPayments(previous => [payment, ...previous.filter(row => row.reference !== payment.reference)]);
+      setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : `Repayment ${payment.status}. Pending requests do not reduce debt.`); setRepayAccepted(false); inFlight.current = false; await refresh();
     });
   };
-  const pending = payments.some(row => row.status === "PENDING");
-  const blocked = busy || refreshing || offline || unresolved || pending;
-  const selectedLoan = loans.find(row => row.id === loanId);
+  const pending = payments.some(row => row.status === "PENDING" && row.environment === environment);
+  useEffect(() => {
+    if (!demo || !pending) return;
+    let disposed = false; const identity = epoch.current;
+    const tick = async () => {
+      const now = Date.now(); setClock(now);
+      if (disposed || offline || inFlight.current || reading.current || document.visibilityState !== "visible") return;
+      const row = payments.find(item => item.environment === "UGX_DEMO" && item.status === "PENDING");
+      if (!row || now < (nextAttempt.current.get(row.reference) ?? 0)) return;
+      const remaining = demoCountdown(row, now);
+      if (remaining === null) return;
+      inFlight.current = true; nextAttempt.current.set(row.reference, now + 2000);
+      try {
+        const result = remaining > 0
+          ? await client.get<{ payment: unknown }>(`sandbox/payments/${row.reference}/`)
+          : await client.post<{ payment: unknown }>(`sandbox/payments/${row.reference}/`, {});
+        const record = parseTestPayment(result.payment);
+        assertTestPaymentBinding(record, row);
+        if (disposed || !current(identity)) return;
+        setPayments(previous => previous.map(item => item.reference === record.reference ? record : item));
+        if (record.status === "SETTLED") {
+          setNotice(DEMO_SUCCESS); setError(null);
+          const kind = record.purpose === "PURCHASE" ? "PURCHASE" : "LOAN_REPAYMENT";
+          if (readRetry(owner, kind, environment) === record.client_request_id) writeRetry(owner, kind, null, environment);
+          inFlight.current = false; await refresh(); onChanged?.();
+        }
+      } catch (cause) {
+        nextAttempt.current.set(row.reference, Date.now() + 15000);
+        if (!disposed && current(identity)) { setError(describe(cause)); onError?.(cause); }
+      } finally { inFlight.current = false; }
+    };
+    const interval = window.setInterval(() => { void tick(); }, 500);
+    return () => { disposed = true; window.clearInterval(interval); };
+  }, [client, demo, environment, offline, owner, payments, pending, refresh, onChanged, onError]);
+  const blocked = busy || refreshing || offline || unresolved || pending || !mutationsAvailable;
+  const selectedLoan = loans.find(row => row.id === loanId && row.environment === environment && row.status === "DISBURSED");
   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
   const stale = !!error || offline;
+  if (view !== "all") return <SandboxMobileView
+    view={view} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
+    capabilities={capabilities} assessment={assessment} policy={policy} loans={loans} payments={payments}
+    meters={meters} selectedMeter={selectedMeter} purpose={purpose} amount={amount}
+    setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
+    quote={quote} clearQuote={() => { formVersion.current++; setQuote(null); setAccepted(false); }}
+    accepted={accepted} setAccepted={setAccepted} phone={phone} setPhone={setPhone}
+    loanId={loanId} selectLoan={id => { setLoanId(id); setRepayment(""); setRepayAccepted(false); }}
+    repayment={repayment} setRepayment={setRepayment} repayAccepted={repayAccepted} setRepayAccepted={setRepayAccepted}
+    blocked={blocked} busy={busy} refreshing={refreshing} offline={offline} unresolved={unresolved} pending={pending}
+    error={error} notice={notice} fetched={fetched} clock={clock} validAmount={validAmount} validPhone={testPhone(phone)}
+    refresh={() => void refresh()} getQuote={getQuote} submit={submit} repay={repay}
+    checkPayment={row => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); }, true)}
+  />;
+
   return <section className="sandbox-consumer panel">
-    <h2>SANDBOX / NO REAL MONEY</h2>
-    <p>EUR test currency only. Historical UGX debt, wallets and real scores remain separate. Test allocation is not confirmed meter delivery.</p>
+    <h2>{demo ? "UGX DEMO / NO REAL MONEY" : "EUR TEST / MTN SANDBOX"}</h2>
+    <p>{demo ? "Local simulator. No real money or actual phone authorization. You may apply for one UGX demo loan alongside an existing EUR loan, without converting or closing it." : "EUR test currency only."} Core UGX debt, wallets and real scores remain separate. Cloud allocation is not confirmed meter delivery.</p>
     <button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Refresh & recover stored requests</button>
     {fetched && <p className={stale ? "stale" : "muted"}>{stale ? "Stale — " : "Fetched "}{when(fetched)}</p>}
     {offline && <p role="status">Offline — no financial requests will be initiated.</p>}
@@ -172,57 +264,60 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     {notice && <p className="tag" role="status">{notice}</p>}
     {unresolved && <p>Refresh to resolve the previous attempt before submitting another request. Never retry by creating a new payment identity.</p>}
     {pending && <p>There is a pending test payment. Scheduled reconciliation continues when the app is closed. Another payment is blocked until its outcome is known.</p>}
-    {assessment && policy && <section><h3>Test credit assessment</h3>
-      <p>{assessment.starter ? "Starter allowance — no established credit score" : `Test score ${assessment.score}/100 (profile ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
-      <p>{assessment.reason} Maximum: {eur(assessment.maximum)}.</p>
-      {assessment.factors && <p>{Object.entries(assessment.factors).map(([key, value]) => `${key}: ${value}`).join(" · ")}</p>}
-      <p>Settled billed test purchases: {eur(assessment.qualifying_billed_eur)}. One point per {eur(policy.purchase_per_point)}, capped at {policy.purchase_score_cap}. Refreshing does not earn points.</p>
-      <p>Policy {policy.id}; threshold {policy.score_threshold}; flat interest {policy.interest_percent}%; fee {eur(policy.fee)}; due {policy.due_days} days; overdue charge {policy.penalty_percent}%.</p>
+    {assessment && policy && <section><h3>{demo ? "Demo assessment — simulated account information" : "Test credit assessment"}</h3>
+      <p>{demo && assessment.assessment_status !== "READY" ? `Score unavailable — ${assessment.assessment_status?.toLowerCase() ?? "pending"}` : assessment.starter ? "Starter allowance — no established credit score" : `Test score ${assessment.score}/100 (base ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
+      <p>{assessment.reason} Maximum: {money(assessment.maximum)}.</p>
+      {assessment.factors && <p>{Object.entries(assessment.factors).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value} (${assessment.categories?.[key] ?? "recorded"})`).join(" · ")}</p>}
+      {demo && <p>These payment, consumption and financial categories are fixed synthetic test inputs, not utility, bank, telecom or credit-bureau records. No questionnaire is required. Assessment {when(assessment.assessed_at ?? null)} · {assessment.scoring_policy_version} · {assessment.provider}.</p>}
+      <p>Settled billed test purchases: {money(assessment.qualifying_billed_test ?? assessment.qualifying_billed_eur)}. One point per {money(policy.purchase_per_point)}, capped at {policy.purchase_score_cap}. Refreshing does not earn points.</p>
+      <p>Policy {policy.id}; threshold {policy.score_threshold}; flat interest {policy.interest_percent}%; fee {money(policy.fee)}; due {policy.due_days} days; overdue charge {policy.penalty_percent}%.</p>
       <p>{policy.rounding}. Full repayment closes new test loans permanently.</p>
     </section>}
     <form onSubmit={getQuote}>
       <h3>Apply for test credit or buy test electricity</h3>
       {!selectedMeter?.sandbox_inventory ? <p>Add or select a linked prototype meter in Meters. {eligibleMeters.length ? `${eligibleMeters.length} test meter(s) linked.` : "No prototype meter is linked."}</p> : <p>Explicit destination: {selectedMeter.meter_number} · cloud test inventory. Hardware connection is pending; actual usage and physical meter balance are unavailable without device evidence.</p>}
-      <label>Activity<select value={purpose} onChange={event => { setPurpose(event.target.value === "PURCHASE" ? "PURCHASE" : "LOAN"); setQuote(null); setAccepted(false); }}>
-        <option value="LOAN">Test electricity loan</option><option value="PURCHASE">MTN sandbox purchase</option>
+      <label>Activity<select value={purpose} onChange={event => { formVersion.current++; setPurpose(event.target.value === "PURCHASE" ? "PURCHASE" : "LOAN"); setQuote(null); setAccepted(false); }}>
+        <option value="LOAN">Test electricity loan</option><option value="PURCHASE">{demo ? "Demo purchase" : "MTN sandbox purchase"}</option>
       </select></label>
-      <label>Principal / payment (EUR TEST)<input inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
-      <p>Quote range {eur(policy?.minimum ?? null)} – {eur(policy?.maximum ?? null)}. Approval uses your limit and existing obligations at submission.</p>
-      <button type="submit" disabled={blocked || !selectedMeter?.sandbox_inventory || !(purpose === "LOAN" ? capabilities.loans : capabilities.purchases)}>Review server quote</button>
+      <label>Principal / payment ({demo ? "whole UGX DEMO" : "EUR TEST"})<input inputMode={demo ? "numeric" : "decimal"} value={amount} onChange={event => { formVersion.current++; setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
+      <p>Quote range {money(policy?.minimum ?? null)} – {money(policy?.maximum ?? null)}. Approval uses your limit and existing obligations at submission.</p>
+      <button type="submit" disabled={blocked || !selectedMeter?.sandbox_inventory || !(purpose === "LOAN" ? capabilities.loans && (!demo || assessment?.assessment_status === "READY") : capabilities.purchases)}>Review server quote</button>
     </form>
     {quote && <section><h3>Review {quote.terms.policy.id}</h3>
-      <p>Principal/payment {eur(quote.terms.amount)} · test energy {quote.terms.energy_kwh} kWh · interest {eur(quote.terms.interest)} · fee {eur(quote.terms.fee)} · loan total {eur(quote.terms.total_due)}.</p>
-      <p>Test price {eur(quote.terms.policy.rate_per_kwh)}/kWh; billed {eur(quote.terms.billed)}; energy-rounding remainder {eur(quote.terms.residual)} retained for reconciliation. No automatic refund or energy conversion.</p>
+      <p>Principal/payment {money(quote.terms.amount)} · test energy {quote.terms.energy_kwh} kWh · interest {money(quote.terms.interest)} · fee {money(quote.terms.fee)} · loan total {money(quote.terms.total_due)}.</p>
+      <p>Test price {money(quote.terms.policy.rate_per_kwh)}/kWh; billed {money(quote.terms.billed)}; energy-rounding remainder {money(quote.terms.residual)} retained for reconciliation. No automatic refund or energy conversion.</p>
       <p>Expires {when(quote.expires_at)}. Allocations are not physical meter receipts.</p>
       <label><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /> I accept these SANDBOX TEST terms.</label>
-      <button type="button" onClick={submit} disabled={blocked || !accepted || Date.parse(quote.expires_at) <= Date.now() || (purpose === "PURCHASE" && !testPhone(phone))}>{purpose === "LOAN" ? "Submit actual test application" : "Initiate MTN sandbox purchase"}</button>
+      <button type="button" onClick={submit} disabled={blocked || !accepted || Date.parse(quote.expires_at) <= Date.now() || (purpose === "PURCHASE" && !demo && !testPhone(phone))}>{purpose === "LOAN" ? "Submit actual test application" : (demo ? "Start demo purchase" : "Initiate MTN sandbox purchase")}</button>
     </section>}
-    <section><h3>MTN sandbox number</h3>
+    {!demo && <section><h3>MTN sandbox number</h3>
       <label>Test MSISDN (10–15 digits; no +)<input inputMode="numeric" autoComplete="off" value={phone} onChange={event => setPhone(event.target.value)} /></label>
       <p>Use a sandbox scenario, never your real account number or PIN. Example test-only 46733123499: ordinary success scenario; 46733123450: failure; 46733123453: ongoing; 46733123454: delayed. Provider evidence, not this label, decides the outcome.</p>
       {(!capabilities.purchases || !capabilities.repayments) && <p>MTN sandbox credentials are not configured on the server. Test loan submission remains available; payment initiation will become available after private operator setup.</p>}
-    </section>
+    </section>}
     <section><h3>Test loans & decisions</h3>{!fetched ? <p>Loading…</p> : !loans.length ? <p>No test applications.</p> : loans.map(loan => <article className="panel" key={loan.id}>
-      <strong>{loan.status} · {eur(loan.outstanding)} outstanding</strong><p>{loan.reason}</p>
+      <strong>{loan.status} · {testMoney(loan.outstanding, loan.currency)} outstanding</strong><p>{loan.reason}</p>
       <p>Reference {loan.id} · meter ID {loan.meter_id} · accepted policy {loan.terms.policy.id}</p>
-      <p>Principal {eur(loan.principal)} · frozen total {eur(loan.total_due)} · due {when(loan.due_at)} · closed {when(loan.closed_at)}.</p>
+      <p>Principal {testMoney(loan.principal, loan.currency)} · frozen total {testMoney(loan.total_due, loan.currency)} · due {when(loan.due_at)} · closed {when(loan.closed_at)}.</p>
       <p>Test allocation {loan.allocated_kwh === null ? "None" : `${loan.allocated_kwh} kWh`} · confirmed physical application unavailable.</p>
-      {payments.filter(payment => payment.loan_id === loan.id).map(payment => <p key={payment.reference}>Repayment {payment.status}: received {eur(payment.amount)}, applied {eur(payment.applied)}, excess {eur(payment.excess)}.</p>)}
+      {payments.filter(payment => payment.loan_id === loan.id).map(payment => <p key={payment.reference}>Repayment {payment.status}: received {testMoney(payment.amount, payment.currency)}, applied {testMoney(payment.applied, payment.currency)}, excess {testMoney(payment.excess, payment.currency)}.</p>)}
     </article>)}</section>
-    <form onSubmit={repay}><h3>Self-repayment (MTN sandbox)</h3>
+    <form onSubmit={repay}><h3>Self-repayment ({demo ? "UGX DEMO" : "MTN sandbox"})</h3>
       <label>Your test loan<select value={loanId} onChange={event => { setLoanId(event.target.value); setRepayment(""); setRepayAccepted(false); }}><option value="">Choose explicitly</option>
-        {loans.filter(row => row.status === "DISBURSED").map(row => <option key={row.id} value={row.id}>{row.id} · EUR {row.outstanding}</option>)}
+        {loans.filter(row => row.status === "DISBURSED" && row.environment === environment).map(row => <option key={row.id} value={row.id}>{row.id} · {testMoney(row.outstanding, row.currency)}</option>)}
       </select></label>
-      {selectedLoan && <p>Policy {selectedLoan.terms.policy.id}; outstanding {eur(selectedLoan.outstanding)}. Repayment reduces only this loan; it creates no energy.</p>}
-      <label>Amount (EUR TEST cents)<input inputMode="decimal" value={repayment} onChange={event => setRepayment(event.target.value)} required /></label>
+      {selectedLoan && <p>Policy {selectedLoan.terms.policy.id}; outstanding {money(selectedLoan.outstanding)}. Repayment reduces only this loan; it creates no energy.</p>}
+      <label>Amount ({demo ? "whole UGX DEMO" : "EUR TEST cents"})<input inputMode={demo ? "numeric" : "decimal"} value={repayment} onChange={event => setRepayment(event.target.value)} required /></label>
       <label><input type="checkbox" checked={repayAccepted} onChange={event => setRepayAccepted(event.target.checked)} /> I accept test repayment terms: any late excess is preserved for reconciliation; no automatic refund or credit.</label>
-      <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !testAmount(repayment) || !testPhone(phone)}>Initiate sandbox self-repayment</button>
+      <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !validAmount(repayment) || (!demo && !testPhone(phone))}>{demo ? "Start demo self-repayment" : "Initiate sandbox self-repayment"}</button>
     </form>
     <section><h3>Sandbox receipts & pending recovery</h3>{!fetched ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
-      <strong>{row.purpose} · {row.status} · {eur(row.amount)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
-      <p>Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} Next provider check {when(row.next_check_at)}.</p>
-      {row.status === "SETTLED" && <p>Verified {when(row.settled_at)}. Billed {eur(row.billed)}; remainder {eur(row.residual)}; debt applied {eur(row.applied)}; excess {eur(row.excess)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
-      {row.status === "PENDING" && <button type="button" className="secondary" disabled={busy || offline} onClick={() => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); })}>Check with MTN (server backoff applies)</button>}
+      <strong>{row.purpose} · {row.status} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
+      <p>Environment: {row.environment}. Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} {row.environment === "UGX_DEMO" ? "No external provider or phone prompt." : `Next provider check ${when(row.next_check_at)}.`}</p>
+      {row.status === "SETTLED" && <p>{row.environment === "UGX_DEMO" ? DEMO_SUCCESS : "Provider verified."} {when(row.settled_at)}. Billed {testMoney(row.billed, row.currency)}; remainder {testMoney(row.residual, row.currency)}; debt applied {testMoney(row.applied, row.currency)}; excess {testMoney(row.excess, row.currency)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
+      {row.status === "PENDING" && row.environment === "UGX_DEMO" && <p role="status">{DEMO_PENDING} Processing: {demoCountdown(row, clock) ?? "Unavailable"} seconds. {demoCountdown(row, clock) === 0 && "Awaiting server confirmation — not yet successful."}</p>}
+      {row.status === "PENDING" && row.environment !== environment && <p>MTN reconciliation is paused in demo mode. This obligation is retained, not cancelled or converted.</p>}
+      {row.status === "PENDING" && row.environment === environment && <button type="button" className="secondary" disabled={busy || offline || (demo && demoCountdown(row, clock) !== 0)} onClick={() => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); })}>{demo ? "Request server demo completion" : "Check with MTN (server backoff applies)"}</button>}
     </article>)}</section>
   </section>;
 }
