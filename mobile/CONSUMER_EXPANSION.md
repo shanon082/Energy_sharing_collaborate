@@ -1,5 +1,7 @@
 # Consumer expansion build and verification — 12 October 2026
 
+> Current update (15 October 2026): the redesigned consumer now selects a meter-specific assessment, displays percentages, enforces the 80% backend rule and reviews configured tariff breakdowns. See [the backend rollout](../backend/docs/METER_CREDIT_TARIFFS.md) and [current validation](VALIDATION.md). Deploy the backend migrations and initialize existing meters before using the new APK. The top demo badge was removed; payment and receipt disclosures remain.
+
 This is earlier build evidence. The updated signed sandbox APK now includes
 immediate SELF_DECLARED enrollment and automatically selects the returned meter.
 No staff review/inventory/simulator is required for new prototype enrollment.

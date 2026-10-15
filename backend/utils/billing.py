@@ -32,6 +32,17 @@ DEFAULT_SERVICE_CHARGE = Decimal("3360.00")
 FALLBACK_ENERGY_RATE = Decimal("756.20")
 
 
+class TariffConfigurationError(ValueError):
+    """Strict quote pricing must not use an unconfigured fallback."""
+
+
+@dataclass(frozen=True)
+class PurchaseBillingContext:
+    monthly_units: Decimal
+    lifeline_eligible: bool
+    vat_rate: Decimal
+
+
 @dataclass
 class BillBreakdown:
     energy_units: Decimal
@@ -160,9 +171,9 @@ def get_outstanding_deductions(user) -> Decimal:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _service_charge(tariff, user=None, month_date: Optional[date] = None) -> Decimal:
+def _service_charge(tariff, user=None, month_date: Optional[date] = None, *, context=None) -> Decimal:
     """Monthly service fee — charged once on the first purchase of each calendar month."""
-    if user is not None and get_monthly_units_consumed(user, month_date) > 0:
+    if (context is not None and context.monthly_units > 0) or (context is None and user is not None and get_monthly_units_consumed(user, month_date) > 0):
         return Decimal("0")
     if tariff is not None:
         return Decimal(str(tariff.service_charge))
@@ -194,6 +205,7 @@ def _energy_cost_for_units(
     user,
     tariff=None,
     month_date: Optional[date] = None,
+    *, context: Optional[PurchaseBillingContext] = None, strict: bool = False,
 ) -> tuple[Decimal, bool]:
     """Energy-only cost for `units` kWh given monthly consumption so far."""
     if units <= 0:
@@ -203,11 +215,13 @@ def _energy_cost_for_units(
         tariff = get_active_domestic_tariff(month_date)
 
     if tariff is None or not tariff.blocks.exists():
+        if strict:
+            raise TariffConfigurationError("Tariff unavailable")
         logger.warning("No active domestic tariff; using flat %.2f UGX/kWh", FALLBACK_ENERGY_RATE)
         return (units * FALLBACK_ENERGY_RATE).quantize(Decimal("0.01")), False
 
-    already_bought = get_monthly_units_consumed(user, month_date)
-    eligible = is_lifeline_eligible(user)
+    already_bought = context.monthly_units if context is not None else get_monthly_units_consumed(user, month_date)
+    eligible = context.lifeline_eligible if context is not None else is_lifeline_eligible(user)
     remaining_units = units
     total_cost = Decimal("0")
     lifeline_applied = False
@@ -220,6 +234,8 @@ def _energy_cost_for_units(
         if capacity is not None and capacity <= 0:
             continue
 
+        if strict and block.is_lifeline_block and not eligible and block.non_lifeline_rate is None:
+            raise TariffConfigurationError("Tariff unavailable: non-lifeline rate missing")
         rate = _rate_for_block(block, eligible)
         if block.is_lifeline_block and eligible and rate == Decimal(str(block.rate_per_unit)):
             lifeline_applied = True
@@ -234,6 +250,8 @@ def _energy_cost_for_units(
         remaining_units -= units_in_block
 
     if remaining_units > 0:
+        if strict:
+            raise TariffConfigurationError("Tariff unavailable: incomplete bands")
         total_cost += remaining_units * FALLBACK_ENERGY_RATE
 
     return total_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN), lifeline_applied
@@ -244,15 +262,16 @@ def calculate_bill_for_units(
     user,
     tariff=None,
     month_date: Optional[date] = None,
+    *, context: Optional[PurchaseBillingContext] = None, strict: bool = False,
 ) -> BillBreakdown:
     """Full bill (energy + service + VAT) for a given kWh purchase."""
-    energy_cost, lifeline_applied = _energy_cost_for_units(units, user, tariff, month_date)
+    energy_cost, lifeline_applied = _energy_cost_for_units(units, user, tariff, month_date, context=context, strict=strict)
     if tariff is None:
         tariff = get_active_domestic_tariff(month_date)
 
-    service = _service_charge(tariff, user, month_date)
+    service = _service_charge(tariff, user, month_date, context=context)
     subtotal = energy_cost + service
-    vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+    vat = (subtotal * (context.vat_rate if context is not None else VAT_RATE)).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
     total = subtotal + vat
 
     return BillBreakdown(
@@ -273,6 +292,7 @@ def calculate_units_from_payment(
     month_date: Optional[date] = None,
     outstanding_bills: Optional[Decimal] = None,
     apply_deductions: bool = True,
+    context: Optional[PurchaseBillingContext] = None, strict: bool = False,
 ) -> tuple[Decimal, BillBreakdown]:
     """
     Convert a payment amount (UGX) to kWh using ERA tiered billing.
@@ -300,12 +320,19 @@ def calculate_units_from_payment(
 
     lo = Decimal("0")
     hi = Decimal("2000")
+    if strict:
+        if tariff is None or not tariff.blocks.exists():
+            raise TariffConfigurationError("Tariff unavailable")
+        rates = [_rate_for_block(block, context.lifeline_eligible if context else is_lifeline_eligible(user)) for block in tariff.blocks.order_by("block_order")]
+        if not rates or min(rates) <= 0:
+            raise TariffConfigurationError("Tariff unavailable: invalid rates")
+        hi = max(hi, net / min(rates) + Decimal(1))
     best_units = Decimal("0")
     best_breakdown = empty
 
     for _ in range(90):
         mid = ((lo + hi) / 2).quantize(Decimal("0.0001"))
-        breakdown = calculate_bill_for_units(mid, user, tariff, month_date)
+        breakdown = calculate_bill_for_units(mid, user, tariff, month_date, context=context, strict=strict)
         if breakdown.total <= net:
             best_units = mid
             best_breakdown = breakdown
@@ -319,13 +346,13 @@ def calculate_units_from_payment(
     # Nearest rounding could create energy whose bill exceeds a paid amount.
     granted_units = best_units.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     if granted_units > 0:
-        best_breakdown = calculate_bill_for_units(granted_units, user, tariff, month_date)
+        best_breakdown = calculate_bill_for_units(granted_units, user, tariff, month_date, context=context, strict=strict)
     best_breakdown.energy_units = granted_units
     best_breakdown.amount_deducted = deductions
     best_breakdown.net_payment = net
     if granted_units <= 0:
         # Surface fixed charges so the UI can explain why small payments yield 0 kWh.
-        min_bill = calculate_bill_for_units(Decimal("0.01"), user, tariff, month_date)
+        min_bill = calculate_bill_for_units(Decimal("0.01"), user, tariff, month_date, context=context, strict=strict)
         best_breakdown.service_charge = min_bill.service_charge
         best_breakdown.vat = min_bill.vat
         best_breakdown.subtotal = min_bill.subtotal

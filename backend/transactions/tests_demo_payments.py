@@ -18,7 +18,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from backend.demo_config import demo_configuration
-from loan.models import SandboxLoan, SandboxQuote
+from loan.models import SandboxLoan, SandboxQuote, ElectricityTariff, TariffBlock
 from loan.sandbox_service import create_quote, apply_loan, assessment
 from meter.models import EnergyAllocation, MeterDelivery
 from meter.sandbox_enrollment import enroll_sandbox_meter
@@ -35,6 +35,13 @@ DEMO = {**SANDBOX, "PROTOTYPE_PAYMENT_PROVIDER": "LOCAL_DEMO", "DEMO_POLICY": de
 
 class Fixtures:
     def setUp(self):
+        # Synthetic flat tariff and zero VAT isolate payment regressions. The
+        # meter/tariff tests separately exercise actual billing VAT and bands.
+        vat = patch("utils.billing.VAT_RATE", Decimal("0")); vat.start(); self.addCleanup(vat.stop)
+        ElectricityTariff.objects.update(is_active=False)
+        tariff = ElectricityTariff.objects.create(tariff_code="DEMO-FIXTURE", tariff_name="Synthetic payment regression tariff",
+            tariff_type="DOMESTIC", voltage_level="LV", service_charge=0)
+        TariffBlock.objects.create(tariff=tariff, block_order=1, min_units=0, max_units=None, rate_per_unit=1000)
         self.owner = User.objects.create_user(email="demo-owner@example.invalid", password="test-only")
         self.other = User.objects.create_user(email="demo-other@example.invalid", password="test-only")
         for user in (self.owner, self.other):
@@ -107,7 +114,7 @@ class DemoPaymentTests(Fixtures, TestCase):
         final = self.repayment(loan, "750"); self.settle(final)
         loan.refresh_from_db(); self.assertEqual(loan.status, "COMPLETED"); self.assertIsNotNone(loan.closed_at)
         with patch("django.utils.timezone.now", return_value=loan.due_at + timedelta(days=90)):
-            self.assertEqual(loan.outstanding, 0); self.assertTrue(assessment(self.owner)["eligible"])
+            self.assertEqual(loan.outstanding, 0); self.assertTrue(assessment(self.owner, meter_id=self.meter.pk)["eligible"])
             with self.assertRaises(ValidationError): self.repayment(loan, "1")
         self.assertEqual(EnergyAllocation.objects.count(), original_energy)
         self.assertEqual(sum(row.received for row in SandboxSettlement.objects.all()), Decimal(1050))
@@ -138,6 +145,8 @@ class DemoPaymentTests(Fixtures, TestCase):
 
     def test_eur_history_remains_readable_and_separate_active_demo_allowed(self):
         with override_settings(**SANDBOX):
+            from loan.tests_sandbox import trusted_profile_fixture
+            trusted_profile_fixture(self.owner)
             quote = create_quote(self.owner, self.meter.pk, "2", "LOAN")
             old = apply_loan(self.owner, quote.pk, quote.terms_hash, uuid.uuid4())[0]
         new = self.loan(); self.assertEqual(new.environment, "UGX_DEMO")

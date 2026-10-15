@@ -182,6 +182,8 @@ class SandboxEnrollmentTests(Fixtures, TestCase):
         self.assertEqual(usage["simulator_telemetry"], [])
 
     def test_loan_purchase_and_repayment_work_without_inventory_or_staff_review(self):
+        from loan.tests_sandbox import trusted_profile_fixture
+        trusted_profile_fixture(self.owner)  # Historical EUR fixture, no starter bypass.
         meter, _ = enroll_sandbox_meter(self.owner, "000-SANDBOX-FLOW")
         quote = create_quote(self.owner, meter.pk, "2.00", "LOAN")
         loan, _ = apply_loan(self.owner, quote.pk, quote.terms_hash, uuid.uuid4())

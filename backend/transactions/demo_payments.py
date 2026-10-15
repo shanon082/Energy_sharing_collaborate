@@ -47,11 +47,21 @@ def validate_demo_intent(intent):
             raise PaymentSettlementError("Demo purchase source binding is invalid.")
         terms = ctx["terms"]
         energy, billed, residual = map(Decimal, (terms["energy_kwh"], terms["billed"], terms["residual"]))
-        price = Decimal(terms["policy"]["rate_per_kwh"])
-        if (energy <= 0 or energy != energy.quantize(Decimal("0.01")) or price <= 0
-                or billed != energy * price or billed + residual != intent.amount
-                or not Decimal(0) <= residual < price * Decimal("0.01")):
-            raise PaymentSettlementError("Demo purchase pricing does not conserve money/energy.")
+        if "pricing" in terms:
+            from loan.demo_tariffs import validate_frozen_pricing
+            try:
+                valid = validate_frozen_pricing(intent.amount, terms)
+            except (ValueError, KeyError, TypeError, ArithmeticError, APIException):
+                valid = False
+            if not valid:
+                raise PaymentSettlementError("Demo tariff snapshot does not reproduce accepted pricing.")
+        else:
+            # Existing funded v1 obligations retain their original fixed terms.
+            price = Decimal(terms["policy"]["rate_per_kwh"])
+            if (energy <= 0 or energy != energy.quantize(Decimal("0.01")) or price <= 0
+                    or billed != energy * price or billed + residual != intent.amount
+                    or not Decimal(0) <= residual < price * Decimal("0.01")):
+                raise PaymentSettlementError("Demo purchase pricing does not conserve money/energy.")
     elif intent.purpose == "LOAN_REPAYMENT":
         if (not intent.sandbox_loan_id or intent.meter_id or intent.purchase_id or intent.repayment_id
                 or quote.terms.get("loan_id") != str(intent.sandbox_loan_id)):

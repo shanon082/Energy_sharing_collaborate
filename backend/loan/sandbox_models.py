@@ -58,11 +58,12 @@ class DemoCreditAssessment(models.Model):
     """Prototype-only account evidence; never replaces UserCreditSignal/history."""
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="demo_assessments")
     environment = models.CharField(max_length=20, default="UGX_DEMO")
+    scope = models.CharField(max_length=20, default="METER", choices=[("ACCOUNT_LEGACY", "Historical account assessment"), ("METER", "Meter assessment")])
     meter = models.ForeignKey("meter.Meter", null=True, blank=True, on_delete=models.PROTECT)
     status = models.CharField(max_length=12, default="PENDING", choices=[("PENDING", "Pending"), ("READY", "Ready"), ("UNAVAILABLE", "Unavailable")])
     provider = models.CharField(max_length=60, default="SIMULATED_ACCOUNT_V1")
     scenario = models.CharField(max_length=40)
-    scoring_policy_version = models.CharField(max_length=60, default="DEMO-SCORE-v1")
+    scoring_policy_version = models.CharField(max_length=60, default="DEMO-METER-SCORE-v2")
     inputs = models.JSONField(default=dict)
     formula = models.JSONField(default=dict)
     factors = models.JSONField(default=dict)
@@ -78,7 +79,9 @@ class DemoCreditAssessment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["owner", "environment"], name="one_demo_assessment_per_owner"),
+        constraints = [models.UniqueConstraint(fields=["owner", "environment", "meter"], condition=models.Q(scope="METER", meter__isnull=False), name="one_demo_assessment_per_meter"),
+            models.UniqueConstraint(fields=["owner", "environment"], condition=models.Q(scope="METER", meter__isnull=True), name="one_pending_meter_assessment"),
+            models.CheckConstraint(condition=models.Q(scope__in=["ACCOUNT_LEGACY", "METER"]), name="demo_assessment_scope"),
             models.CheckConstraint(condition=models.Q(environment="UGX_DEMO", provider="SIMULATED_ACCOUNT_V1"), name="demo_assessment_isolated"),
             models.CheckConstraint(condition=(models.Q(status="READY", base_score__isnull=False, score__isnull=False, assessed_at__isnull=False)
                 | models.Q(status__in=["PENDING", "UNAVAILABLE"], base_score__isnull=True, score__isnull=True)), name="demo_assessment_state"),

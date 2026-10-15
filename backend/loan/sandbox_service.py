@@ -61,6 +61,11 @@ def request_uuid(value):
 
 def owned_test_meter(owner, meter_id, *, lock=False):
     from meter.sandbox_enrollment import sandbox_meter_authorized
+    try:
+        if isinstance(meter_id, bool) or str(meter_id) != str(int(meter_id)) or not 0 < int(meter_id) < 2**63:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise PermissionDenied("Select an owned active prototype meter.") from None
     rows = Meter.objects.select_for_update() if lock else Meter.objects
     meter = rows.filter(pk=meter_id, user=owner, sandbox_inventory=True, status=Meter.STATUS_ACTIVE).first()
     if not meter or not sandbox_meter_authorized(meter, owner):
@@ -68,13 +73,14 @@ def owned_test_meter(owner, meter_id, *, lock=False):
     return meter
 
 
-def assessment(owner, test_policy=None):
+def assessment(owner, test_policy=None, *, meter_id=None):
     require_sandbox()
     verified_consumer(owner)
     cfg = test_policy or policy()
     if cfg.get("environment") == "UGX_DEMO":
         from loan.demo_assessment import stored_demo_eligibility
-        return stored_demo_eligibility(owner, cfg)
+        meter = owned_test_meter(owner, meter_id) if meter_id is not None else None
+        return stored_demo_eligibility(owner, cfg, meter)
     currency = cfg.get("currency", "EUR")
     environment = cfg.get("environment", "MTN_SANDBOX")
     provider = "LOCAL_DEMO" if environment == "UGX_DEMO" else "MTN_SANDBOX"
@@ -97,10 +103,10 @@ def assessment(owner, test_policy=None):
     maximum = Decimal(cfg["starter_limit"]) if not complete else (
         Decimal(cfg["maximum"]) * Decimal("1.00" if score >= 90 else "0.75" if score >= 85 else "0.50" if score >= 80 else "0.25"))
     maximum = maximum.quantize(Decimal("1") if currency == "UGX" else Decimal("0.01"), rounding=ROUND_DOWN)
-    reason = "Starter test allowance; no established credit score." if not complete else "Profile-based test assessment."
-    eligible = not complete or score >= cfg["score_threshold"]
+    reason = "Assessment pending; a stored score of at least 80% is required." if not complete else "Profile-based test assessment."
+    eligible = complete and score >= max(80, cfg["score_threshold"])
     if not eligible:
-        reason = "Test profile score is below the configured threshold."
+        reason = f"A stored score of at least {max(80, cfg['score_threshold'])}% is required."
     active = SandboxLoan.objects.filter(owner=owner, status="DISBURSED", environment=environment, currency=currency).first()
     if active:
         eligible = False
@@ -114,7 +120,7 @@ def assessment(owner, test_policy=None):
                     "subfactors": {key: {"weights": {sub: str(weight) for sub, weight in row["weights"].items()},
                                            "scores": row["scores"]} for key, row in FACTOR_SUBFACTORS.items()},
                     "rounding": "Half-even integer factor scores, then half-even weighted mean; capped aggregate purchase bonus"},
-        "factors": factors, "starter": not complete, "purchase_points": points, "qualifying_billed_test": str(total),
+        "factors": factors, "starter": False, "purchase_points": points, "qualifying_billed_test": str(total),
         **({"qualifying_billed_eur": str(total)} if currency == "EUR" else {}),
         "purchase_source_count": qualifying.count(), "maximum": str(maximum), "calculated_at": timezone.now().isoformat(),
         "policy_id": cfg["id"], "currency": currency, "environment": environment}
@@ -135,11 +141,17 @@ def create_quote(owner, meter_id, raw_amount, purpose):
     currency, environment, _ = test_domain()
     if amount < Decimal(cfg["minimum"]) or amount > Decimal(cfg["maximum"]):
         raise ValidationError({"amount": f"Test quotes must be between {currency} {cfg['minimum']} and {cfg['maximum']}."})
-    if purpose == "LOAN" and currency == "UGX":
-        result = assessment(owner, cfg)
-        if result["assessment_status"] != "READY":
-            raise ValidationError({"code": "ASSESSMENT_UNAVAILABLE", "message": result["reason"]})
-    units, billed, residual = energy_price(amount, cfg)
+    result = assessment(owner, cfg, meter_id=meter.pk) if purpose == "LOAN" else None
+    if purpose == "LOAN" and (not result["eligible"] or result["score"] is None or result["score"] < 80):
+        raise ValidationError({"code": "LOAN_INELIGIBLE", "message": result["reason"]})
+    if purpose == "LOAN" and amount > Decimal(result["maximum"]):
+        raise ValidationError({"code": "LOAN_LIMIT_EXCEEDED", "message": "Requested principal exceeds this meter’s current loan limit."})
+    pricing = None
+    if currency == "UGX":
+        from loan.demo_tariffs import quote_price
+        units, billed, residual, pricing = quote_price(owner, amount)
+    else:
+        units, billed, residual = energy_price(amount, cfg)
     if units <= 0:
         raise ValidationError({"amount": "The test price produces less than 10 Wh."})
     interest = (amount * Decimal(cfg["interest_percent"]) / 100).quantize(Decimal("1") if currency == "UGX" else Decimal("0.01"), rounding=ROUND_HALF_EVEN)
@@ -147,7 +159,7 @@ def create_quote(owner, meter_id, raw_amount, purpose):
         "amount": str(amount), "energy_kwh": str(units), "billed": str(billed), "residual": str(residual),
         "interest": str(interest if purpose == "LOAN" else Decimal("0.00")), "fee": cfg["fee"] if purpose == "LOAN" else "0.00",
         "total_due": str(amount + interest + Decimal(cfg["fee"])) if purpose == "LOAN" else "0.00",
-        "assessment": assessment(owner, cfg) if purpose == "LOAN" else None}
+        "assessment": result, **({"pricing": pricing} if pricing else {})}
     hashed = sha256(json.dumps(terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return SandboxQuote.objects.create(owner=owner, meter=meter, purpose=purpose, amount=amount, currency=currency, environment=environment, terms=terms,
         terms_hash=hashed, expires_at=timezone.now() + timedelta(minutes=cfg["quote_minutes"]))
@@ -160,11 +172,21 @@ def accepted_quote(owner, quote_id, terms_hash, purpose):
         raise NotFound("Quote not found.") from None
     if (quote.currency, quote.environment) != test_domain()[:2]:
         raise ValidationError({"code": "TEST_CURRENCY_MISMATCH", "message": "Obtain a quote for the current prototype currency and environment; old quotes are not converted."})
-    if quote.terms_hash != terms_hash:
+    if quote.terms_hash != terms_hash or sha256(json.dumps(quote.terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest() != quote.terms_hash:
         raise ValidationError({"code": "TERMS_MISMATCH", "message": "Review and accept the exact server quote."})
     if quote.expires_at <= timezone.now():
         raise ValidationError({"code": "QUOTE_EXPIRED", "message": "Get a new quote before submission."})
     owned_test_meter(owner, quote.meter_id, lock=True)
+    if quote.environment == "UGX_DEMO":
+        from loan.demo_tariffs import require_current_quote
+        require_current_quote(owner, quote)
+        if quote.terms["policy"] != policy():
+            raise ValidationError({"code": "QUOTE_STALE", "message": "Loan or purchase policy changed. Review a new quote."})
+        if purpose == "LOAN":
+            current = assessment(owner, meter_id=quote.meter_id)
+            fields = ("assessment_id", "meter_id", "score", "maximum", "scoring_policy_version", "evidence_updated_at", "policy_id")
+            if any(current.get(key) != quote.terms.get("assessment", {}).get(key) for key in fields):
+                raise ValidationError({"code": "QUOTE_STALE", "message": "This meter’s assessment changed. Review a new quote."})
     return quote
 
 
@@ -186,7 +208,7 @@ def apply_loan(owner, quote_id, terms_hash, client_request_id):
         if existing:
             raise ValidationError({"code": "QUOTE_ALREADY_USED", "message": "This quote already has an application."})
         # Pricing stays in accepted terms; eligibility uses current debt/limits.
-        result = assessment(owner) if quote.environment == "UGX_DEMO" else assessment(owner, quote.terms["policy"])
+        result = assessment(owner, meter_id=quote.meter_id) if quote.environment == "UGX_DEMO" else assessment(owner, quote.terms["policy"])
         if quote.environment == "UGX_DEMO" and result["assessment_status"] != "READY":
             raise ValidationError({"code": "ASSESSMENT_UNAVAILABLE", "message": result["reason"]})
         approved = result["eligible"] and quote.amount <= Decimal(result["maximum"])

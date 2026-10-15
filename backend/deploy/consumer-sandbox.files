@@ -93,3 +93,8 @@ loan/demo_assessment.py
 loan/management/commands/initialize_demo_assessments.py
 loan/migrations/0025_democreditassessment.py
 docs/AUTOMATIC_DEMO_ASSESSMENT.md
+
+loan/demo_tariffs.py
+loan/migrations/0026_remove_democreditassessment_one_demo_assessment_per_owner_and_more.py
+loan/migrations/0027_alter_democreditassessment_scoring_policy_version.py
+docs/METER_CREDIT_TARIFFS.md

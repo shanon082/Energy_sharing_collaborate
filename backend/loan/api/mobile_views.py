@@ -59,7 +59,7 @@ class MobileLoanEligibilityView(APIView):
         from django.conf import settings
         if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
             from loan.sandbox_service import assessment
-            result = assessment(request.user)
+            result = assessment(request.user, meter_id=request.query_params.get("meter_id"))
             return Response({**result, "source": result["input_source"], "can_apply": result["eligible"], "application_available": True, "application_environment": "UGX_DEMO"})
         calculated_at = timezone.now().isoformat()
         if not profile_scoring_fields_complete(request.user):

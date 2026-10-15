@@ -18,7 +18,7 @@ from loan.scoring import FACTOR_WEIGHTS, FACTOR_SUBFACTORS, get_factor_breakdown
 LABEL = "Demo assessment — simulated account information"
 
 
-def initialize_demo_assessment(owner, *, scenario=None):
+def initialize_demo_assessment(owner, *, meter=None, scenario=None):
     require_demo()
     if owner.user_role != User.CLIENT or owner.is_staff or owner.is_superuser:
         raise PermissionDenied("Demo consumer assessment only.")
@@ -27,15 +27,24 @@ def initialize_demo_assessment(owner, *, scenario=None):
         raise AccountDataUnavailable("Unsupported demo profile configuration")
     with transaction.atomic():
         User.objects.select_for_update().get(pk=owner.pk)
-        return DemoCreditAssessment.objects.get_or_create(owner=owner, environment="UGX_DEMO",
+        if meter is not None:
+            from loan.sandbox_service import owned_test_meter
+            owned_test_meter(owner, meter.pk, lock=True)
+        elif (not DemoCreditAssessment.objects.filter(owner=owner, scope="METER", meter__isnull=True).exists()
+                and DemoCreditAssessment.objects.filter(owner=owner, scope="METER", meter__isnull=False).exists()):
+            # Signup initialization is already fulfilled. Never choose an arbitrary
+            # meter's score, or create another pending record after completion.
+            return None, False
+        return DemoCreditAssessment.objects.get_or_create(owner=owner, environment="UGX_DEMO", scope="METER", meter=meter,
             defaults={"scenario": scenario, "provider": PROVIDER_ID, "scoring_policy_version": SCORING_VERSION})
 
 
 def _purchase_totals(row):
     from transactions.models import SandboxSettlement
     sources = SandboxSettlement.objects.filter(currency="UGX", environment="UGX_DEMO", intent__owner=row.owner,
-        intent__provider="LOCAL_DEMO", intent__currency="UGX", intent__purpose="PURCHASE", intent__status="SETTLED",
-        intent__energy_allocation__owner=row.owner, intent__energy_allocation__accounting_environment="UGX_DEMO",
+        intent__provider="LOCAL_DEMO", intent__currency="UGX", intent__purpose="PURCHASE", intent__status="SETTLED", intent__meter_id=row.meter_id,
+        intent__energy_allocation__owner=row.owner, intent__energy_allocation__meter_id=row.meter_id,
+        intent__energy_allocation__accounting_environment="UGX_DEMO",
         intent__score_exclusion__isnull=True)
     evidence = sources.aggregate(total=Sum("billed"), count=Count("pk"))
     total = evidence["total"] or Decimal(0)
@@ -57,9 +66,15 @@ def complete_demo_assessment(owner, meter):
     from loan.sandbox_service import owned_test_meter, policy
     with transaction.atomic():
         owner = User.objects.select_for_update().get(pk=owner.pk)
-        owned_test_meter(owner, meter.pk, lock=True)
-        row, _ = initialize_demo_assessment(owner)
-        row = DemoCreditAssessment.objects.select_for_update().get(pk=row.pk)
+        meter = owned_test_meter(owner, meter.pk, lock=True)
+        row = DemoCreditAssessment.objects.select_for_update().filter(owner=owner, environment="UGX_DEMO", scope="METER", meter=meter).first()
+        if row is None:
+            pending = DemoCreditAssessment.objects.select_for_update().filter(owner=owner, environment="UGX_DEMO", scope="METER", meter__isnull=True, status="PENDING").first()
+            if pending:
+                pending.meter = meter; pending.save(update_fields=["meter"])
+                row = pending
+            else:
+                row, _ = initialize_demo_assessment(owner, meter=meter)
         if row.status == "READY":
             return row  # Enrollment retry does not rescore or redirect its evidence binding.
         try:
@@ -75,7 +90,9 @@ def complete_demo_assessment(owner, meter):
             signal = SimpleNamespace(**categories)
             row.base_score = calculate_weighted_credit_score(signal)
             row.factors = get_factor_breakdown(signal)
-            row.inputs = evidence
+            row.inputs = {**evidence, "meter_evidence": {"meter_id": meter.pk, "owner_id": owner.pk,
+                "ownership_source": "SELF_DECLARED" if getattr(getattr(meter, "sandbox_enrollment", None), "owner_id", None) == owner.pk else "SANDBOX_REVIEW",
+                "profile_source": "Fixed synthetic categories independently assessed for this meter; not utility records"}}
             row.formula = {"major_weights": deepcopy(FACTOR_WEIGHTS), "subfactors": deepcopy(FACTOR_SUBFACTORS),
                            "rounding": "Existing loan.scoring: round factor weighted means to integer, then round the major weighted mean (half-even)."}
             row.bonus_policy = deepcopy(policy())
@@ -88,31 +105,32 @@ def complete_demo_assessment(owner, meter):
         return _update_purchases(row) if row.status == "READY" else row
 
 
-def refresh_demo_purchase_contribution(owner):
+def refresh_demo_purchase_contribution(owner, meter):
     """Settlement event or explicit operator review only; never GET/login refresh."""
     require_demo()
     with transaction.atomic():
         User.objects.select_for_update().get(pk=owner.pk)
-        row = DemoCreditAssessment.objects.select_for_update().filter(owner=owner, environment="UGX_DEMO", status="READY").first()
+        row = DemoCreditAssessment.objects.select_for_update().filter(owner=owner, environment="UGX_DEMO", scope="METER", meter=meter, status="READY").first()
         return _update_purchases(row) if row else None
 
 
-def stored_demo_eligibility(owner, cfg):
+def stored_demo_eligibility(owner, cfg, meter=None):
     """Stored evidence + fresh debt/limits. No provider or scoring writes on GET."""
     require_demo()
     from loan.models import SandboxLoan, LoanApplication
-    row = DemoCreditAssessment.objects.filter(owner=owner, environment="UGX_DEMO").first()
-    ready = row is not None and row.status == "READY" and row.bonus_policy.get("id") == cfg["id"]
+    row = DemoCreditAssessment.objects.filter(owner=owner, environment="UGX_DEMO", scope="METER", meter=meter).first()
+    ready = meter is not None and row is not None and row.status == "READY" and row.bonus_policy.get("id") == cfg["id"]
     state = row.status if row else "PENDING"
     if row and row.status == "READY" and not ready:
         state = "UNAVAILABLE"
     score = row.score if ready else None
     maximum = (Decimal(cfg["maximum"]) * Decimal("1" if score >= 90 else ".75" if score >= 85 else ".50" if score >= 80 else ".25")).quantize(Decimal(1), rounding=ROUND_DOWN) if ready else None
-    eligible = ready and score >= cfg["score_threshold"]
+    eligible = ready and score >= max(80, cfg["score_threshold"])
     reason = "Automatic demo assessment using simulated account information." if eligible else (
-        "Demo score is below the configured test threshold." if ready else
+        f"This meter’s credit score is {score}%. A minimum of 80% is required to apply for a loan." if ready and score < 80 else
+        f"The configured minimum score is {max(80, cfg['score_threshold'])}%." if ready else
         "Demo assessment unavailable; retry your owned meter enrollment or contact prototype support." if state == "UNAVAILABLE" else
-        "Demo assessment pending. Add your meter to complete automatic assessment.")
+        "Assessment pending. Select your meter to view its automatic assessment.")
     if SandboxLoan.objects.filter(owner=owner, environment="UGX_DEMO", currency="UGX", status="DISBURSED").exists():
         eligible = False; reason = "Repay your existing UGX demo loan before borrowing again."
     if LoanApplication.objects.filter(user=owner).exclude(status__in=["REJECTED", "COMPLETED"]).exists():
@@ -127,4 +145,5 @@ def stored_demo_eligibility(owner, cfg):
         "policy_id": cfg["id"], "scoring_policy_version": row.scoring_policy_version if row else SCORING_VERSION,
         "assessed_at": row.assessed_at.isoformat() if row and row.assessed_at else None,
         "evidence_updated_at": row.updated_at.isoformat() if row else None, "calculated_at": timezone.now().isoformat(),
-        "currency": "UGX", "environment": "UGX_DEMO", "assessment_id": row.pk if row else None}
+        "currency": "UGX", "environment": "UGX_DEMO", "assessment_id": row.pk if row else None,
+        "owner_id": owner.pk, "meter_id": meter.pk if meter else None, "minimum_score": max(80, cfg["score_threshold"])}

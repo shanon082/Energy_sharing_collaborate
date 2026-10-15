@@ -1,5 +1,7 @@
 # Consumer sandbox: implementation and testing deployment
 
+> Current deployment: use [METER_CREDIT_TARIFFS.md](METER_CREDIT_TARIFFS.md). The old EUR/starter/fixed-price tables below are historical v1 policy descriptions, not new-loan authorization rules. MTN remains paused.
+
 **Current mode:** the prototype now defaults to `LOCAL_DEMO` with a distinct
 UGX DEMO policy. Follow [LOCAL_PAYMENT_DEMO.md](LOCAL_PAYMENT_DEMO.md) for the
 current deployment, scheduler and APK steps. The EUR/MTN material below is

@@ -1,5 +1,7 @@
 # Current repository integration — 15 October 2026
 
+> Subsequent implemented phase (15 October 2026): Django now stores per-meter demo evidence and uses configured tariff snapshots. Shared web/mobile eligibility and stale-quote handling were updated; see [backend rollout](../backend/docs/METER_CREDIT_TARIFFS.md) and [validation](VALIDATION.md). Authentication/Keystore and the redesigned layouts remain preserved. The earlier integration report below is historical and its unchanged-backend claim applies only to that earlier phase.
+
 The redesigned files were already present. No package was copied, extracted or applied. Integration uses the real App and injected SessionManager, with one mounted shared finance controller and a mobile presentation selected through its `view` prop. Omitting that prop retains the default Next.js presentation.
 
 Restored behaviour includes capability-safe financial controls, stale timestamps, stored assessment/limit fields, pending recovery across tabs and network failures, exact quote/receipt binding, duplicate-submission protection and review-step Android Back handling. Browser testing also found and fixed an unbound browser timer in ForegroundPoller. MainActivity uses adjustResize for keyboard layout; physical-device checks remain required.

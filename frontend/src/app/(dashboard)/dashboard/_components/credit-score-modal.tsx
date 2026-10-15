@@ -176,12 +176,12 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
             </div>
           ) : demoAssessment ? (
             <section className="space-y-3" aria-label="Automatic demo assessment">
-              <p>{demoAssessment.assessment_status === "READY" ? `Demo score ${demoAssessment.score}/100 (base ${demoAssessment.profile_score}, purchase points ${demoAssessment.purchase_points})` : "Score unavailable — assessment pending or unavailable"}</p>
+              <p>{demoAssessment.assessment_status === "READY" ? `Credit score: ${demoAssessment.score}% (base ${demoAssessment.profile_score}, purchase points ${demoAssessment.purchase_points})` : "Score unavailable — assessment pending or unavailable"}</p>
               <p>{demoAssessment.reason} Maximum: {testMoney(demoAssessment.maximum, "UGX")}.</p>
               <p>Fixed synthetic payment, energy and financial categories. No utility, bank, telecom or credit-bureau records were retrieved. No questionnaire is required.</p>
               {demoAssessment.factors && <p>{Object.entries(demoAssessment.factors).map(([key, score]) => `${key.replaceAll("_", " ")}: ${score}`).join(" · ")}</p>}
               <p>{demoAssessment.scoring_policy_version} · {demoAssessment.assessed_at ? new Date(demoAssessment.assessed_at).toLocaleString() : "Not assessed yet"}</p>
-              <Link href="/dashboard/loans" onClick={onClose} className="underline">View demo eligibility and loan terms</Link>
+              <Link href="/dashboard/loans" onClick={onClose} className="underline">Select a meter and view its credit assessment</Link>
             </section>
           ) : error || !data ? (
             <div role="alert" className="py-8 text-center text-sm text-muted-foreground">

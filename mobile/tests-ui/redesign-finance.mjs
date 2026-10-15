@@ -10,8 +10,8 @@ const shots = process.env.MOBILE_UI_SCREENSHOTS;
 if (shots) await mkdir(shots, { recursive: true });
 const user = { id: 9001, email: 'ui@example.invalid', first_name: 'UI', last_name: 'Test', user_role: 'CLIENT', email_verified: true };
 const policy = { id: 'DEMO-UGX-v1', currency: 'UGX', environment: 'UGX_DEMO', minimum: '1000', maximum: '50000', starter_limit: '5000',
-  interest_percent: '5', fee: '0', rate_per_kwh: '1000', due_days: 7, penalty_percent: '0', rounding: 'Synthetic fixed test terms',
-  purchase_per_point: '10000', purchase_score_cap: 10, score_threshold: 75 };
+  interest_percent: '5', fee: '0', rate_per_kwh: null, pricing_source: 'CONFIGURED_DOMESTIC_TARIFF', due_days: 7, penalty_percent: '0', rounding: 'Synthetic fixed test terms',
+  purchase_per_point: '10000', purchase_score_cap: 10, score_threshold: 80 };
 const meter = id => ({ id, meter_number: `00000${id}`, label: `Meter ${id}`, architecture: 'AMI', status: 'ACTIVE',
   sandbox_inventory: true, ownership_provenance: 'SELF_DECLARED', enrolled_at: new Date().toISOString(), hardware_connection: 'PENDING' });
 let checks = 0;
@@ -22,17 +22,21 @@ async function scenario(name, run, initial = {}) {
   const errors = []; const calls = []; const quotes = new Map();
   const s = { meters: [meter(7)], loans: [], payments: [], balance: '0.00', assessment: 'READY', score: 85,
     settle: false, mutations: true, capabilitiesFail: false, delayQuote: 0, expiredQuote: false, loseInitiation: false,
-    failedProfile: false, ...initial };
+    failedProfile: false, rejectSmallQuote: false, tariffAvailable: true, tariffRevision: 'tariff-1', meterScores: {}, assessmentDelay: {}, ...initial };
   page.on('pageerror', e => errors.push(e.stack ?? e.message));
-  const assessment = () => ({ eligible: s.assessment === 'READY' && s.score >= 75 && !s.loans.some(l => l.status === 'DISBURSED'),
-    reason: s.assessment !== 'READY' ? 'Assessment pending. Add your meter.' : s.score < 75 ? 'Demo score is below the test threshold.' : 'Stored synthetic assessment.',
-    score: s.assessment === 'READY' ? s.score : null, profile_score: s.assessment === 'READY' ? s.score : null, starter: false,
-    assessment_status: s.assessment, input_source: 'SIMULATED_ACCOUNT_INFORMATION', provider: 'SIMULATED_ACCOUNT_V1',
-    currency: 'UGX', environment: 'UGX_DEMO', maximum: s.assessment === 'READY' ? '37500' : null,
-    factors: s.assessment === 'READY' ? { payment_history: 92, energy_consumption: 71, financial_capacity: 92 } : null,
-    categories: { payment_history: 'GOOD', energy_consumption: 'MODERATE', financial_capacity: 'STRONG' },
-    purchase_points: 0, qualifying_billed_test: '0', policy_id: policy.id, scoring_policy_version: 'DEMO-SCORE-v1',
-    assessed_at: s.assessment === 'READY' ? new Date().toISOString() : null });
+  const assessment = (meterId = s.meters[0]?.id ?? null) => {
+    const score = s.meterScores[meterId] ?? s.score;
+    const ready = meterId !== null && s.assessment === 'READY';
+    return { owner_id: user.id, meter_id: meterId, minimum_score: 80, assessment_id: meterId, evidence_updated_at: '2026-10-15T00:00:00Z',
+      eligible: ready && score >= 80 && !s.loans.some(l => l.status === 'DISBURSED' && l.environment === 'UGX_DEMO'),
+      reason: !ready ? 'Assessment pending. Add your meter.' : score < 80 ? `This meter’s credit score is ${score}%. A minimum of 80% is required to apply for a loan.` : 'Stored synthetic assessment.',
+      score: ready ? score : null, profile_score: ready ? score : null, starter: false,
+      assessment_status: ready ? 'READY' : 'PENDING', input_source: 'SIMULATED_ACCOUNT_INFORMATION', provider: 'SIMULATED_ACCOUNT_V1',
+      currency: 'UGX', environment: 'UGX_DEMO', maximum: ready ? score >= 90 ? '50000' : score >= 85 ? '37500' : score >= 80 ? '25000' : '12500' : null,
+      factors: ready ? { payment_history: 92, energy_consumption: 71, financial_capacity: 92 } : null,
+      categories: { payment_history: 'GOOD', energy_consumption: 'MODERATE', financial_capacity: 'STRONG' },
+      purchase_points: 0, qualifying_billed_test: '0', assessed_at: ready ? '2026-10-15T00:00:00Z' : null, scoring_policy_version: 'DEMO-METER-SCORE-v2', policy_id: policy.id };
+  };
   const reply = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json',
     headers: { 'access-control-allow-origin': new URL(base).origin, 'access-control-allow-headers': 'authorization,content-type',
       'access-control-allow-methods': 'GET,POST,PATCH,OPTIONS' }, body: JSON.stringify(body) });
@@ -88,13 +92,19 @@ async function scenario(name, run, initial = {}) {
       return reply(route, { meter: selected, meter_no: selected?.meter_number, daily_usage: [], simulator_telemetry: [], consumer_attribution_available: false });
     }
     if (path.endsWith('loans/mobile-overview/')) return reply(route, { loans: [] });
-    if (path.endsWith('sandbox/assessment/')) return reply(route, { assessment: assessment(), policy });
+    if (path.endsWith('sandbox/assessment/')) {
+      const id = url.searchParams.has('meter_id') ? Number(url.searchParams.get('meter_id')) : null;
+      const value = assessment(id);
+      if (s.assessmentDelay[id]) await new Promise(resolve => setTimeout(resolve, s.assessmentDelay[id]));
+      return reply(route, { assessment: value, policy, pricing: { available: s.tariffAvailable, message: s.tariffAvailable ? '' : 'Tariff unavailable', revision: s.tariffRevision } });
+    }
     if (path.endsWith('sandbox/quotes/')) {
+      if (s.rejectSmallQuote && Number(input.amount) < 4000) return reply(route, { message: 'This amount yields less than 10 Wh under the configured tariff.' }, 400);
       assert.deepEqual(Object.keys(input).sort(), ['amount','meter_id','purpose']);
       const amount = BigInt(input.amount), interest = input.purpose === 'LOAN' ? amount * 5n / 100n : 0n;
       const terms = { policy, owner_id: user.id, meter_id: input.meter_id, purpose: input.purpose, amount: String(amount),
         energy_kwh: `${amount / 1000n}.00`, billed: String(amount), residual: '0', interest: String(interest), fee: '0',
-        total_due: input.purpose === 'LOAN' ? String(amount + interest) : '0', assessment: assessment() };
+        total_due: input.purpose === 'LOAN' ? String(amount + interest) : '0', assessment: assessment(input.meter_id), pricing: { inputs_hash: 'b'.repeat(64), inputs: { version: 'SYNTHETIC-BILLING-v1', month: '2026-10', scope: 'OWNER_MONTH', vat_rate: '0', tariff: { id: 1, code: 'SYNTHETIC', name: 'Mock configured tariff' }, monthly_purchased_kwh: '0' }, breakdown: { energy_cost: String(amount), service_charge: '0', subtotal: String(amount), vat: '0', total: String(amount), lifeline_applied: false } } };
       const q = { id: randomUUID(), terms_hash: createHash('sha256').update(JSON.stringify(terms)).digest('hex'), terms,
         expires_at: new Date(Date.now() + (s.expiredQuote ? -1000 : 900000)).toISOString() };
       quotes.set(q.id, q);
@@ -106,7 +116,7 @@ async function scenario(name, run, initial = {}) {
       assert.equal(input.accept_test_terms, true); assert.equal(typeof input.client_request_id, 'string');
       const q = quotes.get(input.quote_id); assert.equal(input.terms_hash, q.terms_hash);
       assert.equal(Object.keys(input).includes('score'), false);
-      const approved = s.score >= 75;
+      const approved = (s.meterScores[q.terms.meter_id] ?? s.score) >= 80;
       const loan = { id: randomUUID(), client_request_id: input.client_request_id, meter_id: q.terms.meter_id,
         status: approved ? 'DISBURSED' : 'REJECTED', reason: approved ? 'Approved under the test policy.' : 'Demo score is below the test threshold.',
         currency: 'UGX', environment: 'UGX_DEMO', principal: q.terms.amount, total_due: approved ? q.terms.total_due : '0',
@@ -178,7 +188,7 @@ async function scenario(name, run, initial = {}) {
 }
 try {
   await scenario('home-and-navigation', async ({ page, tab, layout }) => {
-    await page.locator('.credit-score').filter({ hasText: '85/100' }).waitFor(); await page.getByText('UGX 37,500', { exact: true }).first().waitFor();
+    await page.locator('.credit-score').filter({ hasText: '85%' }).waitFor(); await page.getByText('UGX 37,500', { exact: true }).first().waitFor();
     await page.getByText('Hardware contact unavailable', { exact: true }).waitFor();
     for (const width of [320,390,768]) { await page.setViewportSize({ width, height: 844 });
       for (const name of ['Home','Meters','Loans','Buy Units','Account']) { await tab(name); await layout(`${name}-${width}`); } }
@@ -195,7 +205,7 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Review terms →', exact: true }).count(),0);
     await tab('Meters'); await page.getByLabel('Meter number', { exact: true }).fill('000245');
     await page.getByRole('button', { name: 'Add your meter', exact: true }).click();
-    await page.getByRole('button', { name: /Prototype meter|000245/ }).first().waitFor(); await tab('Home'); await page.locator('.credit-score').filter({ hasText: '85/100' }).waitFor();
+    await page.getByRole('button', { name: /Prototype meter|000245/ }).first().waitFor(); await tab('Home'); await page.locator('.credit-score').filter({ hasText: '85%' }).waitFor();
     assert.equal(s.meters[0].meter_number,'000245');
   }, { meters: [], assessment: 'PENDING' });
   await scenario('loan-and-partial-full-repayment', async ({ page, s, tab, calls }) => {
@@ -218,12 +228,12 @@ try {
     assert.equal(s.loans[0].outstanding, '0'); assert.equal(s.loans[0].status, 'COMPLETED');
     assert.equal(s.balance,'1.00'); await tab('Home'); await page.getByRole('heading', { name: 'No active loan' }).waitFor();
   });
-  await scenario('rejected-loan', async ({ page }) => {
+  await scenario('ineligible-score-explained', async ({ page, calls }) => {
     await page.getByRole('button', { name: /^Apply for Loan/ }).first().click();
-    await page.getByRole('button', { name: 'Review terms →', exact: true }).click(); await page.getByLabel('I accept these test terms.').check();
-    await page.getByRole('button', { name: 'Continue →', exact: true }).click(); await page.getByRole('button', { name: 'Submit application', exact: true }).click();
-    await page.getByText('Not approved', { exact: true }).waitFor(); await page.getByText('Demo score is below the test threshold.').first().waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Pay Loan →' }).count(),0);
+    await page.getByText('This meter’s credit score is 41%. A minimum of 80% is required to apply for a loan.').first().waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Review terms →', exact: true }).isDisabled(), true);
+    assert.equal(calls.some(c => c.method === 'POST' && /sandbox\/(quotes|loans)\//.test(c.path)), false);
+    assert.equal(await page.getByText('Demo mode', { exact: true }).count(), 0);
   }, { score: 41 });
   await scenario('purchase-does-not-succeed-on-countdown', async ({ page, s, tab, calls }) => {
     await tab('Buy Units'); await page.getByLabel('Amount (UGX)', { exact: true }).fill('5000'); await page.getByRole('button', { name: 'Review terms →', exact: true }).click();
@@ -294,6 +304,58 @@ try {
     await tab('Home'); await page.getByRole('heading', { name: 'No active loan', exact: true }).waitFor();
     await page.getByText('UGX 37,500', { exact: true }).first().waitFor();
   });
+  await scenario('meter-scores-threshold-and-stale-quote', async ({ page, s, tab, calls }) => {
+    await tab('Meters'); await page.getByRole('button', { name: /Meter 7.*000007/ }).click(); await tab('Home');
+    await page.getByRole('button', { name: /^Apply for Loan/ }).first().click();
+    await page.getByRole('button', { name: 'Review terms →', exact: true }).click(); await page.getByRole('heading', { name: 'Review loan terms' }).waitFor();
+    await tab('Meters'); await page.getByRole('button', { name: /Meter 8.*000008/ }).click(); await tab('Home');
+    await page.locator('.credit-score').filter({ hasText: '79%' }).waitFor();
+    assert.equal(await page.locator('.credit-score').filter({ hasText: '85%' }).count(), 0);
+    await page.getByRole('button', { name: /^Apply for Loan/ }).first().click();
+    await page.getByText('This meter’s credit score is 79%. A minimum of 80% is required to apply for a loan.').first().waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Review terms →', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('heading', { name: 'Review loan terms' }).count(), 0);
+    await tab('Meters'); await page.getByRole('button', { name: /Meter 7.*000007/ }).click(); await tab('Loans');
+    await page.getByRole('button', { name: 'Apply for Loan', exact: true }).click();
+    await page.getByRole('button', { name: 'Review terms →', exact: true }).click(); await page.getByRole('heading', { name: 'Review loan terms' }).waitFor();
+    s.meterScores[7] = 80; await page.getByRole('button', { name: 'Refresh account', exact: true }).click();
+    await page.locator('.credit-score').filter({ hasText: '80%' }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: 'Review loan terms' }).count(), 0);
+    await page.getByRole('button', { name: 'Review terms →', exact: true }).click(); await page.getByRole('heading', { name: 'Review loan terms' }).waitFor();
+    s.tariffRevision = 'tariff-2'; await page.getByRole('button', { name: 'Refresh account', exact: true }).click();
+    await page.getByLabel('Amount (UGX)', { exact: true }).waitFor();
+    await page.getByLabel('Amount (UGX)', { exact: true }).fill('50000');
+    await page.getByText('Requested principal exceeds this meter’s current loan limit.').waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Review terms →', exact: true }).isDisabled(), true);
+    assert.equal(calls.some(c => c.path.endsWith('sandbox/loans/') && c.method === 'POST'), false);
+  }, { meters: [meter(7),meter(8)], meterScores: { 7: 85, 8: 79 } });
+  await scenario('delayed-assessment-cannot-overwrite-selected-meter', async ({ page, s, tab }) => {
+    await tab('Meters'); await page.getByRole('button', { name: /Meter 7.*000007/ }).click(); await tab('Home');
+    await page.locator('.credit-score').filter({ hasText: '85%' }).waitFor();
+    s.assessmentDelay[7] = 1500;
+    await page.getByRole('button', { name: 'Refresh account', exact: true }).click();
+    await tab('Meters'); await page.getByRole('button', { name: /Meter 8.*000008/ }).click(); await tab('Home');
+    await page.locator('.credit-score').filter({ hasText: '79%' }).waitFor(); await page.waitForTimeout(1700);
+    assert.equal(await page.locator('.credit-score').filter({ hasText: '85%' }).count(), 0);
+  }, { meters: [meter(7),meter(8)], meterScores: { 7: 85, 8: 79 } });
+  await scenario('missing-tariff-blocks-review-with-explanation', async ({ page, s, tab, calls }) => {
+    await tab('Buy Units'); await page.getByText('Tariff unavailable', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Review terms →', exact: true }).isDisabled(), true);
+    await tab('Loans'); await page.getByRole('button', { name: 'Apply for Loan', exact: true }).click();
+    await page.getByText('Tariff unavailable', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Review terms →', exact: true }).isDisabled(), true);
+    assert.equal(calls.some(c => c.method === 'POST' && c.path.endsWith('sandbox/quotes/')),false);
+    s.tariffAvailable = true; await page.getByRole('button', { name: 'Refresh account', exact: true }).click();
+    await page.getByRole('button', { name: 'Review terms →', exact: true }).click(); await page.getByRole('heading', { name: 'Review loan terms' }).waitFor();
+  }, { tariffAvailable: false });
+  await scenario('tariff-minimum-validation-does-not-create-uncertain-payment', async ({ page, tab, calls }) => {
+    await tab('Buy Units'); await page.getByRole('button', { name: 'Review terms →', exact: true }).click();
+    await page.getByText('This amount yields less than 10 Wh under the configured tariff.').waitFor();
+    await page.getByLabel('Amount (UGX)', { exact: true }).fill('5000');
+    await page.getByRole('button', { name: 'Review terms →', exact: true }).click();
+    await page.getByRole('heading', { name: 'Review your purchase' }).waitFor();
+    assert.equal(calls.some(c => c.method === 'POST' && c.path.endsWith('sandbox/payments/')),false);
+  }, { rejectSmallQuote: true });
   await scenario('native-back-through-review-steps', async ({ page, tab, calls }) => {
     const back = () => page.evaluate(() => { for (const callback of globalThis.__testNativeEvents.get('backButton') ?? []) callback({ canGoBack: false }); });
     await page.getByRole('button', { name: /^Apply for Loan/ }).first().click();

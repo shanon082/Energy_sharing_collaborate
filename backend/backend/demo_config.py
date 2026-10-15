@@ -30,11 +30,11 @@ def demo_configuration(environ):
     mode = environ.get("PROTOTYPE_PAYMENT_PROVIDER", LOCAL_DEMO).strip()
     if mode not in {LOCAL_DEMO, "MTN_SANDBOX"}:
         raise ImproperlyConfigured("PROTOTYPE_PAYMENT_PROVIDER must be LOCAL_DEMO or MTN_SANDBOX in the prototype profile")
-    cfg = {"id": environ.get("DEMO_POLICY_VERSION", "DEMO-UGX-v1"),
+    cfg = {"id": environ.get("DEMO_POLICY_VERSION", "DEMO-UGX-v2"),
         "label": "DEMO TEST POLICY / NO REAL MONEY", "currency": "UGX", "environment": DEMO_ENVIRONMENT,
         "minimum": "1000", "starter_limit": "5000", "maximum": "50000", "rate_per_kwh": "1000",
         "interest_percent": "5", "fee": "0", "purchase_per_point": "10000",
-        "purchase_score_cap": 10, "score_threshold": 75, "due_days": 7, "quote_minutes": 15,
+        "purchase_score_cap": 10, "score_threshold": 80, "due_days": 7, "quote_minutes": 15,
         "penalty_percent": "0", "rounding": "Whole UGX requests; interest half-even once to whole UGX; energy floored to 10 Wh; exact remainder/excess retained"}
     for name in ("minimum", "starter_limit", "maximum", "rate_per_kwh", "fee", "purchase_per_point", "interest_percent"):
         try:
@@ -50,7 +50,7 @@ def demo_configuration(environ):
             cfg[name] = str(value)
         except (InvalidOperation, ValueError, TypeError):
             raise ImproperlyConfigured(f"DEMO_{name.upper()} must use bounded exact prototype values (whole UGX except the percentage)") from None
-    for name, low, high in (("purchase_score_cap", 0, 20), ("score_threshold", 1, 100), ("due_days", 1, 90), ("quote_minutes", 1, 60)):
+    for name, low, high in (("purchase_score_cap", 0, 20), ("score_threshold", 80, 100), ("due_days", 1, 90), ("quote_minutes", 1, 60)):
         try:
             cfg[name] = int(environ.get("DEMO_" + name.upper(), cfg[name]))
             if not low <= cfg[name] <= high: raise ValueError
@@ -60,4 +60,6 @@ def demo_configuration(environ):
         raise ImproperlyConfigured("Demo minimum/starter/maximum must be ordered")
     if not cfg["id"].startswith("DEMO-UGX-") or len(cfg["id"]) > 80:
         raise ImproperlyConfigured("DEMO_POLICY_VERSION must start DEMO-UGX-")
+    cfg["pricing_source"] = "CONFIGURED_DOMESTIC_TARIFF"
+    cfg["rate_per_kwh"] = None  # Deprecated environment value cannot price new quotes.
     return mode, cfg

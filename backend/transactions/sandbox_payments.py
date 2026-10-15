@@ -141,7 +141,7 @@ def apply_sandbox_settlement(intent):
         SandboxSettlement.objects.create(intent=intent, currency=currency, environment=environment, received=intent.amount, billed=billed, residual=residual)
         if intent.provider == LOCAL_DEMO:
             from loan.demo_assessment import refresh_demo_purchase_contribution
-            refresh_demo_purchase_contribution(intent.owner)
+            refresh_demo_purchase_contribution(intent.owner, intent.meter)
     else:
         loan = SandboxLoan.objects.select_for_update().get(pk=intent.sandbox_loan_id, owner=intent.owner)
         if loan.currency != currency or loan.environment != environment or loan.status not in {"DISBURSED", "COMPLETED"} or loan.meter_id != ctx["meter_id"]:
@@ -210,4 +210,4 @@ def receipt(intent):
         "allocated_kwh": str(allocation.amount_kwh) if allocation else None, "meter_application_confirmed": False,
         "initiated_at": intent.initiated_at.isoformat(), "settled_at": intent.settled_at.isoformat() if intent.settled_at else None,
         "submission_state": intent.submission_state, "reconciliation_error": intent.reconciliation_error,
-        "next_check_at": intent.reconcile_after.isoformat()}
+        "next_check_at": intent.reconcile_after.isoformat(), "pricing": (intent.sandbox_context or {}).get("terms", {}).get("pricing")}

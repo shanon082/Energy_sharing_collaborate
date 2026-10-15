@@ -1,5 +1,7 @@
 # Automatic demo credit assessment — simulated account information
 
+> Current update (15 October 2026): assessment is now owner-and-meter scoped. Existing account-wide rows remain ACCOUNT_LEGACY. See [METER_CREDIT_TARIFFS.md](METER_CREDIT_TARIFFS.md) for migrations 0026/0027, preview-first meter initialization, the 80% rule and source-specific purchase points. Earlier implementation details below describe the previous account-wide version.
+
 This is prototype evidence, not real third-party verification, credit advice,
 utility ownership confirmation or demonstrated prediction accuracy. All seven
 optional flags remain false, especially FEATURE_EXTERNAL_CRB_ENABLED. No provider

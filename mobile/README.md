@@ -1,5 +1,7 @@
 # gPawa consumer Android prototype
 
+Current meter-credit/tariff update: [backend-first deployment](../backend/docs/METER_CREDIT_TARIFFS.md) and [validation](VALIDATION.md). Each selected sandbox meter has stored evidence and an 80% minimum; new quotes use configured Django tariffs. The header demo badge is removed, while payment disclosures remain. Current APK: **4,477,512 bytes**, SHA-256 `ae19c909a9d0ce840d10ed706b4462326edce76dcc304c6e4c356473a7cd6439`; API `https://shanonsimon.alwaysdata.net/api/v1`. Deploy migrations 0026/0027 and initialize existing meters before installing/testing it. Earlier APK hashes below are historical.
+
 The latest LOCAL_DEMO UGX flow and automatic assessment are documented in
 [CONSUMER_EXPANSION.md](CONSUMER_EXPANSION.md) and
 [the backend runbook](../backend/docs/LOCAL_PAYMENT_DEMO.md). No questionnaire
@@ -14,7 +16,7 @@ consumer welcome screen does not expose the preview link.
 
 This is a separate React, TypeScript and Vite bundle packaged by Capacitor. The existing Next.js web app remains a server-rendered application. The methodology names a Kotlin client; this prototype uses Capacitor as requested and reuses the web app's transport-independent finance controller, contracts and feature-availability parser. Django remains responsible for authentication and all financial and meter decisions.
 
-## Current testing APK — 15 October 2026
+## Previous redesign APK — 15 October 2026
 
 The redesigned real-client bundle is integrated. See [VALIDATION.md](VALIDATION.md) for commands and evidence. Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`, **4,476,294 bytes**, SHA-256 `9da05eddf3f92c34d4fe41f3f92d16fed19d36b5b5eabcc59d7b30aacdd23a60`. API: `https://shanonsimon.alwaysdata.net/api/v1`. Original application ID and debug signing certificate are preserved. This is a testing APK; phone checks and the existing Next.js production-build stall remain outstanding.
 

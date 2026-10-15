@@ -23,7 +23,7 @@ import { ApiError, SessionExpired, SessionManager, TransportError, type Consumer
 import { AndroidSecureStore } from "./auth/secure-store.ts";
 import { dateTime, energy, ugx } from "./format.ts";
 import { CreditSummary } from "./CreditSummary.tsx";
-import { DemoNotice, PageHeading, MeterSummary, CloudEnergyCard, EmptyState, MenuRow } from "./ConsumerUI.tsx";
+import { PageHeading, MeterSummary, CloudEnergyCard, EmptyState, MenuRow } from "./ConsumerUI.tsx";
 
 const session = new SessionManager(API_BASE_URL, new AndroidSecureStore());
 type Tab = ConsumerTab | "activity" | "consumption" | "apply";
@@ -367,7 +367,6 @@ export default function App() {
       <button className="avatar-button" aria-label="Your account" onClick={() => navigate("account")}>{account?.first_name?.charAt(0) || "U"}</button>
     </div></header>
     <main className="content" id="main-content">
-      {sandbox.enabled && <DemoNotice local={sandbox.provider === "LOCAL_DEMO"} />}
       {offline && <div className="offline" role="status">Connection interrupted. Some values may be out of date. <button className="text-button" onClick={refresh}>Retry</button></div>}
       {meterNotice && <p className="tag" role="status">{meterNotice}</p>}
       {tab === "dashboard" && <>
@@ -380,7 +379,7 @@ export default function App() {
           <button className="action-tile" onClick={() => navigate("apply")}><span className="action-symbol"><Icon name="loan" /></span><strong>Apply for Loan</strong><span>Electricity when you need it</span><Icon name="arrow" /></button>
           <button className="action-tile" onClick={() => navigate("purchase")}><span className="action-symbol"><Icon name="bolt" /></span><strong>Buy Units</strong><span>Top up your cloud energy</span><Icon name="arrow" /></button>
         </div>
-        {!capabilitiesReady ? <section className="panel"><h2>Credit overview</h2><p className="muted">Refresh to load your account capabilities.</p></section> : sandbox.enabled ? null : <CreditSummary session={session} revision={creditRevision} onExpired={expire} onLoans={() => navigate("loans")} demo={false} />}
+        {!capabilitiesReady ? <section className="panel"><h2>Credit overview</h2><p className="muted">Refresh to load your account capabilities.</p></section> : sandbox.enabled ? null : <CreditSummary session={session} meterId={meter?.id ?? null} revision={creditRevision} onExpired={expire} onLoans={() => navigate("loans")} demo={false} />}
 
       </>}
 

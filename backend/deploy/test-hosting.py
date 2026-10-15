@@ -71,6 +71,9 @@ from django.test.utils import get_runner
 settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 settings.DATABASES['default']['CONN_MAX_AGE'] = 0
 settings.PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+if '--check-migrations' in sys.argv:
+    call_command('makemigrations', 'loan', 'meter', 'transactions', check=True, dry_run=True)
+    raise SystemExit(0)
 if '--make-migrations' in sys.argv:
     call_command('makemigrations', 'loan', 'meter', 'transactions')
     raise SystemExit(0)

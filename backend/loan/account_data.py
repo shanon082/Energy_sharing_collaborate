@@ -6,7 +6,7 @@ SCENARIOS = {
     "REJECTION_V1": {"payment_history": "POOR", "energy_consumption": "ERRATIC", "financial_capacity": "WEAK"},
 }
 PROVIDER_ID = "SIMULATED_ACCOUNT_V1"
-SCORING_VERSION = "DEMO-SCORE-v1"
+SCORING_VERSION = "DEMO-METER-SCORE-v2"
 
 
 class AccountDataUnavailable(Exception):

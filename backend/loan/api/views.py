@@ -1041,7 +1041,7 @@ class CreditScoreView(APIView):
         from backend.demo_config import provider_mode
         if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
             from loan.sandbox_service import assessment
-            return Response({"demo_assessment": assessment(request.user)})
+            return Response({"demo_assessment": assessment(request.user, meter_id=request.query_params.get("meter_id"))})
         try:
             user = request.user
 

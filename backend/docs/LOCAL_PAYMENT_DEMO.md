@@ -1,5 +1,7 @@
 # Local payment demo — NO REAL MONEY
 
+> Current update (15 October 2026): [Meter credit and configured tariffs](METER_CREDIT_TARIFFS.md) supersedes the v1 fixed-price/account-score rules below. New UGX demo activity uses per-meter assessments, an 80% floor and the existing configured domestic billing engine. Follow that runbook for the two new migrations and backend-first APK rollout. Earlier fixed-price obligations retain their accepted terms.
+
 The opt-in `backend.alwaysdata_sandbox_settings` now defaults to
 `PROTOTYPE_PAYMENT_PROVIDER=LOCAL_DEMO`. The ordinary alwaysdata/Render/core
 profile does not enable this simulator. A consumer cannot choose the provider,

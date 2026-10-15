@@ -35,10 +35,20 @@ CONFIG = {"BASE_URL": BASE_URL, "ENVIRONMENT": "sandbox", "CURRENCY": "EUR",
 SANDBOX = {"CONSUMER_SANDBOX_ENABLED": True, "PROTOTYPE_PAYMENT_PROVIDER": "MTN_SANDBOX", "SANDBOX_POLICY": POLICY, "MTN_SANDBOX_CONFIG": CONFIG}
 
 
+def trusted_profile_fixture(user):
+    """Historical EUR tests only; no consumer questionnaire is reintroduced."""
+    values = {"payment_consistency": "Always on time", "disconnection_history": "No disconnections",
+        "consumption_level": "Moderate", "purchase_frequency": "Monthly", "monthly_income": ">1,000,000 UGX",
+        "income_stability": "Fixed and stable", "monthly_expenditure": "Synthetic", "meter_sharing": "No"}
+    for key, value in values.items(): setattr(user, key, value)
+    user.save(update_fields=list(values))
+
+
 class Fixtures:
     def create_fixture(self):
         self.owner = User.objects.create_user(email="sandbox-owner@example.invalid", password="test-only")
         self.other = User.objects.create_user(email="sandbox-other@example.invalid", password="test-only")
+        trusted_profile_fixture(self.owner)
         self.staff = User.objects.create_user(email="sandbox-staff@example.invalid", password="test-only", user_role=User.OPERATOR, is_staff=True)
         for user in (self.owner, self.other, self.staff):
             user.profile.email_verified = True; user.profile.save(update_fields=["email_verified"])
@@ -133,7 +143,7 @@ class SandboxWorkflowTests(Fixtures, TestCase):
         response = self.client.post("/api/v1/sandbox/loans/", payload, format="json", **self.headers)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["loan"]["status"], "DISBURSED")
-        self.assertIsNone(response.data["loan"]["assessment"]["score"])
+        self.assertGreaterEqual(response.data["loan"]["assessment"]["score"], 80)
         self.assertEqual(self.client.post("/api/v1/sandbox/loans/", payload, format="json", **self.headers).status_code, 200)
         loan = SandboxLoan.objects.get()
         self.assertEqual(EnergyAllocation.objects.count(), 1)
@@ -152,15 +162,17 @@ class SandboxWorkflowTests(Fixtures, TestCase):
         self.assertFalse(LoanApplication.objects.exists())
 
     def test_low_profile_rejected_despite_client_score_or_approval(self):
+        quote = create_quote(self.owner, self.meter.pk, "2", "LOAN")
         from loan.scoring import LOAN_PROFILE_FIELDS
         for key in LOAN_PROFILE_FIELDS:
             setattr(self.owner, key, "test-answer")
         self.owner.payment_consistency = "Never paid"; self.owner.monthly_income = "<100,000 UGX"
         self.owner.consumption_level = "Very low (<50 kWh)"; self.owner.purchase_frequency = "Rarely"
         self.owner.save()
-        loan = self.loan()
+        with self.assertRaises(ValidationError): self.loan()
+        loan, _ = apply_loan(self.owner, quote.pk, quote.terms_hash, uuid.uuid4())
         self.assertEqual(loan.status, "REJECTED")
-        self.assertIn("threshold", loan.decision_reason)
+        self.assertIn("80%", loan.decision_reason)
         self.assertFalse(EnergyAllocation.objects.exists())
 
     def test_acceptance_hash_expiry_and_request_conflicts(self):
@@ -184,9 +196,10 @@ class SandboxWorkflowTests(Fixtures, TestCase):
     def test_second_or_overdue_loan_rejected_and_disbursement_retry_no_duplicate(self):
         first = self.loan()
         authorize_sandbox_loan_allocation(first, Decimal("2.00"))
-        second = self.loan(); self.assertEqual(second.status, "REJECTED")
+        with self.assertRaises(ValidationError): self.loan()
         first.due_at = timezone.now()-timedelta(days=1); first.save()
-        third = self.loan(); self.assertIn("overdue", third.decision_reason)
+        with self.assertRaises(ValidationError) as error: self.loan()
+        self.assertIn("overdue", str(error.exception.detail))
         self.assertEqual(EnergyAllocation.objects.count(), 1)
 
     def test_pending_failed_and_untrusted_success_do_not_settle(self):

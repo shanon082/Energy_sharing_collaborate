@@ -7,7 +7,7 @@ import { dateTime, ugx } from "./format.ts";
 import { parseCreditSummary, type Credit } from "./api/credit-summary.ts";
 export { parseCreditSummary } from "./api/credit-summary.ts";
 
-export function CreditSummary({ session, revision, onExpired, onLoans, demo }: { session: SessionManager; revision: number; onExpired: () => void; onLoans: () => void; demo: boolean }) {
+export function CreditSummary({ session, revision, onExpired, onLoans, demo, meterId }: { session: SessionManager; revision: number; onExpired: () => void; onLoans: () => void; demo: boolean; meterId: number | null }) {
   const [data, setData] = useState<Credit | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -16,7 +16,7 @@ export function CreditSummary({ session, revision, onExpired, onLoans, demo }: {
   useEffect(() => {
     const scope = reads.current, ticket = scope.begin(), owner = session.identity;
     setLoading(true); setError(null);
-    void session.get<unknown>("loans/mobile-eligibility/").then(result => {
+    void session.get<unknown>(`loans/mobile-eligibility/${meterId === null ? "" : `?meter_id=${meterId}`}`).then(result => {
       if (owner === session.identity && scope.current(ticket)) setData(parseCreditSummary(result));
     }).catch(cause => {
       if (owner !== session.identity || !scope.current(ticket)) return;
@@ -24,10 +24,10 @@ export function CreditSummary({ session, revision, onExpired, onLoans, demo }: {
       setData(null); setError(cause instanceof Error ? cause.message : "Assessment unavailable.");
     }).finally(() => { if (owner === session.identity && scope.current(ticket)) setLoading(false); });
     return () => scope.invalidate();
-  }, [session, revision, retry, onExpired]);
+  }, [session, revision, retry, onExpired, meterId]);
   return <section className="panel credit-summary"><div className="section-title"><h2>Credit overview</h2><span className="row-icon"><Icon name="shield" /></span></div>
     {error ? <><p className="error" role="alert">{error}</p><button className="text-button" onClick={() => setRetry(value => value + 1)}>Retry assessment</button></> : <>
-      <div className="credit-summary-grid"><div><span className="muted">Your score</span><strong className="credit-score">{loading ? "…" : data?.score ?? "—"}{data?.score != null && !loading && <small>/100</small>}</strong></div><div><span className="muted">Borrowing limit</span><strong className="credit-limit">{loading ? "Loading…" : ugx(data?.limit)}</strong><button className="text-button" onClick={onLoans}>View loans <Icon name="arrow" /></button></div></div>
+      <div className="credit-summary-grid"><div><span className="muted">Credit score</span><strong className="credit-score">{loading ? "…" : data?.score ?? "—"}{data?.score != null && !loading && <small>%</small>}</strong></div><div><span className="muted">Borrowing limit</span><strong className="credit-limit">{loading ? "Loading…" : ugx(data?.limit)}</strong><button className="text-button" onClick={onLoans}>View loans <Icon name="arrow" /></button></div></div>
       {!loading && data?.score == null && <p className="muted">Your assessment is not ready. Link a meter, then check again.</p>}
       <details className="info-disclosure"><summary>How your score is calculated</summary>{(demo || data?.simulated) && <p className="small">Simulated assessment · no external account verification.</p>}{data?.reason && <p>{data.reason}</p>}{Object.entries(data?.factors ?? {}).map(([factor, value]) => <div className="list-row" key={factor}><span>{factor.replaceAll("_", " ")}</span><strong>{value}</strong></div>)}<p className="muted small">Assessed {dateTime(data?.calculatedAt)}. Final eligibility is checked when you apply.</p></details>
     </>}

@@ -28,7 +28,17 @@ class SandboxConsumerView(APIView):
 
 class SandboxAssessmentView(SandboxConsumerView):
     def get(self, request):
-        return Response({"assessment": assessment(request.user), "policy": policy()})
+        cfg = policy()
+        result = assessment(request.user, meter_id=request.query_params.get("meter_id"))
+        pricing = {"available": True, "message": ""}
+        if cfg.get("environment") == "UGX_DEMO":
+            from loan.demo_tariffs import pricing_inputs, fingerprint
+            try:
+                inputs = pricing_inputs(request.user)
+                pricing = {"available": True, "message": "", "revision": fingerprint(inputs), "tariff_code": inputs["tariff"]["code"]}
+            except ValidationError as exc:
+                pricing = {"available": False, "message": str(exc.detail.get("message", "Tariff unavailable"))}
+        return Response({"assessment": result, "policy": cfg, "pricing": pricing})
 
 
 class SandboxQuoteView(SandboxConsumerView):

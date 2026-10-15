@@ -1,8 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, testPhone,
-  type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote } from "../lib/sandbox";
+  type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote, type PricingStatus } from "../lib/sandbox";
 
+import { TariffDetails } from "./tariff-details";
+import { assessmentContextKey, loanProgressionReason } from "../lib/meter-credit";
 import SandboxMobileView, { type ConsumerFinanceView, type FinanceDestination } from "./sandbox-mobile-view";
 
 const describe = (error: unknown) => error instanceof Error ? error.message : "Sandbox request failed. Refresh to recover stored status.";
@@ -26,6 +28,9 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   const formVersion = useRef(0);
   const nextAttempt = useRef(new Map<string, number>());
   const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [pricingStatus, setPricingStatus] = useState<PricingStatus>({ available: false, message: "Checking tariff…" });
+  const pricingContext = useRef("");
+  const readMeter = useRef<number | undefined>(undefined);
   const [policy, setPolicy] = useState<TestPolicy | null>(null);
   const [loans, setLoans] = useState<TestLoan[]>([]);
   const [payments, setPayments] = useState<TestPayment[]>([]);
@@ -60,12 +65,14 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   }, []);
   const current = (run: number) => active.current && epoch.current === run;
   const refresh = useCallback(async () => {
-    if (inFlight.current || reading.current) return;
+    const meterId = selectedMeter?.id;
+    if (inFlight.current || (reading.current && readMeter.current === meterId)) return;
+    readMeter.current = meterId;
     reading.current = true; setRefreshing(true);
     const run = ++token.current; const identity = epoch.current;
     try {
       const [a, l, p] = await Promise.all([
-        client.get<{ assessment: Assessment; policy: TestPolicy }>("sandbox/assessment/"),
+        client.get<{ assessment: Assessment; policy: TestPolicy; pricing?: PricingStatus }>(`sandbox/assessment/${meterId === undefined ? "" : `?meter_id=${meterId}`}`),
         client.get<{ loans: unknown[] }>("sandbox/loans/"),
         client.get<{ payments: unknown[]; pending: unknown[] }>("sandbox/payments/"),
       ]);
@@ -97,8 +104,14 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       // If any lookup fails, catch retains the handles and blocks another initiation.
       unknown = ["LOAN", "PURCHASE", "LOAN_REPAYMENT"].some(kind => !!readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", environment) &&
         ![...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", environment)));
-      if (!current(identity) || token.current !== run) return;
-      setAssessment(demo ? parseStoredDemoAssessment(a.assessment) : a.assessment); setPolicy(a.policy);
+      if (!current(identity) || token.current !== run || destination.current !== meterId) return;
+      const parsed = demo ? parseStoredDemoAssessment(a.assessment, { owner, meterId: meterId ?? null }) : a.assessment;
+      const status = demo ? a.pricing ?? { available: false, message: "Tariff unavailable. Update the backend before using this app." } : { available: true, message: "" };
+      const context = assessmentContextKey(parsed, a.policy, status);
+      if (pricingContext.current !== context) {
+        formVersion.current++; setQuote(null); setAccepted(false); pricingContext.current = context;
+      }
+      setAssessment(parsed); setPolicy(a.policy); setPricingStatus(status);
       setLoans([...new Map([...l.loans.map(parseTestLoan), ...recoveredLoans].map(row => [row.id, row])).values()]);
       setPayments([...new Map([...mergePayments(p.payments, p.pending), ...recoveredPayments].map(row => [row.reference, row])).values()]);
       setUnresolved(unknown); setOffline(false); setFetched(new Date().toISOString()); setError(null);
@@ -110,10 +123,10 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
         reading.current = false; setRefreshing(false);
       }
     }
-  }, [client, owner, environment, demo, onError]);
-  useEffect(() => { void refresh(); }, [refresh, selectedMeter?.id, refreshVersion]);
+  }, [client, owner, environment, demo, onError, selectedMeter?.id]);
+  useEffect(() => { if (!busy) void refresh(); }, [refresh, selectedMeter?.id, refreshVersion, busy]);
   useEffect(() => {
-    const changed = () => { formVersion.current++; setQuote(null); setAccepted(false); };
+    const changed = () => { formVersion.current++; setQuote(null); setAccepted(false); setAssessment(null); };
     changed();
   }, [selectedMeter?.id]);
   useEffect(() => {
@@ -135,24 +148,25 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     return () => window.clearInterval(timer);
   }, [quote]);
 
-  const perform = async (work: () => Promise<void>, recovery = false) => {
+  const perform = async (work: () => Promise<void>, recovery = false, uncertainFinancialEffect = true) => {
     if (inFlight.current || reading.current || offline || (!recovery && (!mutationsAvailable || unresolved))) return;
     inFlight.current = true;
     const identity = epoch.current;
     setBusy(true); setError(null); setNotice(null);
     try { await work(); }
-    catch (cause) { if (current(identity)) { setError(describe(cause)); setUnresolved(true); onError?.(cause); } }
+    catch (cause) { if (current(identity)) { setError(describe(cause)); if (uncertainFinancialEffect) setUnresolved(true); onError?.(cause); } }
     finally { inFlight.current = false; if (current(identity)) setBusy(false); }
   };
   const getQuote = (event: FormEvent) => {
     event.preventDefault();
+    if (!pricingStatus.available || (purpose === "LOAN" && loanReason)) { setError(purpose === "LOAN" && loanReason ? loanReason : pricingStatus.message); return; }
     if (!selectedMeter?.sandbox_inventory || !validAmount(amount)) { setError("Add or select a linked prototype meter and enter a positive matching test amount."); return; }
     const meterId = selectedMeter.id; const identity = epoch.current; const revision = formVersion.current; const intent = purpose;
     void perform(async () => {
       const q = parseTestQuote(await client.post<unknown>("sandbox/quotes/", { meter_id: meterId, amount, purpose }),
         { owner, meterId, amount, purpose: intent, currency, environment });
       if (current(identity) && destination.current === meterId && formVersion.current === revision && q.terms.purpose === intent) { setQuote(q); setAccepted(false); }
-    });
+    }, false, false);
   };
   const submit = () => {
     if (!quote || !accepted || quote.terms.purpose !== purpose || quote.terms.meter_id !== destination.current || Date.parse(quote.expires_at) <= Date.now() ||
@@ -236,12 +250,14 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     return () => { disposed = true; window.clearInterval(interval); };
   }, [client, demo, environment, offline, owner, payments, pending, refresh, onChanged, onError]);
   const blocked = busy || refreshing || offline || unresolved || pending || !mutationsAvailable;
+  const meterAssessment = !demo || assessment?.meter_id === (selectedMeter?.id ?? null) ? assessment : null;
+  const loanReason = loanProgressionReason(meterAssessment, selectedMeter?.id ?? null, amount);
   const selectedLoan = loans.find(row => row.id === loanId && row.environment === environment && row.status === "DISBURSED");
   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
   const stale = !!error || offline;
   if (view !== "all") return <SandboxMobileView
     view={view} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
-    capabilities={capabilities} assessment={assessment} policy={policy} loans={loans} payments={payments}
+    capabilities={capabilities} assessment={meterAssessment} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
     meters={meters} selectedMeter={selectedMeter} purpose={purpose} amount={amount}
     setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
     quote={quote} clearQuote={() => { formVersion.current++; setQuote(null); setAccepted(false); }}
@@ -265,8 +281,8 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     {unresolved && <p>Refresh to resolve the previous attempt before submitting another request. Never retry by creating a new payment identity.</p>}
     {pending && <p>There is a pending test payment. Scheduled reconciliation continues when the app is closed. Another payment is blocked until its outcome is known.</p>}
     {assessment && policy && <section><h3>{demo ? "Demo assessment — simulated account information" : "Test credit assessment"}</h3>
-      <p>{demo && assessment.assessment_status !== "READY" ? `Score unavailable — ${assessment.assessment_status?.toLowerCase() ?? "pending"}` : assessment.starter ? "Starter allowance — no established credit score" : `Test score ${assessment.score}/100 (base ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
-      <p>{assessment.reason} Maximum: {money(assessment.maximum)}.</p>
+      <p>{demo && assessment.assessment_status !== "READY" ? `Score unavailable — ${assessment.assessment_status?.toLowerCase() ?? "pending"}` : assessment.starter ? "Starter allowance — no established credit score" : `Credit score: ${assessment.score}% (base ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
+      <p>{loanReason || assessment.reason} Maximum: {money(assessment.maximum)}.</p>
       {assessment.factors && <p>{Object.entries(assessment.factors).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value} (${assessment.categories?.[key] ?? "recorded"})`).join(" · ")}</p>}
       {demo && <p>These payment, consumption and financial categories are fixed synthetic test inputs, not utility, bank, telecom or credit-bureau records. No questionnaire is required. Assessment {when(assessment.assessed_at ?? null)} · {assessment.scoring_policy_version} · {assessment.provider}.</p>}
       <p>Settled billed test purchases: {money(assessment.qualifying_billed_test ?? assessment.qualifying_billed_eur)}. One point per {money(policy.purchase_per_point)}, capped at {policy.purchase_score_cap}. Refreshing does not earn points.</p>
@@ -281,11 +297,14 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       </select></label>
       <label>Principal / payment ({demo ? "whole UGX DEMO" : "EUR TEST"})<input inputMode={demo ? "numeric" : "decimal"} value={amount} onChange={event => { formVersion.current++; setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
       <p>Quote range {money(policy?.minimum ?? null)} – {money(policy?.maximum ?? null)}. Approval uses your limit and existing obligations at submission.</p>
-      <button type="submit" disabled={blocked || !selectedMeter?.sandbox_inventory || !(purpose === "LOAN" ? capabilities.loans && (!demo || assessment?.assessment_status === "READY") : capabilities.purchases)}>Review server quote</button>
+      {(purpose === "LOAN" && loanReason) && <p role="status">{loanReason}</p>}
+      {!pricingStatus.available && <p role="status">{pricingStatus.message}</p>}
+      <button type="submit" disabled={blocked || !selectedMeter?.sandbox_inventory || !pricingStatus.available || !(purpose === "LOAN" ? capabilities.loans && !loanReason : capabilities.purchases)}>Review server quote</button>
     </form>
     {quote && <section><h3>Review {quote.terms.policy.id}</h3>
       <p>Principal/payment {money(quote.terms.amount)} · test energy {quote.terms.energy_kwh} kWh · interest {money(quote.terms.interest)} · fee {money(quote.terms.fee)} · loan total {money(quote.terms.total_due)}.</p>
-      <p>Test price {money(quote.terms.policy.rate_per_kwh)}/kWh; billed {money(quote.terms.billed)}; energy-rounding remainder {money(quote.terms.residual)} retained for reconciliation. No automatic refund or energy conversion.</p>
+      <TariffDetails pricing={quote.terms.pricing} currency={currency} />
+      <p>{quote.terms.pricing ? "Configured tariff;" : `Original test price ${money(quote.terms.policy.rate_per_kwh)}/kWh;`} billed {money(quote.terms.billed)}; energy-rounding remainder {money(quote.terms.residual)} retained for reconciliation. No automatic refund or energy conversion.</p>
       <p>Expires {when(quote.expires_at)}. Allocations are not physical meter receipts.</p>
       <label><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /> I accept these SANDBOX TEST terms.</label>
       <button type="button" onClick={submit} disabled={blocked || !accepted || Date.parse(quote.expires_at) <= Date.now() || (purpose === "PURCHASE" && !demo && !testPhone(phone))}>{purpose === "LOAN" ? "Submit actual test application" : (demo ? "Start demo purchase" : "Initiate MTN sandbox purchase")}</button>

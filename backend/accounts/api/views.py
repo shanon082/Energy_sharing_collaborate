@@ -1642,7 +1642,7 @@ class CreditScoreView(APIView):
         from backend.demo_config import provider_mode
         if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
             from loan.sandbox_service import assessment
-            return Response({"demo_assessment": assessment(request.user)})
+            return Response({"demo_assessment": assessment(request.user, meter_id=request.query_params.get("meter_id"))})
         from loan.credit_score_service import CreditScoreService
         from loan.models import CreditScoreHistory, UserCreditSignal
         from loan.scoring import calculate_weighted_credit_score, get_or_create_dummy_credit_signal

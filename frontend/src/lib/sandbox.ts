@@ -13,18 +13,22 @@ export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
 }
 export interface SandboxClient { get<T>(path: string): Promise<T>; post<T>(path: string, body: unknown): Promise<T> }
 export type TestMeter = { id: number; meter_number: string; sandbox_inventory?: boolean };
-export type Assessment = { eligible: boolean; reason: string; starter: boolean; score: number | null; profile_score: number | null;
+export type Assessment = { owner_id?: number; meter_id?: number | null; minimum_score?: number; assessment_id?: number | null; evidence_updated_at?: string | null; eligible: boolean; reason: string; starter: boolean; score: number | null; profile_score: number | null;
   factors: Record<string, number> | null; purchase_points: number | null; qualifying_billed_eur?: string; qualifying_billed_test?: string | null; maximum: string | null; policy_id: string;
   assessment_status?: "PENDING" | "READY" | "UNAVAILABLE"; label?: string; provider?: string; assessed_at?: string | null; scoring_policy_version?: string; categories?: Record<string, string> | null };
 export type TestPolicy = { id: string; currency?: TestCurrency; environment?: TestEnvironment; minimum: string; maximum: string; starter_limit: string; interest_percent: string; fee: string;
-  rate_per_kwh: string; due_days: number; penalty_percent: string; rounding: string; purchase_per_point: string; purchase_score_cap: number; score_threshold: number };
-export type TestTerms = { owner_id?: number; meter_id?: number; policy: TestPolicy; purpose: string; amount: string; energy_kwh: string; billed: string; residual: string;
+  rate_per_kwh: string | null; pricing_source?: string; due_days: number; penalty_percent: string; rounding: string; purchase_per_point: string; purchase_score_cap: number; score_threshold: number };
+export type PricingStatus = { available: boolean; message: string; revision?: string; tariff_code?: string };
+export type TariffPricing = { inputs_hash: string; inputs: { version: string; month: string; scope: string; vat_rate: string;
+  tariff: { id: number; code: string; name: string }; monthly_purchased_kwh: string }; breakdown: {
+  energy_cost: string; service_charge: string; subtotal: string; vat: string; total: string; lifeline_applied: boolean } };
+export type TestTerms = { pricing?: TariffPricing; owner_id?: number; meter_id?: number; policy: TestPolicy; purpose: string; amount: string; energy_kwh: string; billed: string; residual: string;
   interest: string; fee: string; total_due: string; assessment: Assessment | null };
 export type TestQuote = { id: string; terms_hash: string; expires_at: string; terms: TestTerms };
 export type TestLoan = { currency: TestCurrency; environment: TestEnvironment; id: string; client_request_id: string; meter_id: number; status: "DISBURSED" | "COMPLETED" | "REJECTED";
   reason: string; principal: string; total_due: string; outstanding: string; due_at: string; closed_at: string | null;
   allocation_id: number | null; allocated_kwh: string | null; terms: TestTerms; assessment: Assessment };
-export type TestPayment = { currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
+export type TestPayment = { pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
   demo_eligible_at?: string | null; server_time?: string; observed_at?: number; reference: string; client_request_id: string; purpose: string; status: "PENDING" | "SETTLED" | "FAILED";
   amount: string; meter_id: number; loan_id: string | null; billed: string | null; residual: string | null; applied: string | null; excess: string | null;
   allocated_kwh: string | null; initiated_at: string; settled_at: string | null; submission_state: string; reconciliation_error: string; next_check_at: string };
@@ -33,9 +37,11 @@ const obj = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 /** Reject unavailable evidence masquerading as a real zero or an established score. */
-export function parseStoredDemoAssessment(value: unknown): Assessment {
+export function parseStoredDemoAssessment(value: unknown, expected?: { owner: number; meterId: number | null }): Assessment {
   const row = obj(value);
   const ready = row.assessment_status === "READY";
+  if (expected && (row.owner_id !== expected.owner || row.meter_id !== expected.meterId))
+    throw new Error("Assessment does not belong to the selected meter/account.");
   if (!["READY", "PENDING", "UNAVAILABLE"].includes(String(row.assessment_status)) ||
     row.provider !== "SIMULATED_ACCOUNT_V1" || row.input_source !== "SIMULATED_ACCOUNT_INFORMATION" ||
     row.currency !== "UGX" || row.environment !== "UGX_DEMO" || typeof row.reason !== "string" ||
