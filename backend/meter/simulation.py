@@ -22,6 +22,8 @@ def require_simulation():
 
 
 def _bound_device(delivery, device):
+    if delivery.transport != "SIMULATOR" or hasattr(delivery.allocation, "keypad_token"):
+        raise SimulationError("Keypad allocations cannot enter automatic simulation delivery.")
     allocation = delivery.allocation
     meter = Meter.all_objects.get(pk=allocation.meter_id)
     if (device.meter_id != meter.pk or meter.user_id != allocation.owner_id or
@@ -100,20 +102,24 @@ def dispatch_delivery(delivery_id):
     require_simulation()
     with transaction.atomic():
         delivery = MeterDelivery.objects.select_for_update().select_related("allocation").get(pk=delivery_id)
+        if delivery.transport != "SIMULATOR" or hasattr(delivery.allocation, "keypad_token"):
+            raise SimulationError("Keypad delivery is not a simulator outbox command.")
         if delivery.status == MeterDelivery.APPLIED:
             return delivery, False
         if delivery.status in {MeterDelivery.FAILED, MeterDelivery.EXPIRED}:
             return delivery, False
         device = SimulatedMeter.objects.filter(meter_id=delivery.allocation.meter_id).first()
         if device is None:
-            delivery.status = MeterDelivery.FAILED
+            delivery.status = (MeterDelivery.FAILED if delivery.status == MeterDelivery.QUEUED
+                               else MeterDelivery.OUTCOME_UNKNOWN)
             delivery.last_error = "SIMULATOR_NOT_ENROLLED"
             delivery.save(update_fields=["status", "last_error"])
             return delivery, False
         try:
             _bound_device(delivery, device)
         except SimulationError:
-            delivery.status = MeterDelivery.FAILED
+            delivery.status = (MeterDelivery.FAILED if delivery.status == MeterDelivery.QUEUED
+                               else MeterDelivery.OUTCOME_UNKNOWN)
             delivery.last_error = "METER_BINDING_CHANGED"
             delivery.save(update_fields=["status", "last_error"])
             return delivery, False
@@ -147,11 +153,16 @@ def record_telemetry(*, device, event_id, boot_id, sequence, cumulative_wh,
                      measured_at, reported_relay_state):
     """Store event identity and preserve measurement order without guessing loss."""
     require_simulation()
-    if (sequence < 0 or cumulative_wh < 0 or
+    if (type(sequence) is not int or type(cumulative_wh) is not int
+            or not 0 <= sequence <= 2**63 - 1 or not 0 <= cumulative_wh <= 2**63 - 1
+            or timezone.is_naive(measured_at) or
             reported_relay_state not in {"OPEN", "CLOSED", "UNKNOWN"}):
         raise SimulationError("Invalid simulator telemetry.")
     with transaction.atomic():
         device = SimulatedMeter.objects.select_for_update().get(pk=device.pk)
+        if not Meter.objects.filter(pk=device.meter_id, user__isnull=False,
+                                    status=Meter.STATUS_ACTIVE, architecture=Meter.ARCH_AMI).exists():
+            raise SimulationError("Simulator must be bound to an active assigned AMI meter.")
         existing = SimulatedTelemetry.objects.filter(device=device, event_id=event_id).first()
         if existing:
             if (existing.boot_id != boot_id or existing.sequence != sequence or
@@ -166,7 +177,10 @@ def record_telemetry(*, device, event_id, boot_id, sequence, cumulative_wh,
         if prior_boot is None:
             classification = "INITIAL"
         elif prior_boot != boot_id:
-            if device.last_measured_at is not None and measured_at <= device.last_measured_at:
+            # A retired boot never becomes current again, even if a replay
+            # claims a later clock. Measurement time alone is not boot order.
+            if (SimulatedTelemetry.objects.filter(device=device, boot_id=boot_id).exists()
+                    or (device.last_measured_at is not None and measured_at <= device.last_measured_at)):
                 classification = "DELAYED"
             else:
                 classification = "RESET"

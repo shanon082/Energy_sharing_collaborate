@@ -71,7 +71,10 @@ class AccountMailOutboxTests(TransactionTestCase):
         self.Job = AccountEmailDelivery
         self.User = User
         self.user = User.objects.create_user(email="hosting-test@example.invalid", password="Hosting-test-only-123")
-        self.client = APIClient()
+        # The secure deployment redirects plain HTTP. Exercise the HTTPS proxy
+        # contract instead of mistaking that redirect for an outbox failure.
+        self.client = (APIClient(HTTP_HOST=settings.ALLOWED_HOSTS[0], HTTP_X_FORWARDED_PROTO="https")
+                       if getattr(settings, "ALWAYSDATA_TESTING", False) else APIClient())
 
     def test_account_and_queue_roll_back_together(self):
         with self.assertRaises(RuntimeError):
@@ -183,6 +186,27 @@ class AccountMailOutboxTests(TransactionTestCase):
     def test_queued_verification_and_reset_links_keep_one_time_security(self):
         from accounts.email_outbox import drain_account_emails, enqueue_account_email
         drain_account_emails(5)
+        if getattr(settings, "DJANGO_HOSTED_ACCOUNT_PAGES", False):
+            # Hosted emails deliberately bypass legacy GET confirmation. Test
+            # the actual browser form, with CSRF enabled and explicit POST.
+            from django.test import Client
+            browser = Client(enforce_csrf_checks=True, HTTP_HOST=settings.ALLOWED_HOSTS[0],
+                             HTTP_X_FORWARDED_PROTO="https")
+
+            def confirm(link, payload=None):
+                parsed = urlsplit(link)
+                args = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+                self.assertEqual(browser.get(parsed.path, args).status_code, 200)
+                data = {**args, **(payload or {}), "csrfmiddlewaretoken": browser.cookies["csrftoken"].value}
+                self.assertEqual(browser.post(parsed.path, data, HTTP_ORIGIN=settings.ACCOUNT_PAGES_ORIGIN).status_code, 200)
+                self.assertNotEqual(browser.post(parsed.path, data, HTTP_ORIGIN=settings.ACCOUNT_PAGES_ORIGIN).status_code, 200)
+
+            confirm(mail.outbox[-1].body.split(": ", 1)[1], {"confirm": "on"})
+            enqueue_account_email(self.user, self.Job.PASSWORD_RESET)
+            drain_account_emails(5)
+            confirm(mail.outbox[-1].body.split(": ", 1)[1].split("\n", 1)[0],
+                    {"password": "New-host-password-test-123", "confirm_password": "New-host-password-test-123"})
+            return
         query = parse_qs(urlsplit(mail.outbox[-1].body.split(": ", 1)[1]).query)
         verification = "/api/v1/auth/verify-email/"
         args = {key: values[0] for key, values in query.items()}
@@ -243,11 +267,18 @@ class AlwaysdataProfileTests(SimpleTestCase):
         self.assertNotIn("Access-Control-Allow-Origin", response)
 
     def test_financial_device_and_polling_routes_stop_before_views(self):
-        for path in ("/api/v1/meter/buy-units/", "/api/v1/meter/deliver/", "/api/v1/loans/disburse/1/", "/webhooks/thingsboard/low-units"):
+        for path in ("/api/v1/meter/buy-units/", "/api/v1/meter/deliver/", "/api/v1/loans/disburse/1/",
+                     "/api/v1/meter/apply-wallet-units/", "/api/v1/meter/simulator/ack/",
+                     "/api/v1/bench-device/v1/session/", "/api/v1/bench-device/v1/redeem/", "/api/v1/bench-device/v1/ack/",
+                     "/api/v1/meter/simulator/telemetry/", "/api/v1/meter/test-meter-push/",
+                     "/api/v1/meter/admin-test-meter-push/", "/api/v1/webhooks/token/",
+                     "/api/v1/loans/verify-token/", "/webhooks/thingsboard/low-units",
+                     "/webhooks/thingsboard/daily-usage"):
             response = self.client.post(path, data="{}", content_type="application/json", **self.headers)
             self.assertEqual(response.status_code, 503)
             self.assertEqual(response.json()["code"], "TESTING_OPERATION_UNAVAILABLE")
-        for path in ("/api/v1/meter/check-payment-status/", "/api/v1/meter/ami-status/", "/api/v1/transactions/statement/email/"):
+        for path in ("/api/v1/meter/check-payment-status/", "/api/v1/meter/ami-status/",
+                     "/api/v1/meter/power-usage/", "/api/v1/transactions/statement/email/"):
             self.assertEqual(self.client.get(path, **self.headers).status_code, 503)
 
     def test_health_probes_are_honest_and_do_not_contact_brokers_or_providers(self):

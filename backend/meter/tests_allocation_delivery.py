@@ -242,6 +242,53 @@ class AllocationDeliveryTests(TransactionTestCase):
         self.assertEqual(SimulatedCommand.objects.count(), 1)
         self.assertEqual(delivery.command_id, second.command_id)
 
+    def test_binding_change_after_lost_ack_stays_unknown_and_reserved(self):
+        self.allocation()
+        delivery = reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                        amount_kwh="0.40")[0]
+        with patch("meter.simulation.acknowledge_application", side_effect=simulation_module.SimulationError("lost")):
+            dispatch_delivery(delivery.pk)
+        Meter.objects.filter(pk=self.meter.pk).update(user=self.other)
+        result, changed = dispatch_delivery(delivery.pk)
+        self.assertFalse(changed)
+        self.assertEqual(result.status, MeterDelivery.OUTCOME_UNKNOWN)
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.applied_kwh, Decimal("0.40"))
+        self.assertEqual(SimulatedCommand.objects.count(), 1)
+        self.assertEqual(entitlement_summary(self.user)["pending_kwh"], Decimal("0.40"))
+
+    def test_consumer_jwt_is_not_device_authentication(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        self.client.force_authenticate(user=None)
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + str(RefreshToken.for_user(self.user).access_token))
+        for path in ("ack", "telemetry"):
+            result = self.client.post(f"/api/v1/meter/simulator/{path}/", {"contract_version": 1}, format="json")
+            self.assertEqual(result.status_code, 401)
+            self.assertEqual(result.data["code"], "DEVICE_UNAUTHORIZED")
+
+    def test_telemetry_api_does_not_truncate_fractional_wh_or_accept_foreign_headers(self):
+        payload = {"contract_version": 1, "event_id": str(uuid.uuid4()), "boot_id": str(uuid.uuid4()),
+                   "sequence": 1, "cumulative_wh": 1.5, "measured_at": timezone.now().isoformat(),
+                   "reported_relay_state": "OPEN"}
+        for token, expected in (("invalid-test-token", 401), ("simulator-only-credential", 400)):
+            result = self.client.post("/api/v1/meter/simulator/telemetry/", payload, format="json",
+                HTTP_X_SIM_DEVICE_ID=str(self.device.device_id), HTTP_X_SIM_DEVICE_TOKEN=token)
+            self.assertEqual(result.status_code, expected)
+        self.assertFalse(SimulatedTelemetry.objects.exists())
+
+    def test_telemetry_does_not_acknowledge_pending_delivery(self):
+        self.allocation()
+        delivery = reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                        amount_kwh="0.20")[0]
+        record_telemetry(device=self.device, event_id=uuid.uuid4(), boot_id=uuid.uuid4(),
+                         sequence=0, cumulative_wh=0, measured_at=timezone.now(), reported_relay_state="CLOSED")
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, MeterDelivery.QUEUED)
+        self.assertEqual(entitlement_summary(self.user)["confirmed_kwh"], Decimal("0.00"))
+        with self.assertRaises(simulation_module.SimulationError):
+            acknowledge_application(device_id=self.device.device_id, command_id=delivery.command_id,
+                                    delivery_id=delivery.pk, amount_kwh="0.20")
+
     def test_worker_restart_uses_persisted_outbox(self):
         self.allocation()
         delivery = reserve_for_delivery(
@@ -271,8 +318,21 @@ class AllocationDeliveryTests(TransactionTestCase):
         Meter.objects.filter(pk=self.meter.pk).update(user=self.other)
         result, changed = dispatch_delivery(delivery.pk)
         self.assertFalse(changed)
-        self.assertEqual(result.status, MeterDelivery.FAILED)
+        # DISPATCHED was already persisted; absence of a receipt is not proof
+        # of non-application. Keep the outcome and held energy uncertain.
+        self.assertEqual(result.status, MeterDelivery.OUTCOME_UNKNOWN)
         self.assertEqual(SimulatedCommand.objects.count(), 0)
+        self.assertEqual(entitlement_summary(self.user)["pending_kwh"], Decimal("0.20"))
+
+    def test_binding_change_before_dispatch_fails_without_releasing_reservation(self):
+        self.allocation()
+        delivery = reserve_for_delivery(owner=self.user, meter_no=self.meter.meter_no,
+                                        amount_kwh="0.20")[0]
+        Meter.objects.filter(pk=self.meter.pk).update(user=self.other)
+        result, changed = dispatch_delivery(delivery.pk)
+        self.assertFalse(changed)
+        self.assertEqual(result.status, MeterDelivery.FAILED)
+        self.assertFalse(SimulatedCommand.objects.exists())
         self.assertEqual(entitlement_summary(self.user)["pending_kwh"], Decimal("0.20"))
 
     def test_telemetry_duplicate_gap_reorder_delay_and_reset(self):

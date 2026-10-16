@@ -102,7 +102,7 @@ export function DeliveryPanel({ session, meter, allocation, onReserved }: {
         `Applied ${dateTime(row.applied_at)}` : row.status === "OUTCOME_UNKNOWN" ?
         "Outcome unknown — reconciliation required" : row.status === "APPLIED" ? "Application evidence incomplete" : row.status}</small></span>
       <strong>{energy(row.amount_kwh)}</strong>
-      <small>{row.source} · {row.environment === "SIMULATOR" ? "Simulation only" : "Environment unconfirmed"}</small>
+      <small>{row.source} · {row.environment === "SOFTWARE_BENCH" ? "Software bench only" : row.environment === "SIMULATOR" ? "Simulation only" : "Environment unconfirmed"}</small>
     </div>)}
     {next && <button disabled={historyBusy || busy} onClick={() => void loadHistory(next)}>More deliveries</button>}
   </section>;

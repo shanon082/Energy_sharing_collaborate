@@ -2,7 +2,12 @@ from django.urls import include, path
 
 from backend.features import FeatureAvailabilityView
 
+from meter.api.keypad_views import BenchRedeemView, BenchAcknowledgeView, BenchSessionView
+
 urlpatterns = [
+    path("bench-device/v1/session/", BenchSessionView.as_view()),
+    path("bench-device/v1/redeem/", BenchRedeemView.as_view()),
+    path("bench-device/v1/ack/", BenchAcknowledgeView.as_view()),
     path("sandbox/", include("loan.sandbox_urls")),
     path("features/", FeatureAvailabilityView.as_view(), name="features"),
     path(

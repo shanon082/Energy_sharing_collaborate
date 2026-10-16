@@ -60,7 +60,7 @@ def redis_url(value, name):
 
 
 def validate_testing_environment(environ, *, profile="Render"):
-    for name in ("DEBUG", "SIMULATED_METER_ENABLED", "MOBILE_PAYMENT_ACTIONS_ENABLED",
+    for name in ("BENCH_DEVICE_ENABLED", "DEBUG", "SIMULATED_METER_ENABLED", "MOBILE_PAYMENT_ACTIONS_ENABLED",
                  "CELERY_TASK_ALWAYS_EAGER", "PURCHASE_HISTORY_SCORING_ENABLED", *FEATURE_ENV_VARS.values()):
         if parse_feature_bool(environ.get(name, "false"), name=name):
             raise ImproperlyConfigured(f"{name} must remain disabled in the {profile} testing profile")

@@ -393,73 +393,33 @@ def check_user_meter(request):
 @api_view(['PUT', 'PATCH'])
 @permission_classes([IsAuthenticated])
 def update_meter(request):
-    """
-    Update existing meter information
-    """
-    try:
-        user = request.user
-        data = request.data
-        
-        # Identify which meter to update (supports multiple meters per account)
-        current_meter_no = data.get('current_meter_no') or data.get('original_meter_no')
-        user_meters = Meter.objects.filter(user=user)
-
-        if current_meter_no:
-            try:
-                meter = user_meters.get(meter_no=current_meter_no)
-            except Meter.DoesNotExist:
-                return Response(
-                    {"error": "Meter not found on your account"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-        elif user_meters.count() == 1:
-            meter = user_meters.first()
-        else:
-            return Response(
-                {
-                    "success": False,
-                    "error": "Meter Required",
-                    "message": "Specify which meter to update using current_meter_no.",
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate meter number uniqueness (excluding current meter)
-        new_meter_no = data.get('meter_no')
-        if new_meter_no and new_meter_no != meter.meter_no:
-            if Meter.objects.filter(meter_no=new_meter_no).exclude(id=meter.id).exists():
-                return Response({
-                    "success": False,
-                    "error": "Duplicate Meter Number",
-                    "message": "This meter number is already registered to another account."
-                }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Update fields
-        serializer = MeterSerializer(meter, data=data, partial=True)
-        if serializer.is_valid():
-            updated_meter = serializer.save()
-            
-            logger.info(f"Meter updated for user {user.id}: {updated_meter.meter_no}")
-            
-            return Response({
-                "success": True,
-                "message": "Meter updated successfully",
-                "data": MeterSerializer(updated_meter).data
-            }, status=status.HTTP_200_OK)
-        else:
-            return Response({
-                "success": False,
-                "error": "Validation Error",
-                "message": serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-    except Exception as e:
-        logger.error(f"Meter update error: {str(e)}")
-        return Response({
-            "success": False,
-            "error": "Update Failed",
-            "message": "Failed to update meter. Please try again."
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    """Consumer metadata only; device identity/provisioning is staff-owned."""
+    from rest_framework import serializers
+    if not isinstance(request.data, dict):
+        return Response({"error": "Supply a JSON object."}, status=400)
+    allowed = {"label", "current_meter_no", "original_meter_no"}
+    if set(request.data) - allowed:
+        return Response({"code": "DEVICE_PROVISIONING_FORBIDDEN",
+                         "message": "Only the meter label may be edited here. Device identity and credentials require authorized provisioning."}, status=403)
+    meters = Meter.objects.filter(user=request.user)
+    number = request.data.get("current_meter_no") or request.data.get("original_meter_no")
+    if number:
+        meter = meters.filter(meter_no=number).first()
+    elif meters.count() == 1:
+        meter = meters.first()
+    else:
+        return Response({"code": "METER_REQUIRED", "message": "Select the meter explicitly."}, status=400)
+    if meter is None:
+        return Response({"error": "Meter not found on your account."}, status=404)
+    if "label" not in request.data:
+        return Response({"error": "Supply a label to update."}, status=400)
+    field = serializers.CharField(max_length=50, allow_blank=True)
+    label = field.run_validation(request.data["label"])
+    updated = Meter.objects.filter(pk=meter.pk, user=request.user).update(label=label)
+    if not updated:
+        return Response({"error": "Meter not found on your account."}, status=404)
+    meter.refresh_from_db()
+    return Response({"success": True, "message": "Meter label updated.", "data": MeterSerializer(meter).data})
 
 
 @api_view(['POST', 'DELETE'])

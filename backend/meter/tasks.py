@@ -43,7 +43,7 @@ def dispatch_simulated_outbox():
     from meter.simulation import dispatch_delivery
 
     stale = timezone.now() - timedelta(seconds=30)
-    ids = list(MeterDelivery.objects.filter(
+    ids = list(MeterDelivery.objects.filter(transport="SIMULATOR").filter(
         Q(status__in=[MeterDelivery.QUEUED, MeterDelivery.OUTCOME_UNKNOWN])
         | Q(status=MeterDelivery.DISPATCHED, dispatched_at__lte=stale)
     ).order_by("created_at").values_list("pk", flat=True)[:100])

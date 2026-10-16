@@ -49,7 +49,7 @@ export default function SandboxWeb() {
   return <div className="sandbox-web">
     {enrollmentAvailable && <form className="panel form-panel" onSubmit={event => void enroll(event)}>
       <h2>Add your meter</h2><p>{PROTOTYPE_OWNERSHIP_NOTICE}</p>
-      <label>Meter number <input value={number} maxLength={100} autoComplete="off" required disabled={enrolling} onChange={event => setNumber(event.target.value)} /></label>
+      <label>Meter number <input value={number} maxLength={11} inputMode="numeric" pattern="[0-9]{11}" autoComplete="off" required disabled={enrolling} onChange={event => setNumber(event.target.value)} /></label>
       <button type="submit" disabled={enrolling}>{enrolling ? "Linking…" : "Add your meter"}</button>
       <p>Leading zeros are preserved. Hardware connection is pending.</p>
     </form>}

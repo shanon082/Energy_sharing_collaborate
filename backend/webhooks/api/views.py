@@ -213,6 +213,12 @@ class ThingsBoardLowUnitsWebhookView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        # Unversioned callbacks have no event identity/order or revocable device binding.
+        # Preserve historical rows; a reviewed versioned adapter must replace these writes.
+        return Response({"code": "DEVICE_PROTOCOL_UNAVAILABLE",
+                         "message": "Legacy telemetry ingestion is unavailable pending a versioned device contract."},
+                        status=status.HTTP_410_GONE)
+
         device_token = str(request.data.get("device_token", "")).strip()
         units_raw = request.data.get("units_kwh")
         occurred_raw = request.data.get("occurred_at")
@@ -351,6 +357,12 @@ class ThingsBoardDailyUsageWebhookView(APIView):
                 {"success": False, "message": "Webhook authentication is not configured or invalid."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+
+        # Unversioned callbacks have no event identity/order or revocable device binding.
+        # Preserve historical rows; a reviewed versioned adapter must replace these writes.
+        return Response({"code": "DEVICE_PROTOCOL_UNAVAILABLE",
+                         "message": "Legacy telemetry ingestion is unavailable pending a versioned device contract."},
+                        status=status.HTTP_410_GONE)
 
         device_token = str(request.data.get("device_token", "")).strip()
         usage_date_raw = request.data.get("usage_date")

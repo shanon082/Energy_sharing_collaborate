@@ -23,7 +23,7 @@ def normalized_number(raw):
         raise ValidationError({"meter_no": "Meter number must be text."})
     valid, value = validate_meter_no(raw)
     if not valid or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in value):
-        raise ValidationError({"meter_no": "Enter a meter number, at most 100 characters, without control characters."})
+        raise ValidationError({"meter_no": "Enter your 11-digit meter number."})
     return value
 
 

@@ -169,6 +169,9 @@ class MeterDelivery(models.Model):
     request_id = models.UUIDField(null=True, blank=True, db_index=True)
     amount_kwh = models.DecimalField(max_digits=20, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUSES, default=QUEUED, db_index=True)
+    transport = models.CharField(max_length=20, default="SIMULATOR")
+    bench_device = models.ForeignKey("meter.BenchDevice", null=True, blank=True, on_delete=models.PROTECT)
+    command_payload = models.JSONField(default=dict, blank=True)
     attempt_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     dispatched_at = models.DateTimeField(null=True, blank=True)
@@ -554,3 +557,6 @@ class SandboxMeterEnrollment(models.Model):
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(provenance="SELF_DECLARED"),
             name="sandbox_meter_self_declared")]
+
+# Registered in the existing meter app; no separate accounting ledger.
+from meter.keypad_models import EnergyKeypadToken, BenchDevice, BenchApplicationReceipt, DeviceAttemptBucket

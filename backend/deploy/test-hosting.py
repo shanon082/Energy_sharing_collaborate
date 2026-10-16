@@ -61,6 +61,19 @@ if '--profile' in sys.argv or sandbox_profile:
     envfile.chmod(0o600)
     os.environ.update(ALWAYSDATA_ENV_FILE=str(envfile),
                       DJANGO_SETTINGS_MODULE='backend.alwaysdata_sandbox_settings' if sandbox_profile else 'backend.alwaysdata_settings', DEBUG='False')
+bench_profile = '--bench-profile' in sys.argv
+if bench_profile:
+    sys.argv.remove('--bench-profile')
+    import base64
+    os.environ.update(DJANGO_SETTINGS_MODULE='backend.bench_settings',
+        BENCH_DEVICE_ENABLED='true', BENCH_DATABASE_NAME='gpawa_bench_hardware_test',
+        ENERGY_TOKEN_ISSUANCE_ENABLED='true',
+        ENERGY_TOKEN_ENCRYPTION_KEYS=base64.urlsafe_b64encode(b'K' * 32).decode(),
+        ENERGY_TOKEN_LOOKUP_KEY='isolated-keypad-test-lookup-key-abcdefghijklmnopqrstuvwxyz')
+    with psycopg.connect(host='127.0.0.1', port=55445, user='gpawa_alwaysdata_test', dbname='postgres', autocommit=True) as conn:
+        if not conn.execute("SELECT 1 FROM pg_database WHERE datname='gpawa_bench_hardware_test'").fetchone():
+            conn.execute('CREATE DATABASE gpawa_bench_hardware_test')
+
 import django
 
 django.setup()

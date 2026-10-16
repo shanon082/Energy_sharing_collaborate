@@ -267,6 +267,13 @@ sender instructions in [the alwaysdata runbook](../backend/docs/ALWAYSDATA_TESTI
 
 ## Consumer expansion (October 2026)
 
+Keypad-token follow-up: [implementation and deployment runbook](../docs/ENERGY_KEYPAD_TOKENS.md).
+New enrollment requires exactly 11 ASCII digits, preserving leading zeros. Funded
+purchase/loan details/history retrieve owner-only 15-digit tokens. Loading remains
+unconfirmed until a device application acknowledgement; the implemented transport
+is an isolated software bench, never the hosted household meter. Welcome and
+authentication screens, API URL and signing identity are unchanged.
+
 See [CONSUMER_EXPANSION.md](CONSUMER_EXPANSION.md) for current phone validation,
 pending meter onboarding, honest score factors, receipt recovery, foreground
 monitoring, final test evidence and the latest APK checksum. This supersedes

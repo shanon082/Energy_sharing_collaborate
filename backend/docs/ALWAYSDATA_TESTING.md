@@ -1,5 +1,10 @@
 # alwaysdata Free testing deployment
 
+For new-source 15-digit keypad tokens, see
+[the hosted/isolated-bench rollout](../../docs/ENERGY_KEYPAD_TOKENS.md).
+This requires additive meter migration0031, cryptography and private token keys.
+Alwaysdata remains consumer-only: no bench/physical device enablement.
+
 This is an opt-in backend profile, not a live financial deployment. Render's
 profile, Next.js server features, accounting policies, and the existing APK
 build are retained. No deployment or hosted migration was performed locally.

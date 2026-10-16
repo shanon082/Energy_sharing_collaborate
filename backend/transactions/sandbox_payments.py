@@ -207,6 +207,7 @@ def receipt(intent):
         "loan_id": str(intent.sandbox_loan_id) if intent.sandbox_loan_id else None,
         "billed": str(ledger.billed) if ledger else None, "residual": str(ledger.residual) if ledger else None,
         "applied": str(ledger.applied) if ledger else None, "excess": str(ledger.excess) if ledger else None,
+        "allocation_id": allocation.pk if allocation else None,
         "allocated_kwh": str(allocation.amount_kwh) if allocation else None, "meter_application_confirmed": False,
         "initiated_at": intent.initiated_at.isoformat(), "settled_at": intent.settled_at.isoformat() if intent.settled_at else None,
         "submission_state": intent.submission_state, "reconciliation_error": intent.reconciliation_error,

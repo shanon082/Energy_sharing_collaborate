@@ -130,10 +130,12 @@ class SimulatorAcknowledgementView(APIView):
             return Response({"code": "SIMULATION_DISABLED"}, status=404)
         if device is None:
             return Response({"code": "DEVICE_UNAUTHORIZED"}, status=401)
-        if request.data.get("contract_version") != 1:
+        if type(request.data.get("contract_version")) is not int or request.data.get("contract_version") != 1:
             return Response({"code": "CONTRACT_VERSION_UNSUPPORTED"}, status=400)
         try:
-            delivery_id = int(request.data.get("delivery_id"))
+            delivery_id = request.data.get("delivery_id")
+            if type(delivery_id) is not int or not 0 < delivery_id <= 2**63 - 1:
+                raise ValueError
             command_id = uuid.UUID(str(request.data.get("command_id")))
             delivery, changed = acknowledge_application(
                 device_id=device.device_id, command_id=command_id,
@@ -155,13 +157,13 @@ class SimulatorTelemetryView(APIView):
             return Response({"code": "SIMULATION_DISABLED"}, status=404)
         if device is None:
             return Response({"code": "DEVICE_UNAUTHORIZED"}, status=401)
-        if request.data.get("contract_version") != 1:
+        if type(request.data.get("contract_version")) is not int or request.data.get("contract_version") != 1:
             return Response({"code": "CONTRACT_VERSION_UNSUPPORTED"}, status=400)
         try:
             event_id = uuid.UUID(str(request.data.get("event_id")))
             boot_id = uuid.UUID(str(request.data.get("boot_id")))
-            sequence = int(request.data.get("sequence"))
-            cumulative_wh = int(request.data.get("cumulative_wh"))
+            sequence = request.data.get("sequence")
+            cumulative_wh = request.data.get("cumulative_wh")
             measured_at = parse_datetime(str(request.data.get("measured_at")))
             if measured_at is None or measured_at.tzinfo is None:
                 raise ValueError

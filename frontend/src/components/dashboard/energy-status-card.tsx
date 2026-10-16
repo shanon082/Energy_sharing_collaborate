@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { MeterEnergyTokens } from "./meter-energy-tokens";
 import { get } from "@/lib/fetch-client";
 import { applyWalletUnits } from "@/app/(dashboard)/dashboard/share/actions";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,7 @@ export default function EnergyStatusCard({ meterNo }: { meterNo: string }) {
     <Card>
       <CardHeader><CardTitle className="text-base">Electricity allocation · {meterNo}</CardTitle></CardHeader>
       <CardContent className="space-y-4">
+        <MeterEnergyTokens meterNo={meterNo} />
         <div className="grid gap-3 sm:grid-cols-3">
           {rows.map(([label, value]) => (
             <div key={label} className="rounded-md border p-3">

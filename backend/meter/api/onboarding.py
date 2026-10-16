@@ -17,7 +17,7 @@ class EnrollmentSerializer(serializers.Serializer):
     def validate_meter_no(self, value):
         valid, result = validate_meter_no(value)
         if not valid or any(ord(char) < 32 for char in result):
-            raise serializers.ValidationError("Enter a valid meter number, at most 100 characters.")
+            raise serializers.ValidationError("Enter your 11-digit meter number.")
         return result
 
     def to_internal_value(self, data):

@@ -965,7 +965,7 @@ class MeterManagementView(APIView, RBACMixin):
         if not ok:
             return err
 
-        meter_no = request.data.get('meter_no', '').strip()
+        meter_no = request.data.get('meter_no', '')
         label = request.data.get('label', 'Home').strip()
         architecture = request.data.get('architecture', Meter.ARCH_STS).strip().upper()
         static_ip = request.data.get('static_ip', '').strip() or None
@@ -974,6 +974,12 @@ class MeterManagementView(APIView, RBACMixin):
         owner_name = (request.data.get('owner_name') or '').strip()
         owner_email = (request.data.get('owner_email') or '').strip()
         owner_phone = (request.data.get('owner_phone') or '').strip()
+
+        from meter.validators import validate_meter_no
+        valid, normalized = validate_meter_no(meter_no)
+        if not valid:
+            return Response({"error": normalized}, status=400)
+        meter_no = normalized
 
         if not meter_no:
             return Response(
@@ -1851,6 +1857,9 @@ class TokenRedeliveryView(APIView, RBACMixin):
         ok, err = self._require_cs_or_above(request)
         if not ok:
             return err
+
+        return Response({"code": "TOKEN_REDELIVERY_UNAVAILABLE",
+                         "message": "Token redelivery is unavailable until a reviewed delivery channel and authenticated device protocol exist."}, status=503)
 
         try:
             t = Transaction.objects.get(

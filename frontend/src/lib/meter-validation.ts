@@ -1,16 +1,7 @@
 import { z } from "zod";
-
-export const METER_NO_MAX_LENGTH = 100;
-
+import { METER_NUMBER_MESSAGE, normalizePrototypeMeterNumber } from "./meter-enrollment";
+export const METER_NO_MAX_LENGTH = 11;
 export function isValidMeterNumber(value: string): boolean {
-  const trimmed = (value || "").trim();
-  return trimmed.length > 0 && trimmed.length <= METER_NO_MAX_LENGTH;
+  try { normalizePrototypeMeterNumber(value); return true; } catch { return false; }
 }
-
-export function meterNumberFieldSchema() {
-  return z
-    .string()
-    .trim()
-    .min(1, "Meter number is required")
-    .max(METER_NO_MAX_LENGTH, `Meter number must be at most ${METER_NO_MAX_LENGTH} characters`);
-}
+export function meterNumberFieldSchema() { return z.string().trim().refine(isValidMeterNumber, METER_NUMBER_MESSAGE); }

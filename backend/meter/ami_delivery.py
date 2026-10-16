@@ -1,12 +1,10 @@
-"""
-AMI unit delivery and offline reconciliation.
+"""Contained legacy amount-only AMI delivery.
 
-When a meter cannot be reached (or ThingsBoard rejects telemetry), credited kWh
-are stored in ``meter.pending_units`` and retried automatically until delivery
-succeeds. On success, units move from pending to the ledger (``meter.units``).
-
-Delivery also updates the ThingsBoard ``remaining_units`` shared attribute so
-"Check Units" reflects credits even when the physical device is offline.
+All entry points reject new writes: gateway acceptance is not proof of
+meter application, and legacy retries have no durable command identity.
+Historical pending_units remain unchanged for trusted reconciliation.
+Use EnergyAllocation/MeterDelivery and a reviewed transport adapter instead.
+The old bodies below are unreachable reference code, not a supported path.
 """
 from __future__ import annotations
 
@@ -29,6 +27,9 @@ def attempt_ami_delivery(meter, units, reference_id=""):
     Push kWh to ThingsBoard and sync the remaining_units shared attribute.
     Returns (success: bool, message: str).
     """
+    from meter.device_access import reject_legacy_delivery
+    reject_legacy_delivery()
+
     units = Decimal(str(units))
     if units <= 0:
         return False, "Amount must be positive."
@@ -61,6 +62,9 @@ def credit_ami_meter(
     Try immediate AMI delivery. On failure, queue in pending_units.
     Always returns True when units are accounted for (delivered or queued).
     """
+    from meter.device_access import reject_legacy_delivery
+    reject_legacy_delivery()
+
     units = Decimal(str(units))
     ok, msg = attempt_ami_delivery(meter, units, reference_id=reference_id)
     if ok:
@@ -108,6 +112,9 @@ def retry_pending_for_meter(meter):
     Attempt to deliver all pending_units for one AMI meter.
     Returns dict with delivered_kwh, remaining_pending_kwh, message.
     """
+    from meter.device_access import reject_legacy_delivery
+    reject_legacy_delivery()
+
     meter.refresh_from_db(fields=["pending_units", "units", "architecture", "meter_no"])
     if meter.architecture != meter.ARCH_AMI:
         return {
@@ -164,6 +171,9 @@ def retry_pending_for_meter(meter):
 
 def retry_all_pending_ami_deliveries():
     """Retry delivery for every AMI meter with pending_units > 0."""
+    from meter.device_access import reject_legacy_delivery
+    reject_legacy_delivery()
+
     from meter.models import Meter
 
     meters = Meter.objects.filter(

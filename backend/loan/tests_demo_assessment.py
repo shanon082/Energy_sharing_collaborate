@@ -58,7 +58,7 @@ class AutomaticAssessmentTests(Fixtures, TestCase):
             row, created = initialize_demo_assessment(self.owner, meter=self.meter)
             self.assertFalse(created); self.assertEqual(row.pk, before.pk)
             self.assertFalse(enroll_sandbox_meter(self.owner, self.meter.meter_no)[1])
-        new_meter, _ = enroll_sandbox_meter(self.owner, "00009992")
+        new_meter, _ = enroll_sandbox_meter(self.owner, "00000009992")
         row.refresh_from_db()
         self.assertEqual((row.meter_id, row.assessed_at, row.updated_at), (before.meter_id, before.assessed_at, before.updated_at))
         self.assertNotEqual(new_meter.pk, row.meter_id)
@@ -95,7 +95,7 @@ class AutomaticAssessmentTests(Fixtures, TestCase):
     def test_missing_provider_is_unavailable_not_zero_or_starter_and_retry_heals(self):
         with patch("loan.demo_assessment.account_data_provider") as factory:
             factory.return_value.fetch.side_effect = AccountDataUnavailable("Synthetic unavailable fixture")
-            meter, _ = enroll_sandbox_meter(self.other, "00009993")
+            meter, _ = enroll_sandbox_meter(self.other, "00000009993")
         result = assessment(self.other, meter_id=meter.pk)
         self.assertEqual(result["assessment_status"], "UNAVAILABLE")
         self.assertIsNone(result["score"]); self.assertIsNone(result["maximum"]); self.assertFalse(result["eligible"])
@@ -109,11 +109,11 @@ class AutomaticAssessmentTests(Fixtures, TestCase):
                       {**SimulatedAccountDataProvider().fetch("APPROVAL_V1"), "categories": {"payment_history": [], "energy_consumption": "MODERATE", "financial_capacity": "STRONG"}}):
             with patch("loan.demo_assessment.account_data_provider") as factory:
                 factory.return_value.fetch.return_value = value
-                row = complete_demo_assessment(self.other, enroll_sandbox_meter(self.other, "00009994")[0])
+                row = complete_demo_assessment(self.other, enroll_sandbox_meter(self.other, "00000009994")[0])
             self.assertEqual(row.status, "UNAVAILABLE"); self.assertIsNone(row.score)
 
     def test_stable_profiles_do_not_use_personal_identifiers(self):
-        meter, _ = enroll_sandbox_meter(self.other, "00009995")
+        meter, _ = enroll_sandbox_meter(self.other, "00000009995")
         original = DemoCreditAssessment.objects.get(owner=self.other)
         self.other.first_name = "Completely different"; self.other.phone_number = "+256700123456"
         self.other.save(update_fields=["first_name", "phone_number"])
@@ -126,7 +126,7 @@ class AutomaticAssessmentTests(Fixtures, TestCase):
         with override_settings(DEMO_ACCOUNT_PROFILE="REJECTION_V1"):
             owner = User.objects.create_user(email="rejected-test@example.invalid", password="test-only")
         owner.profile.email_verified = True; owner.profile.save(update_fields=["email_verified"])
-        meter, _ = enroll_sandbox_meter(owner, "00009996")
+        meter, _ = enroll_sandbox_meter(owner, "00000009996")
         self.assertEqual(assessment(owner, meter_id=meter.pk)["score"], 41)
         self.client.force_authenticate(owner)
         with transaction.atomic():
@@ -163,7 +163,7 @@ class AutomaticAssessmentTests(Fixtures, TestCase):
         self.assertEqual(DemoCreditAssessment.objects.get(owner=self.other).status, "PENDING")
 
     def test_preview_lists_each_owned_meter_then_initializes_separate_records(self):
-        enroll_sandbox_meter(self.owner, "00009997")
+        enroll_sandbox_meter(self.owner, "00000009997")
         DemoCreditAssessment.objects.filter(owner=self.owner).delete()
         call_command("initialize_demo_assessments", user_id=self.owner.pk, stdout=StringIO())
         self.assertEqual(assessment(self.owner, meter_id=self.meter.pk)["assessment_status"], "PENDING")
@@ -217,7 +217,7 @@ class AutomaticAssessmentConcurrencyTests(Fixtures, TransactionTestCase):
                 barrier.wait(timeout=10)
                 owner = User.objects.get(pk=self.other.pk)
                 initialize_demo_assessment(owner)
-                return enroll_sandbox_meter(owner, "00009998")[0].pk
+                return enroll_sandbox_meter(owner, "00000009998")[0].pk
             finally:
                 close_old_connections()
         with ThreadPoolExecutor(max_workers=2) as pool:

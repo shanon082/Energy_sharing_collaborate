@@ -46,7 +46,7 @@ class Fixtures:
         self.other = User.objects.create_user(email="demo-other@example.invalid", password="test-only")
         for user in (self.owner, self.other):
             user.profile.email_verified = True; user.profile.save(update_fields=["email_verified"])
-        self.meter = enroll_sandbox_meter(self.owner, "00001234")[0]
+        self.meter = enroll_sandbox_meter(self.owner, "00000001234")[0]
         self.client = APIClient(); self.client.force_authenticate(self.owner)
         self.headers = {"HTTP_HOST": settings.ALLOWED_HOSTS[0], "HTTP_X_FORWARDED_PROTO": "https"}
 

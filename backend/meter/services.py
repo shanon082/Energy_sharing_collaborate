@@ -30,37 +30,9 @@ def _thingsboard_request_kwargs():
 
 
 def _thingsboard_connection_error_message(exc, *, action="reach ThingsBoard") -> str:
-    host = _thingsboard_base_url() or "(not configured)"
-    public = _thingsboard_public_base_url()
-    detail = str(exc).strip()
-    name = exc.__class__.__name__
-    parts = [f"ThingsBoard request failed: could not {action} at {host} ({name}"]
-    if detail and detail != name:
-        parts.append(f": {detail}")
-    parts.append(").")
-    msg = "".join(parts)
-
-    hints = []
-    if name in ("ConnectionError", "ConnectTimeout", "ReadTimeout", "ConnectionRefusedError"):
-        hints.append(
-            "Confirm ThingsBoard is running and the backend server can reach it "
-            "(firewall, DNS, nginx)."
-        )
-        if public and host != public:
-            hints.append(f"Public URL is {public}; backend is using internal URL {host}.")
-        elif public:
-            hints.append(
-                "If ThingsBoard is on this same machine, set THINGSBOARD_INTERNAL_BASE_URL "
-                "in backend .env (e.g. http://127.0.0.1:8080)."
-            )
-    elif name == "SSLError":
-        hints.append(
-            "TLS verification failed. Use a valid certificate or set THINGSBOARD_VERIFY_SSL=false "
-            "for pilot/self-signed setups."
-        )
-    if hints:
-        msg += " " + " ".join(hints)
-    return msg
+    # Requests exceptions can contain URLs embedding a per-device access token.
+    # Never return exception text (or a credential-bearing URL) to the caller.
+    return f"ThingsBoard request failed ({type(exc).__name__}); check connectivity and trusted TLS configuration."
 
 
 def _meter_device_token(meter):
@@ -72,6 +44,9 @@ def push_units_to_thingsboard(meter, units, reference_id=""):
     Push unit credit telemetry to ThingsBoard for a specific meter device.
     Returns (ok: bool, message: str).
     """
+    from meter.device_access import require_device_transport
+    require_device_transport(meter, stub_only=True)
+
     token = _meter_device_token(meter)
     if not token:
         return False, "Meter has no ThingsBoard device token configured."
@@ -104,14 +79,13 @@ def push_units_to_thingsboard(meter, units, reference_id=""):
         if 200 <= response.status_code < 300:
             return True, "ThingsBoard push successful."
         logger.warning(
-            "ThingsBoard push failed for meter=%s status=%s body=%s",
+            "ThingsBoard push failed for meter=%s status=%s",
             meter.meter_no,
             response.status_code,
-            response.text[:300],
         )
         return False, f"ThingsBoard rejected telemetry (HTTP {response.status_code})."
     except requests.RequestException as exc:
-        logger.exception("ThingsBoard request failed for meter=%s", meter.meter_no)
+        logger.warning("ThingsBoard request failed: meter_id=%s error=%s", meter.pk, type(exc).__name__)
         return False, _thingsboard_connection_error_message(exc, action="push telemetry to")
 
 
@@ -180,6 +154,9 @@ def query_latest_units_from_thingsboard(meter):
     attribute, with telemetry fallback).
     Returns (ok: bool, message: str, data: dict | None).
     """
+    from meter.device_access import require_device_transport
+    require_device_transport(meter)
+
     token = _meter_device_token(meter)
     if not token:
         return False, "Meter has no ThingsBoard device token configured.", None
@@ -209,11 +186,10 @@ def query_latest_units_from_thingsboard(meter):
                 break
             if response is not None and not (200 <= response.status_code < 300):
                 logger.warning(
-                    "ThingsBoard attribute read failed for meter=%s scope=%s status=%s body=%s",
+                    "ThingsBoard attribute read failed for meter=%s scope=%s status=%s",
                     meter.meter_no,
                     scope_key,
                     response.status_code,
-                    response.text[:300],
                 )
 
         if remaining is None:
@@ -224,10 +200,9 @@ def query_latest_units_from_thingsboard(meter):
                 200 <= telemetry_response.status_code < 300
             ):
                 logger.warning(
-                    "ThingsBoard telemetry read failed for meter=%s status=%s body=%s",
+                    "ThingsBoard telemetry read failed for meter=%s status=%s",
                     meter.meter_no,
                     telemetry_response.status_code,
-                    telemetry_response.text[:300],
                 )
 
         if remaining is None:
@@ -239,7 +214,7 @@ def query_latest_units_from_thingsboard(meter):
             "source": "thingsboard",
         }
     except requests.RequestException as exc:
-        logger.exception("ThingsBoard attribute read failed for meter=%s", meter.meter_no)
+        logger.warning("ThingsBoard attribute read failed: meter_id=%s error=%s", meter.pk, type(exc).__name__)
         return False, _thingsboard_connection_error_message(exc, action="read attributes from"), None
 
 
@@ -321,6 +296,9 @@ def set_shared_remaining_units(meter, value):
     Write remaining_units on the device shared scope (tenant REST API).
     Returns (ok: bool, message: str).
     """
+    from meter.device_access import require_device_transport
+    require_device_transport(meter, stub_only=True)
+
     token = _meter_device_token(meter)
     if token.startswith("dev-"):
         return True, "Dev stub — attribute sync skipped."
@@ -359,6 +337,9 @@ def increment_shared_remaining_units(meter, delta):
     Add delta kWh to the ThingsBoard remaining_units shared attribute.
     Reads current value first (0 if missing).
     """
+    from meter.device_access import require_device_transport
+    require_device_transport(meter, stub_only=True)
+
     delta = Decimal(str(delta))
     if delta <= 0:
         return False, "Delta must be positive."
@@ -378,6 +359,9 @@ def query_usage_timeseries_from_thingsboard(meter, start_date, end_date):
     Read daily kWh usage from ThingsBoard telemetry timeseries.
     Returns (ok, message, rows) where rows = [{date, kwh_used}, ...].
     """
+    from meter.device_access import require_device_transport
+    require_device_transport(meter)
+
     token = _meter_device_token(meter)
     if token.startswith("dev-"):
         return False, "Dev token — use stub data.", None

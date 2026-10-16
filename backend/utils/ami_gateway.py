@@ -1,18 +1,9 @@
-"""
-AMI (Advanced Metering Infrastructure) gateway abstraction.
+"""Legacy AMI gateway abstraction; not an application-acknowledged protocol.
 
-STS meters need no gateway — units are delivered via a 20-digit token.
-AMI meters are networked and receive balance updates directly from this server.
-
-The active gateway is selected by the AMI_GATEWAY setting:
-    AMI_GATEWAY=utils.ami_gateway.MockAMIGateway        (default — pilot simulation)
-    AMI_GATEWAY=utils.ami_gateway.ThingsBoardAMIGateway (real meters)
-
-The mock is isolated in this module. To switch to real ThingsBoard meters:
-  1. Set AMI_GATEWAY=utils.ami_gateway.ThingsBoardAMIGateway in .env
-  2. Add THINGSBOARD_HOST, THINGSBOARD_ACCESS_TOKEN to .env
-  3. Implement ThingsBoardAMIGateway.apply_units() and .get_status()
-  4. Delete the MockAMIGateway class (or keep for testing)
+Mock status is synthetic. Amount-only credit and shared-attribute writes
+are contained. Changing AMI_GATEWAY cannot enable physical delivery.
+Use source-bound EnergyAllocation/MeterDelivery; physical credential
+provisioning, transport and application receipts still require review.
 """
 from __future__ import annotations
 
@@ -164,6 +155,9 @@ def apply_units_to_meter(
     For AMI meters: delivers via ThingsBoard immediately, or queues in
     pending_units when offline (auto-retried). Returns True when credited or queued.
     """
+    from meter.device_access import reject_legacy_delivery
+    reject_legacy_delivery()
+
     from django.db import transaction as db_transaction
 
     if meter.architecture == 'STS':

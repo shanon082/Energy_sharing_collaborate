@@ -56,7 +56,7 @@ export default function AddMeterDialog({ open, onOpenChange, onSuccess }: AddMet
     setError("");
 
     if (!isValidMeterNumber(form.meter_no)) {
-      setError("Enter a meter number.");
+      setError("Enter your 11-digit meter number.");
       return;
     }
     if (form.architecture === "AMI" && !form.iot_device_token.trim()) {

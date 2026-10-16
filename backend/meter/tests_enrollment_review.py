@@ -29,7 +29,7 @@ class ReviewFixtures:
             user.profile.save(update_fields=["email_verified"])
         # Clean pre-provisioned inventory; deliberately no legacy post_save
         # balance mirroring. No device credentials or hardware operations.
-        self.meter = Meter.all_objects.bulk_create([Meter(meter_no="REVIEW-INVENTORY")])[0]
+        self.meter = Meter.all_objects.bulk_create([Meter(meter_no="00000000201")])[0]
         self.row = MeterEnrollmentRequest.objects.create(owner=self.owner, meter_no=self.meter.meter_no)
 
     def data(self, **overrides):

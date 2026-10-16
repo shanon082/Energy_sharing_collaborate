@@ -38,7 +38,10 @@ from meter.api.delivery_views import (
 
 from meter.api.onboarding import MobileOnboardingView, MeterEnrollmentView, SandboxMeterEnrollmentView
 
+from meter.api.keypad_views import EnergyTokensView
+
 urlpatterns = [
+    path("energy-tokens/", EnergyTokensView.as_view(), name="energy-keypad-tokens"),
     path("sandbox-meter-enrollment/", SandboxMeterEnrollmentView.as_view(), name="sandbox-meter-enrollment"),
     path("mobile-onboarding/", MobileOnboardingView.as_view(), name="mobile-onboarding"),
     path("mobile-meter-requests/", MeterEnrollmentView.as_view(), name="mobile-meter-requests"),

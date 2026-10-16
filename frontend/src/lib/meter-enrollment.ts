@@ -1,12 +1,9 @@
 /** Prototype declarations are strings, not utility ownership or device evidence. */
 export const PROTOTYPE_OWNERSHIP_NOTICE = "Meter linked for prototype testing. Ownership and live readings are not verified with the electricity provider.";
+export const METER_NUMBER_MESSAGE = "Enter your 11-digit meter number.";
 export function normalizePrototypeMeterNumber(value: unknown): string {
-  if (typeof value !== "string") throw new Error("Enter the meter number as text.");
-  const number = value.trim();
-  if (!number || number.length > 100 || /[\u0000-\u001f\u007f-\u009f]/u.test(number)) {
-    throw new Error("Enter a meter number, at most 100 characters, without control characters.");
-  }
-  return number;
+  if (typeof value !== "string" || !/^[0-9]{11}$/.test(value.trim())) throw new Error(METER_NUMBER_MESSAGE);
+  return value.trim();
 }
 export type LinkedPrototypeMeter = {
   id: number; meter_number: string; label: string; architecture: string; status: string;

@@ -498,3 +498,6 @@ p { line-height: 1.6; }
 
 /* Shared finance presentation inside the authenticated mobile redesign. */
 .consumer-redesign .finance-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0 16px; }
+
+.energy-token-card { margin: 12px 0; padding: 12px; border: 1px solid #d9e4dc; border-radius: 14px; overflow-wrap: anywhere; }
+.energy-token-card .energy-token-value { width: 100%; box-sizing: border-box; font-family: monospace; font-size: clamp(1.05rem, 5vw, 1.55rem); letter-spacing: .08em; }

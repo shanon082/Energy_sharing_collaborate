@@ -31,7 +31,7 @@ export type TestLoan = { currency: TestCurrency; environment: TestEnvironment; i
 export type TestPayment = { pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
   demo_eligible_at?: string | null; server_time?: string; observed_at?: number; reference: string; client_request_id: string; purpose: string; status: "PENDING" | "SETTLED" | "FAILED";
   amount: string; meter_id: number; loan_id: string | null; billed: string | null; residual: string | null; applied: string | null; excess: string | null;
-  allocated_kwh: string | null; initiated_at: string; settled_at: string | null; submission_state: string; reconciliation_error: string; next_check_at: string };
+  allocation_id?: number | null; allocated_kwh: string | null; initiated_at: string; settled_at: string | null; submission_state: string; reconciliation_error: string; next_check_at: string };
 const obj = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Unreadable sandbox response.");
   return value as Record<string, unknown>;

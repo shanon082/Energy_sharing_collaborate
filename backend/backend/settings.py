@@ -388,3 +388,9 @@ SIMPLE_JWT = {
 
 # Extended refresh when user checks "Remember me" on login (days)
 REMEMBER_ME_REFRESH_DAYS = 30
+
+# Opt-in new-allocation token issuance; never backfill existing energy records.
+from backend.energy_token_config import token_configuration
+ENERGY_TOKEN_ISSUANCE_ENABLED, ENERGY_TOKEN_ENCRYPTION_KEYS, ENERGY_TOKEN_LOOKUP_KEY = token_configuration(os.environ)
+BENCH_DEVICE_ENABLED = False
+DEVICE_BENCH_ISOLATED = False

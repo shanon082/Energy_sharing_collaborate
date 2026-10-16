@@ -48,6 +48,11 @@ def mobile_meter_record(meter):
 
 
 def application_confirmed(delivery):
+    if delivery.transport == "KEYPAD_BENCH":
+        receipt = getattr(delivery, "bench_receipt", None)
+        return bool(delivery.status == MeterDelivery.APPLIED and delivery.applied_at and receipt
+                    and receipt.device_id == delivery.bench_device_id
+                    and receipt.payload_digest == delivery.command_payload.get("payload_digest"))
     command = getattr(delivery, "simulated_command", None)
     return bool(delivery.status == MeterDelivery.APPLIED and delivery.applied_at is not None
         and command is not None and command.command_id == delivery.command_id
@@ -146,7 +151,7 @@ class MobileDeliveryHistoryView(APIView):
             "allocation_id": row.allocation_id,
             "source": "PURCHASE" if row.allocation.purchase_intent_id else "SANDBOX_LOAN" if row.allocation.sandbox_loan_id else "APPROVED_LOAN",
             "application_confirmed": application_confirmed(row),
-            "environment": "SIMULATOR" if hasattr(row, "simulated_command") else "UNCONFIRMED",
+            "environment": "SOFTWARE_BENCH" if row.transport == "KEYPAD_BENCH" else "SIMULATOR" if hasattr(row, "simulated_command") else "UNCONFIRMED",
             "created_at": row.created_at.isoformat(),
             "applied_at": row.applied_at.isoformat() if row.applied_at else None,
         } for row in rows]})

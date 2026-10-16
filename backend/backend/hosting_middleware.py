@@ -40,6 +40,7 @@ class FreeTestingMiddleware:
         unavailable_reads = (
             "/api/v1/meter/ami-status/", "/api/v1/meter/thingsboard-health/",
             "/api/v1/meter/check-units/", "/api/v1/meter/check-payment-status/",
+            "/api/v1/meter/power-usage/",
             "/api/v1/loans/payment-status/", "/api/v1/transactions/statement/email/",
         )
         auth = path.startswith("/api/v1/auth/")

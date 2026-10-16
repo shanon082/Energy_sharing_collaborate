@@ -29,7 +29,7 @@ class MeterCreditTariffTests(Fixtures, TestCase):
     def setUp(self):
         super().setUp()
         vat = patch("utils.billing.VAT_RATE", Decimal("0.18")); vat.start(); self.addCleanup(vat.stop)
-        self.second = enroll_sandbox_meter(self.owner, "00005678")[0]
+        self.second = enroll_sandbox_meter(self.owner, "00000005678")[0]
         self.tariff = ElectricityTariff.objects.get(tariff_code="DEMO-FIXTURE")
         self.tariff.service_charge = Decimal("3360"); self.tariff.save(update_fields=["service_charge"])
         self.tariff.blocks.all().delete()
@@ -72,7 +72,7 @@ class MeterCreditTariffTests(Fixtures, TestCase):
         self.assertEqual(row.inputs["meter_evidence"]["ownership_source"], "SANDBOX_REVIEW")
 
     def test_owned_meter_is_required_on_all_assessment_routes(self):
-        foreign = enroll_sandbox_meter(self.other, "00003456")[0]
+        foreign = enroll_sandbox_meter(self.other, "00000003456")[0]
         for route in ("sandbox/assessment/", "loans/mobile-eligibility/", "loans/credit-score/"):
             with transaction.atomic():
                 result = self.client.get(f"/api/v1/{route}?meter_id={foreign.pk}", **self.headers)

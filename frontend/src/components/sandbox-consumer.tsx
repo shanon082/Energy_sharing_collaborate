@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, testPhone,
   type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote, type PricingStatus } from "../lib/sandbox";
 
+import { EnergyTokenCard } from "./energy-token-card";
 import { TariffDetails } from "./tariff-details";
 import { assessmentContextKey, loanProgressionReason } from "../lib/meter-credit";
 import SandboxMobileView, { type ConsumerFinanceView, type FinanceDestination } from "./sandbox-mobile-view";
@@ -256,7 +257,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
   const stale = !!error || offline;
   if (view !== "all") return <SandboxMobileView
-    view={view} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
+    client={client} owner={owner} view={view} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
     capabilities={capabilities} assessment={meterAssessment} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
     meters={meters} selectedMeter={selectedMeter} purpose={purpose} amount={amount}
     setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
@@ -318,6 +319,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       <strong>{loan.status} · {testMoney(loan.outstanding, loan.currency)} outstanding</strong><p>{loan.reason}</p>
       <p>Reference {loan.id} · meter ID {loan.meter_id} · accepted policy {loan.terms.policy.id}</p>
       <p>Principal {testMoney(loan.principal, loan.currency)} · frozen total {testMoney(loan.total_due, loan.currency)} · due {when(loan.due_at)} · closed {when(loan.closed_at)}.</p>
+      {loan.allocation_id && <EnergyTokenCard client={client} owner={owner} allocationId={loan.allocation_id} />}
       <p>Test allocation {loan.allocated_kwh === null ? "None" : `${loan.allocated_kwh} kWh`} · confirmed physical application unavailable.</p>
       {payments.filter(payment => payment.loan_id === loan.id).map(payment => <p key={payment.reference}>Repayment {payment.status}: received {testMoney(payment.amount, payment.currency)}, applied {testMoney(payment.applied, payment.currency)}, excess {testMoney(payment.excess, payment.currency)}.</p>)}
     </article>)}</section>
@@ -333,6 +335,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     <section><h3>Sandbox receipts & pending recovery</h3>{!fetched ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
       <strong>{row.purpose} · {row.status} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
       <p>Environment: {row.environment}. Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} {row.environment === "UGX_DEMO" ? "No external provider or phone prompt." : `Next provider check ${when(row.next_check_at)}.`}</p>
+      {row.status === "SETTLED" && row.purpose === "PURCHASE" && <EnergyTokenCard client={client} owner={owner} allocationId={row.allocation_id} />}
       {row.status === "SETTLED" && <p>{row.environment === "UGX_DEMO" ? DEMO_SUCCESS : "Provider verified."} {when(row.settled_at)}. Billed {testMoney(row.billed, row.currency)}; remainder {testMoney(row.residual, row.currency)}; debt applied {testMoney(row.applied, row.currency)}; excess {testMoney(row.excess, row.currency)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
       {row.status === "PENDING" && row.environment === "UGX_DEMO" && <p role="status">{DEMO_PENDING} Processing: {demoCountdown(row, clock) ?? "Unavailable"} seconds. {demoCountdown(row, clock) === 0 && "Awaiting server confirmation — not yet successful."}</p>}
       {row.status === "PENDING" && row.environment !== environment && <p>MTN reconciliation is paused in demo mode. This obligation is retained, not cancelled or converted.</p>}

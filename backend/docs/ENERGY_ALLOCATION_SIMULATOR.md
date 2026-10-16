@@ -1,5 +1,12 @@
 # New electricity entitlement and simulated delivery
 
+Current hardware handoff: [Hardware integration readiness](../../docs/HARDWARE_INTEGRATION_READINESS.md)
+(2026-10-16). It supersedes the legacy physical-helper, webhook and financial
+readiness descriptions below: amount-only physical writes and unversioned
+ThingsBoard callbacks are now contained; the hosted LOCAL_DEMO profile remains
+cloud-only. No firmware transport has been enabled. See the newer accounting
+and tariff documents for calculations corrected since this original phase.
+
 This is a development-only meter simulator and a proposed device contract v1,
 pending meter/firmware review. It does not command an ESP32, ThingsBoard, LoRa
 gateway, or physical relay. `DEBUG=true` and `SIMULATED_METER_ENABLED=true` are

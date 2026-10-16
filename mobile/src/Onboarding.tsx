@@ -29,7 +29,7 @@ export function MeterOnboarding({ session, hasMeter, onRefresh, onLinked }: {
     if (selfEnrollment === null || busy) return;
     let normalized: string;
     try { normalized = normalizePrototypeMeterNumber(number); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Enter a meter number."); return; }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Enter your 11-digit meter number."); return; }
     const owner = session.identity;
     setBusy(true);
     try {
@@ -42,10 +42,10 @@ export function MeterOnboarding({ session, hasMeter, onRefresh, onLinked }: {
     } finally { if (owner === session.identity) setBusy(false); }
   };
   return <section className="panel form-panel"><h2>{hasMeter ? "Add another meter" : "Add your meter"}</h2>
-    <p className="muted">{selfEnrollment ? "Enter the number printed on your meter." : "Enter your meter number to request verification."}</p>
+    <p className="muted">Enter your 11-digit meter number.</p>
     {selfEnrollment && <details className="info-disclosure"><summary>About linking your meter</summary><p>{PROTOTYPE_OWNERSHIP_NOTICE}</p></details>}
     <form className="form-panel" onSubmit={(event) => void submit(event)}>
-      <label>Meter number <input value={number} maxLength={100} required autoComplete="off" placeholder="e.g. 02356709867"
+      <label>Meter number <input value={number} maxLength={11} inputMode="numeric" pattern="[0-9]{11}" required autoComplete="off" placeholder="e.g. XXXXXXXXXXX"
         onChange={(event) => setNumber(event.target.value)} /></label>
       <button disabled={busy || selfEnrollment === null}>{busy ? "Recording…" : selfEnrollment ? "Add your meter" : "Request meter verification"}</button>
     </form>

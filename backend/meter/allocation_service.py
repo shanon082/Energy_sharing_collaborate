@@ -44,6 +44,7 @@ def parse_requested_kwh(value):
     return amount
 
 
+@transaction.atomic
 def authorize_purchase_allocation(intent, units):
     from transactions.models import PaymentIntent
 
@@ -59,11 +60,15 @@ def authorize_purchase_allocation(intent, units):
                   "accounting_environment": "UGX_DEMO" if intent.provider == "LOCAL_DEMO" else "SANDBOX" if intent.provider == "MTN_SANDBOX" else "CORE",
                   "amount_kwh": quantize_source_kwh(units)},
     )
-    if not created:
-        raise AllocationError("Purchase allocation already exists.")
+    if not created and (allocation.owner_id != intent.owner_id or allocation.meter_id != meter.pk or allocation.amount_kwh != quantize_source_kwh(units)):
+        raise AllocationError("Existing purchase allocation differs from its source.")
+    if created:
+        from meter.energy_tokens import issue_energy_token
+        issue_energy_token(allocation)
     return allocation
 
 
+@transaction.atomic
 def authorize_loan_allocation(disbursement, units):
     loan = disbursement.loan_application
     meter = Meter.all_objects.get(pk=disbursement.meter_id)
@@ -76,11 +81,15 @@ def authorize_loan_allocation(disbursement, units):
         defaults={"owner_id": loan.user_id, "meter": meter,
                   "amount_kwh": quantize_source_kwh(units)},
     )
-    if not created:
-        raise AllocationError("Loan allocation already exists.")
+    if not created and (allocation.owner_id != loan.user_id or allocation.meter_id != meter.pk or allocation.amount_kwh != quantize_source_kwh(units)):
+        raise AllocationError("Existing loan allocation differs from its source.")
+    if created:
+        from meter.energy_tokens import issue_energy_token
+        issue_energy_token(allocation)
     return allocation
 
 
+@transaction.atomic
 def authorize_sandbox_loan_allocation(loan, units):
     from loan.sandbox_service import require_sandbox, owned_test_meter
     require_sandbox()
@@ -93,6 +102,9 @@ def authorize_sandbox_loan_allocation(loan, units):
                   "amount_kwh": parse_requested_kwh(units)})
     if not created and (row.owner_id != loan.owner_id or row.meter_id != loan.meter_id or row.amount_kwh != parse_requested_kwh(units)):
         raise AllocationError("Sandbox source allocation differs from its frozen terms.")
+    if created:
+        from meter.energy_tokens import issue_energy_token
+        issue_energy_token(row)
     return row
 
 
@@ -138,6 +150,10 @@ def reserve_for_delivery(*, owner, meter_no, amount_kwh, request_id=None):
         remaining = amount
         planned = []
         for allocation in allocations:
+            # Keypad tokens exclusively hold their allocation, even before a
+            # device requests its delivery. Never auto-dispatch the same credit.
+            if hasattr(allocation, "keypad_token"):
+                continue
             available = allocation.amount_kwh - reserved.get(allocation.pk, Decimal("0.00"))
             if available <= 0:
                 continue

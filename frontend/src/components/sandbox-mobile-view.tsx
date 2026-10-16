@@ -4,12 +4,15 @@ import { useEffect, useState, type FormEvent } from "react";
 import { demoCountdown, type Assessment, type SandboxCapabilities, type TestCurrency, type TestEnvironment,
   type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote, type PricingStatus } from "../lib/sandbox";
 
+import { EnergyTokenCard } from "./energy-token-card";
+import type { SandboxClient } from "../lib/sandbox";
 import { TariffDetails } from "./tariff-details";
 import { financeBackAction } from "../lib/finance-navigation";
 
 export type ConsumerFinanceView = "home" | "loans" | "apply" | "purchase" | "activity" | "hidden";
 export type FinanceDestination = "loans" | "apply" | "purchase" | "activity" | "meters";
 export type MobileFinanceProps = {
+  client: SandboxClient; owner: number;
   view: ConsumerFinanceView; navigate: (view: FinanceDestination) => void;
   registerBackHandler?: (handler: (() => boolean) | null) => void;
   demo: boolean; currency: TestCurrency; environment: TestEnvironment; capabilities: SandboxCapabilities;
@@ -94,6 +97,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
     <strong className="payment-amount">{money(row.amount, row.currency)}</strong><p className="muted small">{when(row.initiated_at)} · {row.currency === "UGX" ? "UGX demo" : "EUR test"}</p>
     {row.status === "PENDING" && row.environment === "UGX_DEMO" && <div className="payment-progress" role="status"><span className="loading-spinner" /><div><strong>Processing payment</strong><p>{(demoCountdown(row, p.clock) ?? 0) > 0 ? `Please wait · ${demoCountdown(row, p.clock)} seconds` : "Waiting for server confirmation"}</p><small>No real money or phone PIN is required.</small></div></div>}
     {row.status === "SETTLED" && <p className="small">{row.environment === "UGX_DEMO" ? "Demo payment successful. No real money was deducted." : "Sandbox payment verified."}</p>}
+    {row.status === "SETTLED" && row.purpose === "PURCHASE" && <EnergyTokenCard client={p.client} owner={p.owner} allocationId={row.allocation_id} />}
     {row.status === "FAILED" && <p className="muted">Payment failed. Review the receipt before trying again.</p>}
     {row.status === "PENDING" && row.environment !== p.environment && <p className="muted small">This earlier payment belongs to a different test environment. It has not been cancelled or converted.</p>}
     <details className="info-disclosure"><summary>Receipt details</summary><p className="reference">Reference: {row.reference}</p><InfoRow title="Meter" value={p.meters.find(meter => meter.id === row.meter_id)?.meter_number ?? `Meter ID ${row.meter_id}`} />
@@ -110,6 +114,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
     <span className="muted small">Outstanding balance</span><strong className="loan-balance">{money(loan.outstanding, loan.currency)}</strong>
     <InfoRow title="Principal" value={money(loan.principal, loan.currency)} /><InfoRow title="Total repayment" value={money(loan.total_due, loan.currency)} /><InfoRow title="Due" value={when(loan.due_at)} />
     <p className="muted small">{loan.reason}</p>
+    {loan.allocation_id && <EnergyTokenCard client={p.client} owner={p.owner} allocationId={loan.allocation_id} />}
     {!historical && loan.status === "DISBURSED" && <button type="button" className="primary-button" disabled={!p.capabilities.repayments} onClick={() => chooseRepayment(loan)}>Pay Loan →</button>}
     <details className="info-disclosure"><summary>Loan details & repayments</summary><p className="reference">Reference: {loan.id}</p><InfoRow title="Accepted policy" value={loan.terms.policy.id} /><TariffDetails pricing={loan.terms.pricing} currency={loan.currency} /><InfoRow title="Cloud allocation" value={loan.allocated_kwh == null ? "None" : `${loan.allocated_kwh} kWh`} /><InfoRow title="Closed" value={when(loan.closed_at)} />
       {p.payments.filter(row => row.loan_id === loan.id).map(row => <div className="list-row" key={row.reference}><span>{label(row.status)}<small>Applied {money(row.applied, row.currency)} · excess {money(row.excess, row.currency)}</small></span><strong>{money(row.amount, row.currency)}</strong></div>)}
