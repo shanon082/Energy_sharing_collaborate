@@ -68,6 +68,8 @@ Preserve the fresh secret, SMTP credentials, trusted hostname/origin, database
 credentials, `DB_SSLMODE=require` and existing settings. Ensure:
 
 ```dotenv
+PRODUCTION_ORIGIN=https://energy-sharing-collaborate.vercel.app
+# Leave FRONTEND_URL unset; account verification/reset links remain Django-hosted.
 PURCHASE_HISTORY_SCORING_ENABLED=false
 MOBILE_METER_STALE_SECONDS=120
 MOBILE_PAYMENT_ACTIONS_ENABLED=false
@@ -82,6 +84,15 @@ FEATURE_WALLET_DEPOSITS_ENABLED=false
 FEATURE_WALLET_WITHDRAWALS_ENABLED=false
 FEATURE_EXTERNAL_CRB_ENABLED=false
 ```
+
+`PRODUCTION_ORIGIN` is the exact Next.js site origin used by Django's
+`CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS`; the two Android origins
+(`http://localhost` and `https://localhost`) remain configured. Do not add
+wildcards or weaken secure cookies. Website login and refresh are server-to-server
+through Next.js, while browser API calls use the same-origin Next.js proxy, so
+they do not depend on cross-site cookies. The account outbox creates verification
+and reset links from `ACCOUNT_PAGES_ORIGIN`; setting `FRONTEND_URL` is unnecessary
+and risks redirecting legacy email-task links away from the hosted Django pages.
 
 No purchase-score cap/basis/policy ID is approved. Do not enter proposed values.
 Keep the existing scheduled `drain_account_emails --send --limit 5` job unchanged;

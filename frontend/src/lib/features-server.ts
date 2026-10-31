@@ -1,6 +1,6 @@
 import "server-only";
 import { NO_SANDBOX, sandboxCapabilities } from "./sandbox";
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import {
   DISABLED_FEATURES, Feature, featureDisabledPayload, featureForApiPath,
   parseFeatureAvailability,
@@ -8,7 +8,7 @@ import {
 
 export async function getSandboxAvailability() {
   try {
-    const response = await fetch(`${API_URL}/features/`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    const response = await fetch(apiEndpoint("features/"), { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (response.ok) return sandboxCapabilities((await response.json()).sandbox);
   } catch { /* Fail closed while the backend is unavailable. */ }
   return { ...NO_SANDBOX };
@@ -16,7 +16,7 @@ export async function getSandboxAvailability() {
 
 export async function getFeatureAvailability() {
   try {
-    const response = await fetch(`${API_URL}/features/`, {
+    const response = await fetch(apiEndpoint("features/"), {
       cache: "no-store",
       signal: AbortSignal.timeout(5000),
     });

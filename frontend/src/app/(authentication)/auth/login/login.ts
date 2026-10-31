@@ -1,6 +1,6 @@
 "use server";
 
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { getErrorMessage } from "@/lib/errors";
 import { LoginSchema } from "@/lib/schema";
 import { setAuthSessionCookies } from "@/lib/session-cookies";
@@ -12,7 +12,7 @@ export const login = async (
   rememberMe = false
 ) => {
   try {
-    const res = await fetch(`${API_URL}/auth/login/`, {
+    const res = await fetch(apiEndpoint("auth/login/"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -78,7 +78,7 @@ export const login = async (
     return {
       error: "SERVER_ERROR",
       message: refused
-        ? "Cannot reach the API server. Start the Django backend on port 8000 (see backend/) or set NEXT_PUBLIC_API_URL in frontend/.env.local."
+        ? "Cannot reach the API server. Check the server-side API_URL setting and backend availability."
         : "Server error occurred",
     };
   }

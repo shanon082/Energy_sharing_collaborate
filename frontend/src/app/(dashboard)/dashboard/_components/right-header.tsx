@@ -29,6 +29,7 @@ import { Zap, Settings, LogOut, Menu } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "@/hooks/use-account";
 import { useFeatures } from "@/contexts/features-context";
+import { clearPrivateBrowserState } from "@/lib/session-storage";
 
 interface RightHeaderProps {
   onProfileClick?: () => void;
@@ -173,6 +174,7 @@ export default function RightHeader({ onProfileClick, onMeterClick }: RightHeade
             <DropdownMenuItem asChild>
               <span
                 onClick={async () => {
+                  clearPrivateBrowserState();
                   await logout();
                 }}
                 className="w-full text-left cursor-pointer"

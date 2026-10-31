@@ -1,6 +1,6 @@
 "use server";
 
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { cookies } from "next/headers";
 import { AUTHENTICATION_COOKIE } from "@/common/constants/auth-cookie";
 import { refreshAuthSession, ensureValidSession } from "@/lib/refresh-session";
@@ -81,14 +81,14 @@ const request = async <T>(
   const disabled = await disabledApiFeature(path);
   if (disabled) return { error: disabled, status: 403 };
   try {
-    let res = await fetch(`${API_URL}/${path}`, options);
+    let res = await fetch(apiEndpoint(path), options);
     let parsedBody = await parseResponseBody(res);
 
     if (res.status === 401 && allowRefresh) {
       const refreshed = await refreshAuthSession();
       if (refreshed) {
         const headers = await getHeaders();
-        res = await fetch(`${API_URL}/${path}`, {
+        res = await fetch(apiEndpoint(path), {
           ...options,
           headers: {
             ...(options.headers as Record<string, string>),

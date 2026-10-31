@@ -24,6 +24,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). The API must be running at `http://localhost:8000` (see `backend/`).
 
+### API configuration and deployment
+
+The server reads `API_URL` as the Django API base (for example,
+`https://shanonsimon.alwaysdata.net/api/v1`). It is server-only; browser requests
+go through the same-origin `/api/proxy/` route. Local development defaults to
+`http://localhost:8000/api/v1`, while production defaults to the hosted HTTPS
+API. Configure `API_URL` in Vercel's **Production** environment and redeploy.
+Do not set `NEXT_PUBLIC_API_URL`; it is no longer read and API origins do not
+need to be exposed as browser configuration.
+
 ### Dashboard features (ThingsBoard / AMI)
 
 - **Notification bell** — header on dashboard pages; polls `GET /meter/notifications/` for low-units alerts

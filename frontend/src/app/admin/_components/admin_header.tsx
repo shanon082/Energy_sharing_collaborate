@@ -19,6 +19,7 @@ import { ModeToggle } from "@/components/theme-toggle";
 import logout from "@/app/(dashboard)/dashboard/logout";
 import AdminNavLinks from "./admin-nav-links";
 import { Badge } from "@/components/ui/badge";
+import { clearPrivateBrowserState } from "@/lib/session-storage";
 
 interface AdminRightHeaderProps {
   userRole?: string | null;
@@ -93,6 +94,7 @@ export default function AdminRightHeader({ userRole, isSuperuser }: AdminRightHe
             <DropdownMenuItem asChild>
               <span
                 onClick={async () => {
+                  clearPrivateBrowserState();
                   await logout();
                 }}
                 className="cursor-pointer"

@@ -44,7 +44,7 @@ def get_env_variable(var_name, default=None, cast=str):
 REDIS_HOST = get_env_variable("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = get_env_variable("REDIS_PORT", 6379, cast=int)
 REDIS_URL = get_env_variable("REDIS_URL", f"redis://{REDIS_HOST}:{REDIS_PORT}/0")
-BASE_URL = get_env_variable("BASE_URL", "http://localhost:8000/api/v1")
+BASE_URL = get_env_variable("BASE_URL", "https://shanonsimon.alwaysdata.net/api/v1")
 
 
 # Quick-start development settings - unsuitable for production
@@ -77,7 +77,7 @@ SECRET_KEY = get_env_variable("SECRET_KEY", "development-only-unsafe-key" if DEB
 # Frontend URL (used in verification/reset email links)
 # Set FRONTEND_URL=https://energy-share.sun.ac.ug in production .env
 # =============================
-FRONTEND_URL = get_env_variable("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = get_env_variable("FRONTEND_URL", "https://energy-sharing-collaborate.vercel.app/")
 
 # =============================
 # ALLOWED_HOSTS — read from env (comma-separated) or use dev defaults
@@ -90,9 +90,9 @@ AUTH_USER_MODEL = 'accounts.User'
 # =============================
 # CORS / CSRF — always allow localhost in dev; add production domain from env
 # =============================
-_prod_origin = get_env_variable("PRODUCTION_ORIGIN", "")  # e.g. https://energy-share.sun.ac.ug
+_prod_origin = get_env_variable("PRODUCTION_ORIGIN", "https://energy-sharing-collaborate.vercel.app/")  # e.g. https://energy-share.sun.ac.ug
 
-_base_origins = ['http://localhost:3000', 'http://localhost:3030']
+_base_origins = ['http://localhost:3000', 'http://localhost:3030', 'https://energy-sharing-collaborate.vercel.app/']
 if _prod_origin:
     _base_origins.append(_prod_origin)
 _mobile_origin = get_env_variable("MOBILE_APP_ORIGIN", "")

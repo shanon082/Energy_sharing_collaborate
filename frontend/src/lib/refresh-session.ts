@@ -1,7 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import {
   AUTHENTICATION_COOKIE,
   AUTHENTICATION_REFRESH_COOKIE,
@@ -17,7 +17,7 @@ export async function refreshAuthSession(): Promise<boolean> {
   }
 
   try {
-    const res = await fetch(`${API_URL}/auth/refresh/token/`, {
+    const res = await fetch(apiEndpoint("auth/refresh/token/"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh: refreshToken }),

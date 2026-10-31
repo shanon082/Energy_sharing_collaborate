@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { requireUssdAuthHeaders } from "@/lib/ussd-api-auth";
 import { disabledFeature } from "@/lib/features-server";
 
@@ -17,7 +17,7 @@ export async function GET(_request: NextRequest) {
   }
 
   try {
-    const backendResponse = await fetch(`${API_URL}/ussd/meters/`, {
+    const backendResponse = await fetch(apiEndpoint("ussd/meters/"), {
       method: "GET",
       headers: authHeaders,
       cache: "no-store",

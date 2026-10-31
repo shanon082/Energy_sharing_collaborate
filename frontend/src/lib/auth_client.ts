@@ -1,4 +1,5 @@
 "use client";
+import { clearPrivateBrowserState } from "@/lib/session-storage";
 
 /** Client-side session refresh via httpOnly refresh cookie. */
 export async function refreshAuthToken(): Promise<boolean> {
@@ -8,6 +9,7 @@ export async function refreshAuthToken(): Promise<boolean> {
       credentials: "include",
       cache: "no-store",
     });
+    if (!response.ok) clearPrivateBrowserState();
     return response.ok;
   } catch {
     return false;
@@ -35,6 +37,10 @@ export async function clientAuthFetch(url: string, options: RequestInit = {}) {
           ...(options.headers as Record<string, string>),
         },
       });
+    }
+    if (response.status === 401 && typeof window !== "undefined") {
+      clearPrivateBrowserState();
+      window.location.href = "/auth/login?session=expired";
     }
   }
 

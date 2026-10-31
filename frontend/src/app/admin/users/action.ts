@@ -1,10 +1,10 @@
 'use server';
 
 import { authFetch } from "@/lib/auth";
+import { apiEndpoint } from "@/common/constants/api";
 
 export async function getUsers() {
-  const API_BASE = 'http://localhost:8000/api/v1';
-  const res = await authFetch(`${API_BASE}/admin/users/`);
+  const res = await authFetch(apiEndpoint("admin/users/"));
 
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {

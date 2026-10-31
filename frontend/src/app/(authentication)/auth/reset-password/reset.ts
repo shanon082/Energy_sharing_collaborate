@@ -1,6 +1,6 @@
 "use server";
 
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { AUTHENTICATION_COOKIE } from "@/common/constants/auth-cookie";
 import {
   ApiResponse,
@@ -17,7 +17,7 @@ async function publicResetRequest<T>(
   body?: unknown
 ): Promise<ApiResponse<T>> {
   try {
-    const res = await fetch(`${API_URL}/${path}`, {
+    const res = await fetch(apiEndpoint(path), {
       method,
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { requireUssdAuthHeaders } from "@/lib/ussd-api-auth";
 import { disabledFeature } from "@/lib/features-server";
 
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as UssdPayload;
-    const endpoint = `${API_URL}/ussd/entry/`;
+    const endpoint = apiEndpoint("ussd/entry/");
 
     const backendResponse = await fetch(endpoint, {
       method: "POST",

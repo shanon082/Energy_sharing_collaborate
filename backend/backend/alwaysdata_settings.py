@@ -29,10 +29,13 @@ ALLOWED_HOSTS = [_host] + [hostname(item, "EXTRA_ALLOWED_HOSTS") for item in
 BASE_URL = https_url(os.environ.get("BASE_URL", f"https://{_host}/api/v1"), "BASE_URL")
 DJANGO_HOSTED_ACCOUNT_PAGES = True
 ACCOUNT_PAGES_ORIGIN = origin(f"https://{_host}", "ALWAYSDATA_HOSTNAME")
-# Optional future Next.js address; account emails always use the backend origin.
+# Hosted account-link generation remains pinned to the Django account pages.
 FRONTEND_URL = https_url(os.environ.get("FRONTEND_URL") or ACCOUNT_PAGES_ORIGIN, "FRONTEND_URL")
 _frontend = urlsplit(FRONTEND_URL)
-PRODUCTION_ORIGIN = origin(os.environ.get("PRODUCTION_ORIGIN", f"https://{_frontend.netloc}"), "PRODUCTION_ORIGIN")
+PRODUCTION_ORIGIN = origin(
+    os.environ.get("PRODUCTION_ORIGIN", "https://energy-sharing-collaborate.vercel.app"),
+    "PRODUCTION_ORIGIN",
+)
 MOBILE_APP_ORIGIN = "http://localhost"  # installed debug APK; never remove implicitly
 MOBILE_RELEASE_ORIGIN = "https://localhost"  # capacitor.config.ts default androidScheme
 CORS_ALLOW_ALL_ORIGINS = False

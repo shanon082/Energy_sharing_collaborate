@@ -19,8 +19,6 @@ import BuyUnitsSuggestion from "./buy-units-suggestion";
 import { get } from "@/lib/fetch-client";
 import Link from "next/link";
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-
 type LoanFormValues = z.infer<typeof LoanApplicationSchema>;
 
 const LoanApplicationSchema = z.object({

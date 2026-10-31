@@ -108,8 +108,6 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState('7d');
 
-  const API_BASE = 'http://localhost:8000/api/v1';
-
   const fetchStats = async () => {
     try {
       setLoading(true);

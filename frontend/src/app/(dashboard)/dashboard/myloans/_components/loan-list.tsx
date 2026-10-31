@@ -34,8 +34,6 @@ import BuyUnitsSuggestion from "../../request-loan/_components/buy-units-suggest
 import RepaymentForm from "../../request-loan/_components/repayment-form";
 import { get } from "@/lib/fetch-client";
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-
 interface LoanRepayment {
   id: number;
   amount_paid: string;

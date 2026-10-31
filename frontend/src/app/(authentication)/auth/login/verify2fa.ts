@@ -1,6 +1,6 @@
 "use server";
 
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { setAuthSessionCookies } from "@/lib/session-cookies";
 import { staffRedirectPath } from "@/lib/staff";
 
@@ -10,7 +10,7 @@ export const verify2FA = async (
   rememberMe = false
 ) => {
   try {
-    const res = await fetch(`${API_URL}/admin/2fa/login-verify/`, {
+    const res = await fetch(apiEndpoint("admin/2fa/login-verify/"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ challenge_token: challengeToken, code }),

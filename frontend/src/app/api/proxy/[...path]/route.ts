@@ -1,11 +1,13 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { API_URL } from "@/common/constants/api";
+import { apiEndpoint } from "@/common/constants/api";
 import { AUTHENTICATION_COOKIE } from "@/common/constants/auth-cookie";
 import { refreshAuthSession, ensureValidSession } from "@/lib/refresh-session";
 import { disabledApiFeature } from "@/lib/features-server";
+import { isSameOriginProxyRequest } from "@/lib/proxy-security";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
+const NO_STORE_HEADERS = { "Cache-Control": "private, no-store" };
 
 async function forwardToBackend(
   req: NextRequest,
@@ -13,7 +15,7 @@ async function forwardToBackend(
   token: string | undefined
 ) {
   const normalizedPath = targetPath.endsWith("/") ? targetPath : `${targetPath}/`;
-  const url = `${API_URL}/${normalizedPath}${req.nextUrl.search}`;
+  const url = `${apiEndpoint(normalizedPath)}${req.nextUrl.search}`;
 
   const headers: Record<string, string> = {};
   const contentType = req.headers.get("content-type");
@@ -36,9 +38,16 @@ async function forwardToBackend(
 }
 
 async function proxyToBackend(req: NextRequest, context: RouteContext) {
+  if (!isSameOriginProxyRequest(req.method, req.headers.get("origin"), req.nextUrl.origin)) {
+    return NextResponse.json(
+      { message: "Cross-origin requests are not allowed." },
+      { status: 403, headers: NO_STORE_HEADERS },
+    );
+  }
+
   const { path } = await context.params;
   const disabled = await disabledApiFeature(path.join("/"));
-  if (disabled) return NextResponse.json(disabled, { status: 403 });
+  if (disabled) return NextResponse.json(disabled, { status: 403, headers: NO_STORE_HEADERS });
   const cookieStore = await cookies();
   let token = cookieStore.get(AUTHENTICATION_COOKIE)?.value;
   await ensureValidSession();
@@ -62,12 +71,13 @@ async function proxyToBackend(req: NextRequest, context: RouteContext) {
       status: res.status,
       headers: {
         "Content-Type": res.headers.get("content-type") || "application/json",
+        ...NO_STORE_HEADERS,
       },
     });
   } catch {
     return NextResponse.json(
-      { message: "Unable to reach the API server. Is the backend running?" },
-      { status: 502 }
+      { message: "Unable to reach the configured API server." },
+      { status: 502, headers: NO_STORE_HEADERS }
     );
   }
 }

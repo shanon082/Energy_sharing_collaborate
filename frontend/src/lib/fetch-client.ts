@@ -1,9 +1,12 @@
 "use client";
 
 import { ApiResponse, toApiError } from "./api-response";
+import { normalizeApiPath } from "./api-url";
+import { clearPrivateBrowserState } from "./session-storage";
 
 /** Same-origin proxy — forwards requests with the httpOnly auth cookie server-side. */
 const CLIENT_API_BASE = "/api/proxy";
+const proxyUrl = (path: string) => `${CLIENT_API_BASE}/${normalizeApiPath(path)}`;
 
 const parseResponseBody = async (res: Response): Promise<unknown> => {
   const contentType = res.headers.get("content-type");
@@ -68,7 +71,7 @@ const request = async <T>(
   allowRefresh = true
 ): Promise<ApiResponse<T>> => {
   try {
-    let res = await fetch(`${CLIENT_API_BASE}/${path}`, options);
+    let res = await fetch(proxyUrl(path), options);
     let parsedBody = await parseResponseBody(res);
 
     if (res.status === 401 && allowRefresh) {
@@ -78,9 +81,11 @@ const request = async <T>(
         cache: "no-store",
       });
       if (refreshRes.ok) {
-        res = await fetch(`${CLIENT_API_BASE}/${path}`, options);
+        res = await fetch(proxyUrl(path), options);
         parsedBody = await parseResponseBody(res);
-      } else if (typeof window !== "undefined") {
+      }
+      if (res.status === 401 && typeof window !== "undefined") {
+        clearPrivateBrowserState();
         window.location.href = "/auth/login?session=expired";
         return buildErrorResponse({ message: "Session expired" }, 401);
       }

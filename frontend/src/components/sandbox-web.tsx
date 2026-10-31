@@ -3,16 +3,16 @@ import { useEffect, useState, type FormEvent } from "react";
 import SandboxConsumer from "./sandbox-consumer";
 import { sandboxCapabilities, type SandboxCapabilities, type SandboxClient, type TestMeter } from "../lib/sandbox";
 import { normalizePrototypeMeterNumber, parsePrototypeEnrollment, PROTOTYPE_OWNERSHIP_NOTICE } from "../lib/meter-enrollment";
+import { get, post } from "../lib/fetch-client";
+import { getApiErrorMessage } from "../lib/api-response";
 
 async function request<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`/api/proxy/${path}`, { method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" });
-  const data: unknown = await response.json();
-  if (!response.ok) {
-    const row = data && typeof data === "object" ? data as Record<string, unknown> : {};
-    throw new Error(typeof row.message === "string" ? row.message : typeof row.detail === "string" ? row.detail : `Request failed (${response.status}).`);
+  const response = body === undefined ? await get<T>(path) : await post<T>(path, body);
+  if (response.error) {
+    throw new Error(getApiErrorMessage(response.error, `Request failed (${response.status}).`));
   }
-  return data as T;
+  if (response.data === undefined) throw new Error("The API returned an empty response.");
+  return response.data;
 }
 const client: SandboxClient = { get: request, post: (path, body) => request(path, body) };
 export default function SandboxWeb() {

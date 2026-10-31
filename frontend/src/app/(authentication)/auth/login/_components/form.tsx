@@ -16,6 +16,7 @@ import CardWrapper from '@/components/common/card-wrapper';
 import Link from 'next/link';
 import { z } from 'zod';
 import { Shield, Eye, EyeOff } from 'lucide-react';
+import { clearPrivateBrowserState } from '@/lib/session-storage';
 
 export default function LoginForm() {
   const searchParams = useSearchParams();
@@ -36,6 +37,7 @@ export default function LoginForm() {
 
   useEffect(() => {
     if (searchParams.get('session') === 'expired') {
+      clearPrivateBrowserState();
       setError('Your session expired. Please sign in again.');
     }
   }, [searchParams]);
@@ -68,6 +70,7 @@ export default function LoginForm() {
     }
 
     if ('success' in result && result.success) {
+      clearPrivateBrowserState();
       const dest =
         (result.must_change_password || result.user?.must_change_password) && !result.isAdmin
           ? '/change-password'
@@ -89,6 +92,7 @@ export default function LoginForm() {
     try {
       const result = await verify2FA(challengeToken, totpCode, rememberMe);
       if (result.success) {
+        clearPrivateBrowserState();
         window.location.href = result.redirectTo || '/admin/dashboard';
       } else {
         setError(result.error || 'Invalid code. Try again.');
