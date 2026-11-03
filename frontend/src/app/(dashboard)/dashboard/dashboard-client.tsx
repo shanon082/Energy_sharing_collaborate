@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import DesktopSidebar from './_components/desktop-sidebar';
 import RightHeader from './_components/right-header';
-import LoanOverview from './_components/loan-overview';
+import DashboardLoans from './_components/dashboard-loans';
 import MeterRegistrationPopup from './_components/meter-registration-popup';
 import LatestTransactions from './_components/latest-transactions';
 import MeterUnitsPanel from './_components/meter-units-panel';
@@ -155,7 +155,7 @@ export default function DashboardClient({
             </div>
           )}
 
-          <LoanOverview />
+          <DashboardLoans key={userConfig.id} />
 
           {/* {currentStep === 'complete' && userHasMeter && <MeterUnitsPanel />} */}
 
