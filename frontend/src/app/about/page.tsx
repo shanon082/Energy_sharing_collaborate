@@ -2,19 +2,19 @@ import type { Metadata } from "next";
 import PublicPageShell from "@/components/common/public-page-shell";
 
 export const metadata: Metadata = {
-  title: "About | gPawa",
-  description: "Learn about gPawa — peer-to-peer electricity sharing and micro-loans for households and communities in Uganda.",
+  title: "About | EnergyFlex",
+  description: "Learn about EnergyFlex — micro-loans for households and communities in Uganda.",
 };
 
 export default function AboutPage() {
   return (
     <PublicPageShell
-      title="About gPawa"
-      subtitle="A digital platform that lets people buy, share, and borrow electricity units — fairly and transparently."
+      title="About EnergyFlex"
+      subtitle="A digital platform that lets people buy, and borrow electricity units — fairly and transparently."
     >
       <h2>Our mission</h2>
       <p>
-        gPawa (&ldquo;give power&rdquo;) helps households, campuses, and community mini-grids move electricity
+        EnergyFlex (&ldquo;give power&rdquo;) helps households, campuses, and community mini-grids move electricity
         units between meters without queues, opaque fees, or unnecessary middlemen. We believe access to power
         should be as straightforward as sending mobile money.
       </p>
@@ -41,7 +41,7 @@ export default function AboutPage() {
 
       <h2>Who it is for</h2>
       <p>
-        gPawa is built for everyday electricity consumers — families, students, small businesses, and institutions
+        EnergyFlex is built for everyday electricity consumers — families, students, small businesses, and institutions
         on shared or campus grids. It is especially useful where neighbors already help each other with power but
         lack a safe, recorded way to do it.
       </p>
@@ -56,14 +56,14 @@ export default function AboutPage() {
 
       <h2>Technology</h2>
       <p>
-        gPawa works with standard prepaid token meters (STS) and networked smart meters (AMI) connected through
+        EnergyFlex works with standard prepaid token meters (STS) and networked smart meters (AMI) connected through
         industry platforms such as ThingsBoard. You can use the service on the web, Android mobile app, or USSD
         on a basic phone — the same account works everywhere.
       </p>
 
       <h2>Pilot programme</h2>
       <p>
-        gPawa is developed as part of energy-access research and pilot deployments in Uganda. Features and
+        EnergyFlex is developed as part of energy-access research and pilot deployments in Uganda. Features and
         coverage may expand over time as we partner with utilities, campuses, and community operators.
       </p>
     </PublicPageShell>

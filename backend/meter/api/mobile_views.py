@@ -74,6 +74,10 @@ class MobileMeterDashboardView(APIView):
 
     def get(self, request, meter_id):
         meter = get_object_or_404(Meter, pk=meter_id, user=request.user, is_deleted=False)
+        environment = request.query_params.get("environment")
+        allowed_environments = {"CORE", "UGX_DEMO", "SANDBOX"}
+        if environment is not None and environment not in allowed_environments:
+            raise ValidationError({"environment": "Use CORE, UGX_DEMO, or SANDBOX."})
         device = SimulatedMeter.objects.filter(meter=meter).first()
         simulated = device is not None and require_simulation_available()
         last_contact = device.last_contact_at if device else None
@@ -97,7 +101,7 @@ class MobileMeterDashboardView(APIView):
             "reported_relay_state": device.reported_relay_state if device else None,
             "relay_source": "SIMULATOR" if device else "UNAVAILABLE",
             "last_measurement_at": device.last_measured_at.isoformat() if device and device.last_measured_at else None,
-            **{key: str(value) for key, value in entitlement_summary(request.user, meter).items()},
+            **{key: str(value) for key, value in entitlement_summary(request.user, meter, environment).items()},
             "last_meter_contact": device.last_contact_at.isoformat()
                 if device is not None and device.last_contact_at else None,
             "delivery_environment": "SIMULATOR" if simulated else "UNAVAILABLE",

@@ -3,19 +3,19 @@ import Link from "next/link";
 import PublicPageShell from "@/components/common/public-page-shell";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | gPawa",
-  description: "Terms and conditions for using the gPawa energy sharing platform.",
+  title: "Terms of Service | EnergyFlex",
+  description: "Terms and conditions for using the EnergyFlex energy credit platform.",
 };
 
 export default function TermsPage() {
   return (
     <PublicPageShell
       title="Terms of Service"
-      subtitle="Please read these terms before using gPawa. By creating an account or using the service, you agree to them."
+      subtitle="Please read these terms before using EnergyFlex. By creating an account or using the service, you agree to them."
     >
       <h2>1. The service</h2>
       <p>
-        gPawa provides a platform to purchase electricity units, share units between registered meters, apply for
+        EnergyFlex provides a platform to purchase electricity units, share units between registered meters, apply for
         micro-electricity loans, and view transaction history. Availability may vary by pilot site, meter type, and
         payment method.
       </p>
@@ -45,7 +45,7 @@ export default function TermsPage() {
       <h2>5. Sharing and transfers</h2>
       <p>
         When you share units, you confirm the recipient meter number and amount. Shares are generally final once
-        confirmed with your password or PIN. Only share with people you trust — gPawa records the transaction but
+        confirmed with your password or PIN. Only share with people you trust — EnergyFlex records the transaction but
         cannot reverse informal agreements between users except where required by law or our refund policy.
       </p>
 
@@ -59,7 +59,7 @@ export default function TermsPage() {
       <h2>7. Acceptable use</h2>
       <p>You agree not to:</p>
       <ul>
-        <li>Use gPawa for fraud, money laundering, or unauthorized resale of units</li>
+        <li>Use EnergyFlex for fraud, money laundering, or unauthorized resale of units</li>
         <li>Attempt to bypass security, tariffs, or lending limits</li>
         <li>Interfere with the platform or other users&apos; accounts</li>
         <li>Provide false meter or identity information</li>
@@ -73,14 +73,14 @@ export default function TermsPage() {
 
       <h2>9. Disclaimers</h2>
       <p>
-        gPawa is provided &ldquo;as is&rdquo; during pilot operation. We strive for high availability but do not
+        EnergyFlex is provided &ldquo;as is&rdquo; during pilot operation. We strive for high availability but do not
         guarantee uninterrupted service. Electricity delivery ultimately depends on meters, grids, and partner systems
         outside our direct control.
       </p>
 
       <h2>10. Limitation of liability</h2>
       <p>
-        To the fullest extent permitted by law, gPawa&apos;s liability is limited to the fees you paid to us for the
+        To the fullest extent permitted by law, EnergyFlex&apos;s liability is limited to the fees you paid to us for the
         affected transaction in the preceding twelve months. We are not liable for indirect or consequential losses.
       </p>
 

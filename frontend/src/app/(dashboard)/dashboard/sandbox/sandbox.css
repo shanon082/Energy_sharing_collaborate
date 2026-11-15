@@ -8,3 +8,63 @@
 .sandbox-page .tag { background: #fff3bd; padding: 12px; }
 .sandbox-page .stale { color: #946000; }
 .sandbox-page h2, .sandbox-page h3 { font-weight: bold; margin: 18px 0 12px; }
+
+.sandbox-web, .mobile-finance { width: 100%; min-width: 0; }
+.sandbox-web { display: grid; gap: 1rem; }
+.mobile-finance { display: grid; align-content: start; gap: 1rem; }
+.mobile-finance > h2, .mobile-finance h3 { margin: 0; font-size: 1.05rem; font-weight: 650; }
+.mobile-finance .panel { min-width: 0; padding: 1.1rem; border: 1px solid hsl(var(--border)); border-radius: .75rem; background: hsl(var(--card)); color: hsl(var(--card-foreground)); box-shadow: 0 1px 2px rgb(0 0 0 / 4%); }
+.mobile-finance label { display: grid; gap: .45rem; margin: .25rem 0 1rem; font-size: .9rem; font-weight: 550; }
+.mobile-finance input:not([type="checkbox"]), .mobile-finance select { width: 100%; min-width: 0; height: 2.75rem; padding: .6rem .75rem; border: 1px solid hsl(var(--input)); border-radius: .5rem; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+.mobile-finance button, .sandbox-web > form button { min-height: 2.6rem; padding: .55rem .9rem; border: 1px solid hsl(var(--primary)); border-radius: .5rem; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; }
+.mobile-finance button.secondary, .sandbox-web > form button.secondary { background: transparent; color: hsl(var(--foreground)); border-color: hsl(var(--border)); }
+.mobile-finance button:disabled, .sandbox-web button:disabled { cursor: not-allowed; opacity: .55; }
+.mobile-finance .form-panel { display: grid; gap: .85rem; }
+.mobile-finance .form-panel h2 { margin: 0; }
+.mobile-finance .section-title, .mobile-finance .activity-pagination { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.mobile-finance .review-row { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid hsl(var(--border)); }
+.mobile-finance .review-row span { color: hsl(var(--muted-foreground)); }
+.mobile-finance .review-row strong { text-align: right; overflow-wrap: anywhere; }
+.mobile-finance .loan-balance { display: block; margin: .2rem 0 .75rem; font-size: clamp(1.7rem, 5vw, 2.2rem); font-weight: 700; }
+.mobile-finance .payment-amount { display: block; font-size: 1.45rem; }
+.mobile-finance .muted, .mobile-finance .small { color: hsl(var(--muted-foreground)); }
+.mobile-finance .small { font-size: .82rem; }
+.mobile-finance .payment-disclosure, .mobile-finance .eligibility-reason { padding: .7rem .8rem; border-radius: .5rem; background: hsl(var(--muted)); font-size: .9rem; }
+.mobile-finance .eligibility-reason { border-left: 3px solid hsl(25 95% 53%); }
+.mobile-finance .info-disclosure { margin-top: .75rem; overflow-wrap: anywhere; }
+.mobile-finance .info-disclosure summary { cursor: pointer; color: hsl(var(--primary)); font-weight: 600; }
+.mobile-finance .receipt-filters { display: flex; flex-wrap: wrap; gap: .5rem; }
+.mobile-finance .receipt-filters button { background: transparent; color: hsl(var(--foreground)); border-color: hsl(var(--border)); }
+.mobile-finance .receipt-filters button[aria-pressed="true"] { border-color: hsl(var(--primary)); color: hsl(var(--primary)); }
+.mobile-finance .activity-filters { display: flex; align-items: end; flex-wrap: wrap; gap: .75rem; }
+.mobile-finance .activity-filters label { min-width: 9rem; margin: 0; }
+.mobile-finance .statement-print { display: none; }
+.mobile-finance .finance-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.mobile-finance .finance-summary > div { display: grid; gap: .25rem; padding: .9rem; border: 1px solid hsl(var(--border)); border-radius: .65rem; }
+.mobile-finance .finance-summary span { color: hsl(var(--muted-foreground)); font-size: .8rem; }
+.mobile-finance .finance-summary strong { font-size: 1.35rem; }
+.mobile-finance .transaction-card { overflow-wrap: anywhere; }
+.mobile-finance .transaction-card > p { margin: .35rem 0; }
+.mobile-finance .loan-stepper { display: flex; justify-content: space-between; gap: .5rem; padding: 0; list-style: none; }
+.mobile-finance .loan-stepper li { display: flex; align-items: center; gap: .4rem; color: hsl(var(--muted-foreground)); font-size: .8rem; }
+.mobile-finance .loan-stepper li span { display: grid; width: 1.65rem; height: 1.65rem; place-items: center; border: 1px solid hsl(var(--border)); border-radius: 50%; }
+.mobile-finance .loan-stepper li.current { color: hsl(var(--primary)); font-weight: 650; }
+.mobile-finance .quote-summary, .mobile-finance .credit-summary-grid { display: grid; gap: .35rem; }
+.mobile-finance .quote-total { display: flex; justify-content: space-between; gap: 1rem; padding-top: .75rem; font-size: 1.05rem; font-weight: 700; }
+.wallet-overview { min-width: 0; }
+.wallet-overview details { overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .mobile-finance .panel { padding: .9rem; }
+  .mobile-finance .finance-summary { grid-template-columns: 1fr; }
+  .mobile-finance .section-title { align-items: flex-start; }
+  .mobile-finance .activity-pagination { flex-wrap: wrap; }
+}
+
+@media print {
+  body * { visibility: hidden !important; }
+  .statement-print, .statement-print * { visibility: visible !important; }
+  .mobile-finance .statement-print { display: block; position: absolute; inset: 0; width: 100%; padding: 1rem; color: #111; background: #fff; }
+  .statement-print table { width: 100%; border-collapse: collapse; }
+  .statement-print th, .statement-print td { padding: .5rem; border-bottom: 1px solid #ccc; text-align: left; }
+}

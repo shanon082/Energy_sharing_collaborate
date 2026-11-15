@@ -3,8 +3,8 @@ import Link from "next/link";
 import PublicPageShell from "@/components/common/public-page-shell";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | gPawa",
-  description: "How gPawa collects, uses, and protects your personal information.",
+  title: "Privacy Policy | EnergyFlex",
+  description: "How EnergyFlex collects, uses, and protects your personal information.",
 };
 
 export default function PrivacyPage() {
@@ -13,12 +13,12 @@ export default function PrivacyPage() {
   return (
     <PublicPageShell
       title="Privacy Policy"
-      subtitle={`Effective date: ${effectiveDate}. This policy explains how gPawa handles your information.`}
+      subtitle={`Effective date: ${effectiveDate}. This policy explains how EnergyFlex handles your information.`}
     >
       <h2>1. Who we are</h2>
       <p>
-        gPawa (&ldquo;we&rdquo;, &ldquo;us&rdquo;) operates a digital platform for buying, sharing, and borrowing
-        electricity units. This policy applies to the gPawa website, mobile application, USSD service, and related
+        EnergyFlex (&ldquo;we&rdquo;, &ldquo;us&rdquo;) operates a digital platform for buying, sharing, and borrowing
+        electricity units. This policy applies to the EnergyFlex website, mobile application, USSD service, and related
         APIs.
       </p>
 
@@ -47,7 +47,7 @@ export default function PrivacyPage() {
 
       <h2>3. How we use your information</h2>
       <ul>
-        <li>Provide and improve the gPawa service</li>
+        <li>Provide and improve the EnergyFlex service</li>
         <li>Process payments and deliver units to your meter</li>
         <li>Send service notifications (for example share confirmations, low-balance alerts, loan reminders)</li>
         <li>Comply with financial and energy regulations applicable in Uganda</li>
@@ -101,14 +101,14 @@ export default function PrivacyPage() {
 
       <h2>9. Children</h2>
       <p>
-        gPawa is not directed at children under 18. Accounts must be opened by adults or with appropriate guardian
+        EnergyFlex is not directed at children under 18. Accounts must be opened by adults or with appropriate guardian
         consent where local law allows.
       </p>
 
       <h2>10. Changes</h2>
       <p>
         We may update this policy from time to time. Material changes will be posted on this page with a new
-        effective date. Continued use of gPawa after changes means you accept the updated policy.
+        effective date. Continued use of EnergyFlex after changes means you accept the updated policy.
       </p>
 
       <h2>11. Contact</h2>

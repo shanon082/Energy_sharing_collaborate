@@ -90,9 +90,9 @@ AUTH_USER_MODEL = 'accounts.User'
 # =============================
 # CORS / CSRF — always allow localhost in dev; add production domain from env
 # =============================
-_prod_origin = get_env_variable("PRODUCTION_ORIGIN", "https://energy-sharing-collaborate.vercel.app/")  # e.g. https://energy-share.sun.ac.ug
+_prod_origin = get_env_variable("PRODUCTION_ORIGIN", "https://energy-sharing-collaborate.vercel.app").rstrip("/")  # e.g. https://energy-share.sun.ac.ug
 
-_base_origins = ['http://localhost:3000', 'http://localhost:3030', 'https://energy-sharing-collaborate.vercel.app/']
+_base_origins = ['http://localhost:3000', 'http://localhost:3030', 'https://energy-sharing-collaborate.vercel.app']
 if _prod_origin:
     _base_origins.append(_prod_origin)
 _mobile_origin = get_env_variable("MOBILE_APP_ORIGIN", "")
@@ -171,7 +171,7 @@ MIDDLEWARE = [
 # Staff admin session: 30 minutes of inactivity expires access (spec Section 1.3)
 STAFF_SESSION_INACTIVITY_MINUTES = 30
 # 2FA settings
-TOTP_ISSUER_NAME = 'gPawa Admin'
+TOTP_ISSUER_NAME = 'EnergyFlex Admin'
 
 # =============================
 # AMI Gateway

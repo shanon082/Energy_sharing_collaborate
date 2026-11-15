@@ -56,7 +56,8 @@ class SandboxQuoteView(SandboxConsumerView):
 
 class SandboxLoanView(SandboxConsumerView):
     def get(self, request):
-        rows = SandboxLoan.objects.filter(owner=request.user).select_related("energy_allocation").order_by("-created_at")[:100]
+        from loan.consumer_summary import loans_with_applied
+        rows = loans_with_applied(SandboxLoan.objects.filter(owner=request.user)).select_related("energy_allocation").order_by("-created_at")[:100]
         return Response({"loans": [loan_record(row) for row in rows]})
 
     def post(self, request):
@@ -64,6 +65,26 @@ class SandboxLoanView(SandboxConsumerView):
             raise ValidationError({"accept_test_terms": "Review and explicitly accept the sandbox test terms."})
         loan, created = apply_loan(request.user, request.data.get("quote_id"), request.data.get("terms_hash"), request.data.get("client_request_id"))
         return Response({"loan": loan_record(loan), "reused": not created}, status=201 if created else 200)
+
+
+class ConsumerSummaryView(SandboxConsumerView):
+    def get(self, request):
+        from backend.demo_config import test_domain
+        from django.shortcuts import get_object_or_404
+        from meter.models import Meter
+        from loan.consumer_summary import consumer_summary
+        environment = request.query_params.get("environment", test_domain()[1])
+        if environment not in {"UGX_DEMO", "MTN_SANDBOX"}:
+            raise ValidationError({"environment": "Select UGX_DEMO or MTN_SANDBOX; CORE is a separate ledger."})
+        meter = None
+        meter_id = request.query_params.get("meter_id")
+        if meter_id is not None:
+            if len(meter_id) > 19 or not meter_id.isascii() or not meter_id.isdigit() or not 0 < int(meter_id) < 2**63:
+                raise ValidationError({"meter_id": "Select an owned meter."})
+            meter = get_object_or_404(Meter, pk=int(meter_id), user=request.user)
+        response = Response(consumer_summary(request.user, environment, meter))
+        response["Cache-Control"] = "private, no-store"
+        return response
 
 
 class SandboxLoanRecoveryView(SandboxConsumerView):

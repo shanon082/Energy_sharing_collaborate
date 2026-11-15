@@ -15,8 +15,8 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "gPawa",
-  description: "Energy sharing platform",
+  title: "EnergyFlex",
+  description: "Energy Credit platform",
 };
 
 export default function RootLayout({

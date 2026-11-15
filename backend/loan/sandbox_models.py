@@ -46,12 +46,18 @@ class SandboxLoan(models.Model):
                                                name="one_active_sandbox_loan")]
 
     @property
-    def outstanding(self):
+    def applied_repayments(self):
         from decimal import Decimal
         from transactions.sandbox_models import SandboxSettlement
-        applied = SandboxSettlement.objects.filter(intent__sandbox_loan=self).aggregate(
+        if hasattr(self, "_applied_repayments"):
+            return self._applied_repayments
+        return SandboxSettlement.objects.filter(intent__sandbox_loan=self).aggregate(
             total=models.Sum("applied"))["total"] or Decimal("0.00")
-        return max(Decimal("0.00"), self.total_due - applied) if self.status != "REJECTED" else Decimal("0.00")
+
+    @property
+    def outstanding(self):
+        from decimal import Decimal
+        return max(Decimal("0.00"), self.total_due - self.applied_repayments) if self.status != "REJECTED" else Decimal("0.00")
 
 
 class DemoCreditAssessment(models.Model):

@@ -62,11 +62,11 @@ export default function ChangeRequiredPasswordPage() {
   return (
     <CardWrapper title="Set your password" variant="auth">
       <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
-        <Shield className="h-5 w-5 shrink-0 mt-0.5" />
+        {/* <Shield className="h-5 w-5 shrink-0 mt-0.5" />
         <p>
-          Your account was created by an administrator. For security, choose a new password before using gPawa.
+          Your account was created by an administrator. For security, choose a new password before using EnergyFlex.
           Your temporary password was <strong>1234</strong>.
-        </p>
+        </p> */}
       </div>
 
       <Form {...form}>

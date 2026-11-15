@@ -1,4 +1,7 @@
 import "@/styles/globals.css";
+import ConsumerRouter from "@/components/consumer/workspace";
+import "./sandbox/sandbox.css";
+import "@/styles/consumer-workspace.css";
 import type { Metadata } from "next";
 import { Inter as FontSans } from "next/font/google";
 
@@ -20,6 +23,6 @@ export default async function RootLayout({
 }>) {
 
   return (
-        <>{children}</>     
+        <ConsumerRouter>{children}</ConsumerRouter>     
   );
 }

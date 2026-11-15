@@ -1,0 +1,103 @@
+// Local browser QA only; requires the synthetic API fixture and a dev server.
+// Never point this at a hosted site or an operational backend.
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE || '/tmp/gpawa-browser/node_modules/playwright/index.mjs'));
+const base = process.env.CONSUMER_REVIEW_URL || 'http://127.0.0.1:3100';
+assert.equal(new URL(base).hostname,'127.0.0.1','Browser QA must remain local.');
+const directory = new URL('../../docs/review/consumer-parity/',import.meta.url).pathname;
+await mkdir(directory,{recursive:true});
+const control = async body => (await fetch('http://127.0.0.1:19081/__fixture__',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+await control({reset:true});
+const browser = await chromium.launch({headless:true,args:['--no-sandbox']});
+const context = await browser.newContext({viewport:{width:1440,height:1000}});
+await context.addCookies([{name:'Authentication',value:'synthetic-browser-fixture-only',url:base,httpOnly:true,sameSite:'Lax'}]);
+const page = await context.newPage();
+const runtimeErrors=[];
+page.on('pageerror',e=>runtimeErrors.push(e.message));
+await page.route('**/*',route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+const waitText = async (selector,text) => page.waitForFunction(({selector,text}) => document.querySelector(selector)?.textContent.includes(text),{selector,text},{timeout:45000});
+const screenshot = async name => {
+ await page.waitForTimeout(250);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'Horizontal overflow: '+name);
+ await page.screenshot({path:directory+name+'.png',fullPage:true});
+};
+try {
+ await page.goto(base+'/dashboard',{waitUntil:'domcontentloaded',timeout:120000});
+ await page.getByRole('heading',{name:'Hello, Amina.'}).waitFor({timeout:90000});
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('11');
+ await waitText('[data-testid="outstanding-summary"]','UGX 2,750');
+ await waitText('.credit-numbers','85');
+ assert.match(await page.locator('.consumer-stats').innerText(),/UGX 2,500/);
+ await screenshot('desktop-home');
+ for(const [name,width,height] of [['tablet-home',834,1112],['phone-home',390,844]]){await page.setViewportSize({width,height});await screenshot(name);}
+ await page.setViewportSize({width:1440,height:1000});
+ await page.getByRole('navigation',{name:'Consumer navigation',exact:true}).getByRole('link',{name:'Loans',exact:true}).click();
+ await page.getByRole('heading',{name:'Loans',exact:true}).waitFor();
+ await waitText('.loan-card','UGX 2,750');
+ assert.match(await page.locator('.loan-card').innerText(),/UGX 5,250/);
+ assert.match(await page.locator('.loan-card').innerText(),/UGX 2,500/);
+ await screenshot('desktop-loans');
+ await page.getByRole('button',{name:'Apply for Loan',exact:true}).click();
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('12');
+ await waitText('#loan-eligibility-reason','minimum of 80%');
+ assert.equal(await page.getByRole('button',{name:/Review (loan )?terms/i}).isDisabled(),true);
+ // Delayed meter A cannot overwrite meter B after selection changes.
+ await control({delay:true});
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('11');
+ await page.waitForTimeout(100);
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('12');
+ await waitText('.credit-score','62');await page.waitForTimeout(2100);await waitText('.credit-score','62');
+ await screenshot('desktop-apply-ineligible');
+ await control({delay:false,empty:true});
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('11');
+ await waitText('.credit-score','85');
+ await page.getByRole('button',{name:/Review (loan )?terms/i}).click();
+ await page.getByRole('heading',{name:'Review loan terms',exact:true}).waitFor();
+ await screenshot('desktop-apply-terms');
+ // Meter changes must invalidate the accepted quote before another submission.
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('12');
+ await page.getByRole('heading',{name:'Request a loan',exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Submit application',exact:true}).count(),0);
+ await page.getByRole('navigation',{name:'Consumer navigation',exact:true}).getByRole('link',{name:'Buy Units',exact:true}).click();
+ await page.getByRole('combobox',{name:'Selected meter',exact:true}).selectOption('11');
+ await page.getByRole('button',{name:/Review (purchase|terms)/i}).click();
+ await page.getByRole('heading',{name:'Review your purchase',exact:true}).waitFor();
+ await screenshot('desktop-buy-units');
+ await page.getByRole('checkbox').check();
+ await control({hold:true});
+ await page.getByRole('button',{name:'Confirm purchase',exact:true}).dblclick();
+ await page.getByText('Processing payment',{exact:true}).waitFor();
+ let state=await control({}); assert.equal(state.stats.initiations,1,'Duplicate-click created another initiation.');
+ await page.getByRole('navigation',{name:'Consumer navigation',exact:true}).getByRole('link',{name:'Activity',exact:true}).click();
+ await page.reload({waitUntil:'domcontentloaded'});
+ await page.waitForTimeout(5500);
+ assert.equal((await control({})).stats.completions,0,'Countdown settled without server evidence.');
+ await control({hold:false});
+ await page.waitForFunction(()=>document.querySelector('.mobile-finance')?.textContent.includes('Completed'),{},{timeout:45000});
+ state=await control({});assert.equal(state.stats.initiations,1);assert.equal(state.stats.completions,1);
+ await page.locator('.transaction-card details').first().locator('summary').click();
+ await screenshot('desktop-activity');
+ // Unavailable summary must not be represented as zero.
+ await control({unavailable:true});
+ await page.getByRole('navigation',{name:'Consumer navigation',exact:true}).getByRole('link',{name:'Home',exact:true}).click();
+ await page.getByRole('button',{name:'Refresh',exact:true}).first().click();
+ await waitText('[data-testid="outstanding-summary"]','Unavailable');
+ await control({unavailable:false});
+ await page.getByRole('navigation',{name:'Consumer navigation',exact:true}).getByRole('link',{name:'Meters',exact:true}).click();
+ assert.match(await page.locator('.consumer-meter-grid').innerText(),/0001234567890/,'Historical 13-digit meter missing.');
+ await page.setViewportSize({width:390,height:844});await screenshot('phone-meters');
+ await page.getByRole('navigation',{name:'Mobile navigation',exact:true}).getByRole('link',{name:'Account',exact:true}).click();
+ await page.getByRole('heading',{name:'Account preferences'}).waitFor();await screenshot('phone-account');
+ state=await control({});
+ assert.equal(state.stats.requests.some(row=>/wallet\/balance|meter\/my-meter|loans\/my-loans/.test(row)),false,'Legacy/core bootstrap used.');
+ await page.evaluate(()=>localStorage.setItem('gpawa:request:7:sandbox:UGX_DEMO:PURCHASE','fixture-only'));
+ await page.getByRole('button',{name:'Sign out',exact:true}).click();
+ await page.waitForURL('**/auth/login/**',{timeout:30000}).catch(()=>page.waitForURL('**/auth/login/',{timeout:30000}));
+ assert.equal(await page.evaluate(()=>localStorage.getItem('gpawa:request:7:sandbox:UGX_DEMO:PURCHASE')),null);
+ assert.equal((await context.cookies()).some(cookie=>cookie.name==='Authentication'),false);
+ assert.deepEqual(runtimeErrors,[]);
+ await writeFile(directory+'browser-results.json',JSON.stringify({scope:'Synthetic loopback API; no hosted records, providers or physical devices',viewports:[1440,834,390],checks:['partial repayment parity','assessment selection','below-80% explanation','late meter response','stale quote invalidation','duplicate-click prevention','countdown does not settle','navigation/reload recovery','unavailable is not zero','historical meter selection','no legacy bootstrap','logout cleanup'],runtimeErrors},null,2)+'\n');
+ console.log('Consumer browser checks passed; screenshots: '+directory);
+} finally { await browser.close(); }

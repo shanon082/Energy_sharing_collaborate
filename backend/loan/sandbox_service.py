@@ -1,5 +1,5 @@
 """Shared sandbox application/pricing authority, independent of real UGX lending."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN
 from hashlib import sha256
 import json
@@ -160,6 +160,8 @@ def create_quote(owner, meter_id, raw_amount, purpose):
         "interest": str(interest if purpose == "LOAN" else Decimal("0.00")), "fee": cfg["fee"] if purpose == "LOAN" else "0.00",
         "total_due": str(amount + interest + Decimal(cfg["fee"])) if purpose == "LOAN" else "0.00",
         "assessment": result, **({"pricing": pricing} if pricing else {})}
+    if purpose == "LOAN":
+        terms["due_at"] = (timezone.now() + timedelta(days=cfg["due_days"])).isoformat()
     hashed = sha256(json.dumps(terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return SandboxQuote.objects.create(owner=owner, meter=meter, purpose=purpose, amount=amount, currency=currency, environment=environment, terms=terms,
         terms_hash=hashed, expires_at=timezone.now() + timedelta(minutes=cfg["quote_minutes"]))
@@ -218,7 +220,7 @@ def apply_loan(owner, quote_id, terms_hash, client_request_id):
             currency=quote.currency, environment=quote.environment,
             principal=quote.amount, total_due=Decimal(quote.terms["total_due"]) if approved else 0,
             terms=quote.terms, assessment=result, status="DISBURSED" if approved else "REJECTED", decision_reason=reason,
-            due_at=timezone.now() + timedelta(days=quote.terms["policy"]["due_days"]))
+            due_at=datetime.fromisoformat(quote.terms["due_at"]) if approved else timezone.now() + timedelta(days=quote.terms["policy"]["due_days"]))
         if approved:
             from meter.allocation_service import authorize_sandbox_loan_allocation
             authorize_sandbox_loan_allocation(loan, Decimal(quote.terms["energy_kwh"]))
@@ -235,6 +237,7 @@ def loan_record(loan):
     return {"id": str(loan.pk), "client_request_id": str(loan.client_request_id), "meter_id": loan.meter_id,
         "status": loan.status, "reason": loan.decision_reason, "currency": loan.currency, "environment": loan.environment,
         "principal": str(loan.principal), "total_due": str(loan.total_due), "outstanding": str(loan.outstanding),
+        "applied_repayments": str(loan.applied_repayments),
         "due_at": loan.due_at.isoformat(), "closed_at": loan.closed_at.isoformat() if loan.closed_at else None,
         "created_at": loan.created_at.isoformat(), "terms": loan.terms, "assessment": loan.assessment,
         "allocation_id": allocation.pk if allocation else None,

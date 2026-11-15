@@ -3,8 +3,8 @@ import Link from "next/link";
 import PublicPageShell from "@/components/common/public-page-shell";
 
 export const metadata: Metadata = {
-  title: "Contact | gPawa",
-  description: "Get in touch with the gPawa team for support, partnerships, and general enquiries.",
+  title: "Contact | EnergyFlex",
+  description: "Get in touch with the EnergyFlex team for support, partnerships, and general enquiries.",
 };
 
 const SUPPORT_EMAIL = "gpawateam@gmail.com";
@@ -22,7 +22,7 @@ export default function ContactPage() {
             Questions about your account, meter, payments, or sharing units.
           </p>
           <a
-            href={`mailto:${SUPPORT_EMAIL}?subject=gPawa%20support%20request`}
+            href={`mailto:${SUPPORT_EMAIL}?subject=EnergyFlex%20support%20request`}
             className="text-blue-600 dark:text-blue-400 font-medium hover:underline"
           >
             {SUPPORT_EMAIL}
@@ -38,7 +38,7 @@ export default function ContactPage() {
             Utilities, campuses, mini-grid operators, and research collaborators.
           </p>
           <a
-            href={`mailto:${SUPPORT_EMAIL}?subject=gPawa%20partnership%20enquiry`}
+            href={`mailto:${SUPPORT_EMAIL}?subject=EnergyFlex%20partnership%20enquiry`}
             className="text-blue-600 dark:text-blue-400 font-medium hover:underline"
           >
             {SUPPORT_EMAIL}
@@ -49,7 +49,7 @@ export default function ContactPage() {
       <h2>Before you write</h2>
       <p>Including the following helps us resolve your issue faster:</p>
       <ul>
-        <li>The email or phone number on your gPawa account</li>
+        <li>The email or phone number on your EnergyFlex account</li>
         <li>Your meter number (if applicable)</li>
         <li>A short description of what you tried and any error message you saw</li>
         <li>Screenshots for payment or sharing issues (if you can)</li>
@@ -65,20 +65,20 @@ export default function ContactPage() {
           <Link href="/auth/register">Register a new account</Link> if you have not signed up yet
         </li>
         <li>
-          <Link href="/#how-it-works">How gPawa works</Link> — step-by-step guide on the home page
+          <Link href="/#how-it-works">How EnergyFlex works</Link> — step-by-step guide on the home page
         </li>
       </ul>
 
       <h2>Location</h2>
       <p>
-        gPawa is operated from Uganda, serving pilot communities and partner sites across East Africa.
+        EnergyFlex is operated from Uganda, serving pilot communities and partner sites across East Africa.
         There is no public walk-in office at this time; please use email for all enquiries.
       </p>
 
       <h2>Security</h2>
       <p>
         Never share your password, PIN, or one-time codes with anyone — including people claiming to be
-        gPawa staff. We will never ask for your full password by email or phone.
+        EnergyFlex staff. We will never ask for your full password by email or phone.
       </p>
     </PublicPageShell>
   );

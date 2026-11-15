@@ -12,7 +12,7 @@ export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   return { enabled: true, loans: row.loans === true, purchases: row.purchases === true, repayments: row.repayments === true, ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : {}) };
 }
 export interface SandboxClient { get<T>(path: string): Promise<T>; post<T>(path: string, body: unknown): Promise<T> }
-export type TestMeter = { id: number; meter_number: string; sandbox_inventory?: boolean };
+export type TestMeter = { label?: string; status?: string; id: number; meter_number: string; sandbox_inventory?: boolean };
 export type Assessment = { owner_id?: number; meter_id?: number | null; minimum_score?: number; assessment_id?: number | null; evidence_updated_at?: string | null; eligible: boolean; reason: string; starter: boolean; score: number | null; profile_score: number | null;
   factors: Record<string, number> | null; purchase_points: number | null; qualifying_billed_eur?: string; qualifying_billed_test?: string | null; maximum: string | null; policy_id: string;
   assessment_status?: "PENDING" | "READY" | "UNAVAILABLE"; label?: string; provider?: string; assessed_at?: string | null; scoring_policy_version?: string; categories?: Record<string, string> | null };
@@ -23,11 +23,11 @@ export type TariffPricing = { inputs_hash: string; inputs: { version: string; mo
   tariff: { id: number; code: string; name: string }; monthly_purchased_kwh: string }; breakdown: {
   energy_cost: string; service_charge: string; subtotal: string; vat: string; total: string; lifeline_applied: boolean } };
 export type TestTerms = { pricing?: TariffPricing; owner_id?: number; meter_id?: number; policy: TestPolicy; purpose: string; amount: string; energy_kwh: string; billed: string; residual: string;
-  interest: string; fee: string; total_due: string; assessment: Assessment | null };
+  interest: string; fee: string; total_due: string; due_at?: string; assessment: Assessment | null };
 export type TestQuote = { id: string; terms_hash: string; expires_at: string; terms: TestTerms };
 export type TestLoan = { currency: TestCurrency; environment: TestEnvironment; id: string; client_request_id: string; meter_id: number; status: "DISBURSED" | "COMPLETED" | "REJECTED";
-  reason: string; principal: string; total_due: string; outstanding: string; due_at: string; closed_at: string | null;
-  allocation_id: number | null; allocated_kwh: string | null; terms: TestTerms; assessment: Assessment };
+  reason: string; principal: string; total_due: string; outstanding: string; due_at: string; created_at?: string; closed_at: string | null;
+  applied_repayments?: string; allocation_id: number | null; allocated_kwh: string | null; terms: TestTerms; assessment: Assessment };
 export type TestPayment = { pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
   demo_eligible_at?: string | null; server_time?: string; observed_at?: number; reference: string; client_request_id: string; purpose: string; status: "PENDING" | "SETTLED" | "FAILED";
   amount: string; meter_id: number; loan_id: string | null; billed: string | null; residual: string | null; applied: string | null; excess: string | null;
@@ -97,6 +97,7 @@ export function parseTestQuote(value: unknown, expected: { owner: number; meterI
   if (typeof row.id !== "string" || !/^[0-9a-f-]{36}$/i.test(row.id) ||
     typeof row.terms_hash !== "string" || !/^[0-9a-f]{64}$/i.test(row.terms_hash) ||
     typeof row.expires_at !== "string" || !Number.isFinite(Date.parse(row.expires_at)) ||
+    (expected.purpose === "LOAN" && (typeof terms.due_at !== "string" || !Number.isFinite(Date.parse(terms.due_at)))) ||
     terms.owner_id !== expected.owner || terms.meter_id !== expected.meterId || terms.purpose !== expected.purpose ||
     typeof terms.amount !== "string" || !/^\d+(?:\.\d+)?$/.test(terms.amount) ||
     canonicalMoney(terms.amount) !== canonicalMoney(expected.amount) ||

@@ -86,11 +86,11 @@ export default function RegisterForm() {
     <>
       <CardWrapper title="Create an account" variant="auth">
         <p className="mb-4 text-sm text-muted-foreground">
-          Register yourself here. If your utility admin already created your meter account, use{" "}
-          <Link href="/auth/login" className="font-medium text-indigo-600 hover:text-indigo-500">
+          Register yourself here. To enjoythe 24/7 service
+          {/* <Link href="/auth/login" className="font-medium text-indigo-600 hover:text-indigo-500">
             sign in
           </Link>{" "}
-          with the email they registered and temporary password <strong>1234</strong>.
+          with the email they registered and temporary password <strong>1234</strong>. */}
         </p>
 
         <Form {...form}>

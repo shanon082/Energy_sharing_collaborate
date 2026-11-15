@@ -47,7 +47,7 @@ export default function Home() {
               </h1>
 
               <p className="text-lg sm:text-xl text-gray-600 dark:text-gray-300 max-w-xl leading-relaxed">
-                gPawa lets households and institutions buy, share, and borrow energy units -
+                EnergyFlex lets households and institutions buy, share, and borrow energy units -
                 no middleman, no branch visit, no delays.
               </p>
 

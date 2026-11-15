@@ -138,11 +138,13 @@ class SandboxWorkflowTests(Fixtures, TestCase):
         self.assertTrue(meters.data["data"]["meters"][0]["sandbox_inventory"])
         quote = self.client.post("/api/v1/sandbox/quotes/", {"meter_id": self.meter.pk, "amount": "2.00", "purpose": "LOAN"}, format="json", **self.headers)
         self.assertEqual(quote.status_code, 201)
+        quoted_due_at = quote.data["terms"]["due_at"]
         payload = {"quote_id": quote.data["id"], "terms_hash": quote.data["terms_hash"], "accept_test_terms": True,
                    "client_request_id": str(uuid.uuid4()), "credit_score": 100, "status": "APPROVED"}
         response = self.client.post("/api/v1/sandbox/loans/", payload, format="json", **self.headers)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["loan"]["status"], "DISBURSED")
+        self.assertEqual(response.data["loan"]["due_at"], quoted_due_at)
         self.assertGreaterEqual(response.data["loan"]["assessment"]["score"], 80)
         self.assertEqual(self.client.post("/api/v1/sandbox/loans/", payload, format="json", **self.headers).status_code, 200)
         loan = SandboxLoan.objects.get()

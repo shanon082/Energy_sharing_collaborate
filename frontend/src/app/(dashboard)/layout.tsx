@@ -4,7 +4,7 @@ import authenticated from "@/lib/authenticated";
 import { isStaffUser } from "@/lib/staff";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { SelectedMeterProvider } from "@/contexts/selected-meter-context";
+import { ConsumerMeterBoundary } from "@/components/consumer/legacy-boundary";
 import { FeaturesProvider } from "@/contexts/features-context";
 import { getFeatureAvailability } from "@/lib/features-server";
 
@@ -38,5 +38,5 @@ export default async function UserProtectedLayout({
   }
 
   const features = await getFeatureAvailability();
-  return <FeaturesProvider features={features}><SelectedMeterProvider>{children}</SelectedMeterProvider></FeaturesProvider>;
+  return <FeaturesProvider features={features}><ConsumerMeterBoundary>{children}</ConsumerMeterBoundary></FeaturesProvider>;
 }

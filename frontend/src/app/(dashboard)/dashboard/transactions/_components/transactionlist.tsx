@@ -244,8 +244,8 @@ const TransList = () => {
     return s;
   };
 
-  if (loading) return <p>Loading transactions...</p>;
-  if (error) return <p>{error}</p>;
+  if (loading) return <p role="status">Loading transactions…</p>;
+  if (error) return <div role="alert" className="space-y-2 p-4"><p>Couldn’t load transactions</p><Button variant="outline" onClick={() => void fetchTransactions(page)}>Retry</Button></div>;
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -369,7 +369,7 @@ const TransList = () => {
             ))}
             {transactions.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center">No transactions found</TableCell>
+                <TableCell colSpan={7} className="text-center">No transactions yet.</TableCell>
               </TableRow>
             )}
           </TableBody>

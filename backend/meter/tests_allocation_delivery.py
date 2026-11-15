@@ -96,6 +96,21 @@ class AllocationDeliveryTests(TransactionTestCase):
         self.assertEqual(response.data["code"], "SIMULATOR_NOT_ENROLLED")
         self.assertEqual(MeterDelivery.objects.count(), 0)
 
+    def test_mobile_meter_dashboard_scopes_entitlement_to_requested_environment(self):
+        allocation = self.allocation("1.00")
+        endpoint = f"/api/v1/meter/mobile-meters/{self.meter.pk}/"
+        core = self.client.get(endpoint + "?environment=CORE")
+        self.assertEqual(core.status_code, 200)
+        self.assertEqual(core.data["available_kwh"], "1.00")
+
+        EnergyAllocation.objects.filter(pk=allocation.pk).update(accounting_environment="UGX_DEMO")
+        demo = self.client.get(endpoint + "?environment=UGX_DEMO")
+        self.assertEqual(demo.status_code, 200)
+        self.assertEqual(demo.data["available_kwh"], "1.00")
+        self.assertEqual(self.client.get(endpoint + "?environment=CORE").data["available_kwh"], "0.00")
+        self.assertEqual(self.client.get(endpoint + "?environment=UNKNOWN").status_code, 400)
+        self.assertEqual(self.client.get(f"/api/v1/meter/mobile-meters/{self.other_meter.pk}/?environment=UGX_DEMO").status_code, 404)
+
     def test_concurrent_reservations_do_not_exceed_one_allocation(self):
         allocation = self.allocation()
         barrier = Barrier(2)

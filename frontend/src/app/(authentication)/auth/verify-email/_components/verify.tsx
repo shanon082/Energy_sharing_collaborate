@@ -118,7 +118,7 @@ export default function VerifyEmail({ uid: propUid, token: propToken }: { uid?: 
             <p className="text-sm text-muted-foreground">Redirecting to login…</p>
             <Button
               onClick={() => router.push('/auth/login')}
-              className="w-full gpawa-gradient text-white mt-2"
+              className="w-full EnergyFlex-gradient text-white mt-2"
             >
               Go to Login now
             </Button>

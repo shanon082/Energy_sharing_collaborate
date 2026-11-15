@@ -169,10 +169,12 @@ def reserve_for_delivery(*, owner, meter_no, amount_kwh, request_id=None):
         ) for allocation, take in planned]
 
 
-def entitlement_summary(owner, meter=None):
+def entitlement_summary(owner, meter=None, environment=None):
     allocations = EnergyAllocation.objects.filter(owner=owner)
     if meter is not None:
         allocations = allocations.filter(meter=meter)
+    if environment is not None:
+        allocations = allocations.filter(accounting_environment=environment)
     authorized = allocations.aggregate(total=Sum("amount_kwh"))["total"] or Decimal("0.00")
     deliveries = MeterDelivery.objects.filter(allocation__in=allocations)
     reserved = deliveries.aggregate(total=Sum("amount_kwh"))["total"] or Decimal("0.00")

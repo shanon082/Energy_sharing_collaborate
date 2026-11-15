@@ -1,8 +1,9 @@
 from django.urls import path
 from loan.sandbox_api import (SandboxAssessmentView, SandboxQuoteView, SandboxLoanView, SandboxPaymentView,
-    SandboxPaymentStatusView, SandboxStaffDecisionView, SandboxLoanRecoveryView, SandboxPaymentRecoveryView)
+    SandboxPaymentStatusView, SandboxStaffDecisionView, SandboxLoanRecoveryView, SandboxPaymentRecoveryView, ConsumerSummaryView)
 
 urlpatterns = [
+    path("summary/", ConsumerSummaryView.as_view()),
     path("assessment/", SandboxAssessmentView.as_view()),
     path("quotes/", SandboxQuoteView.as_view()),
     path("loans/", SandboxLoanView.as_view()),

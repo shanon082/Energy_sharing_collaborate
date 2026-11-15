@@ -14,10 +14,12 @@ const DEMO_PENDING = "Demo payment: simulating phone authorization. No PIN or re
 const DEMO_SUCCESS = "Demo payment successful — no real money was deducted.";
 
 /** Shared UI; transport is injected. No Next server/cookie or mobile token imports. */
-export default function SandboxConsumer({ client, owner, meters, selectedMeter, capabilities, onChanged, view = "all", onNavigate, refreshVersion = 0, mutationsAvailable = true, onError, registerBackHandler }: {
+export default function SandboxConsumer({ client, owner, meters, selectedMeter, capabilities, onChanged, view = "all", onNavigate, onSelectMeter, onAddMeter, surface = "mobile", refreshVersion = 0, mutationsAvailable = true, onError, registerBackHandler }: {
   client: SandboxClient; owner: number; meters: TestMeter[]; selectedMeter: TestMeter | null;
   capabilities: SandboxCapabilities; onChanged?: () => void;
   view?: ConsumerFinanceView | "all"; onNavigate?: (view: FinanceDestination) => void; refreshVersion?: number;
+  onSelectMeter?: (id: string) => void; onAddMeter?: () => void;
+  surface?: "web" | "mobile";
   mutationsAvailable?: boolean; onError?: (error: unknown) => void; registerBackHandler?: (handler: (() => boolean) | null) => void;
 }) {
   const demo = capabilities.provider === "LOCAL_DEMO";
@@ -257,9 +259,9 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
   const stale = !!error || offline;
   if (view !== "all") return <SandboxMobileView
-    client={client} owner={owner} view={view} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
+    client={client} owner={owner} view={view} surface={surface} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
     capabilities={capabilities} assessment={meterAssessment} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
-    meters={meters} selectedMeter={selectedMeter} purpose={purpose} amount={amount}
+    meters={meters} selectedMeter={selectedMeter} setSelectedMeter={onSelectMeter ?? (() => {})} onAddMeter={onAddMeter} purpose={purpose} amount={amount}
     setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
     quote={quote} clearQuote={() => { formVersion.current++; setQuote(null); setAccepted(false); }}
     accepted={accepted} setAccepted={setAccepted} phone={phone} setPhone={setPhone}
