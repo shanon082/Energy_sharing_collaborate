@@ -81,6 +81,13 @@ def assessment(owner, test_policy=None, *, meter_id=None):
         from loan.demo_assessment import stored_demo_eligibility
         meter = owned_test_meter(owner, meter_id) if meter_id is not None else None
         return stored_demo_eligibility(owner, cfg, meter)
+    if getattr(settings, "SANDBOX_EUR_LOANS_ENABLED", False) is not True:
+        meter = owned_test_meter(owner, meter_id) if meter_id is not None else None
+        return {"eligible": False, "reason": "EUR test loan assessment policy unavailable. UGX demo assessments cannot authorize EUR debt.",
+                "score": None, "profile_score": None, "factors": None, "purchase_points": None,
+                "maximum": None, "starter": False, "assessment_status": "UNAVAILABLE",
+                "owner_id": owner.pk, "meter_id": meter.pk if meter else None,
+                "policy_id": cfg["id"], "currency": "EUR", "environment": "MTN_SANDBOX"}
     currency = cfg.get("currency", "EUR")
     environment = cfg.get("environment", "MTN_SANDBOX")
     provider = "LOCAL_DEMO" if environment == "UGX_DEMO" else "MTN_SANDBOX"
@@ -132,6 +139,16 @@ def energy_price(amount, cfg):
     return units, billed, amount - billed
 
 
+def eur_pricing_available(cfg):
+    """Never substitute a domestic UGX tariff or an implicit currency conversion."""
+    try:
+        rate = Decimal(cfg["rate_per_kwh"])
+        return (cfg.get("currency") == "EUR" and str(cfg.get("id", "")).startswith("SANDBOX-")
+                and rate.is_finite() and rate > 0)
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        return False
+
+
 def create_quote(owner, meter_id, raw_amount, purpose):
     require_sandbox()
     verified_consumer(owner)
@@ -139,6 +156,8 @@ def create_quote(owner, meter_id, raw_amount, purpose):
     amount = money(raw_amount)
     cfg = policy()
     currency, environment, _ = test_domain()
+    if currency == "EUR" and not eur_pricing_available(cfg):
+        raise ValidationError({"code": "EUR_TEST_PRICING_UNAVAILABLE", "message": "Configure a versioned EUR test price before requesting new energy. UGX tariffs cannot price EUR receipts."})
     if amount < Decimal(cfg["minimum"]) or amount > Decimal(cfg["maximum"]):
         raise ValidationError({"amount": f"Test quotes must be between {currency} {cfg['minimum']} and {cfg['maximum']}."})
     result = assessment(owner, cfg, meter_id=meter.pk) if purpose == "LOAN" else None
@@ -206,6 +225,8 @@ def apply_loan(owner, quote_id, terms_hash, client_request_id):
                 raise ValidationError({"code": "TEST_CURRENCY_MISMATCH"})
             return prior, False
         quote = accepted_quote(owner, quote_id, terms_hash, "LOAN")
+        if quote.currency == "EUR" and getattr(settings, "SANDBOX_EUR_LOANS_ENABLED", False) is not True:
+            raise ValidationError({"code": "EUR_LOAN_POLICY_UNAVAILABLE", "message": "New EUR loans need a reviewed automatic assessment policy. Existing debt and decisions are unchanged."})
         existing = SandboxLoan.objects.filter(quote=quote).first()
         if existing:
             raise ValidationError({"code": "QUOTE_ALREADY_USED", "message": "This quote already has an application."})

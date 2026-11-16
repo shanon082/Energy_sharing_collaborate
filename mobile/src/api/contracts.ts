@@ -16,14 +16,22 @@ export type AllocationStatus = {
   pending_kwh: string;
   confirmed_kwh: string;
   last_meter_contact: string | null;
-  delivery_environment: "SIMULATOR" | "UNAVAILABLE";
-  contact_source?: "SIMULATOR" | "UNAVAILABLE";
+  delivery_environment: "SIMULATOR" | "UNAVAILABLE" | "AC_LAB";
+  contact_source?: "SIMULATOR" | "UNAVAILABLE" | "AC_LAB";
   contact_status?: "UNAVAILABLE" | "STALE" | "RECENT";
   simulator_remaining_wh?: string | null;
   meter_reported_remaining_wh?: string | null;
   reported_relay_state?: string | null;
   last_measurement_at?: string | null;
   consumption_reconciliation_required?: boolean;
+  lab_remaining_credit_uwh?: string | null;
+  lab_consumed_uwh?: string | null;
+  lab_uncertain_uwh?: string | null;
+  lab_pzem_wh?: string | null;
+  lab_interval_usage_wh?: string | null;
+  lab_interval_start?: string | null;
+  lab_sensor_status?: "OK" | "FAULT" | "UNAVAILABLE";
+  lab_received_at?: string | null;
 };
 
 export type DailyUsage = { date: string; kwh: string; source: string };
@@ -31,9 +39,15 @@ export type Telemetry = {
   event_id: string; cumulative_wh: string; measured_at: string;
   received_at: string; classification: string;
 };
+export type LabTelemetry = {
+  boot_id: string; sequence: string; measured_at: string; received_at: string;
+  consumed_uwh: string | null; remaining_credit_uwh: string; uncertain_uwh: string;
+  sensor_status: "OK" | "FAULT"; pzem_wh: string | null;
+};
 export type ConsumptionHistory = {
   meter_no: string; daily_usage: DailyUsage[]; simulator_telemetry: Telemetry[];
   consumer_attribution_available: boolean;
+  ac_lab_telemetry: LabTelemetry[];
 };
 
 export type Repayment = {
@@ -100,7 +114,7 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
     throw new Error("Meter assignment changed. Select an assigned meter again.");
   }
   if (data.quantum_kwh !== "0.01" ||
-      !["SIMULATOR", "UNAVAILABLE"].includes(String(data.contact_source))) {
+      !["SIMULATOR", "UNAVAILABLE", "AC_LAB"].includes(String(data.contact_source))) {
     throw new Error("Meter dashboard is unavailable.");
   }
   const optionalWh = (value: unknown) => value == null ? null :
@@ -114,12 +128,21 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
       ? String(data.reported_relay_state) : null,
     last_measurement_at: typeof data.last_measurement_at === "string" ? data.last_measurement_at : null,
     consumption_reconciliation_required: data.consumption_reconciliation_required === true,
+    lab_remaining_credit_uwh: optionalWh(data.lab_remaining_credit_uwh),
+    lab_consumed_uwh: optionalWh(data.lab_consumed_uwh),
+    lab_uncertain_uwh: optionalWh(data.lab_uncertain_uwh),
+    lab_pzem_wh: optionalWh(data.lab_pzem_wh),
+    lab_interval_usage_wh: optionalWh(data.lab_interval_usage_wh),
+    lab_interval_start: typeof data.lab_interval_start === "string" ? data.lab_interval_start : null,
+    lab_sensor_status: ["OK", "FAULT", "UNAVAILABLE"].includes(String(data.lab_sensor_status))
+      ? data.lab_sensor_status as AllocationStatus["lab_sensor_status"] : "UNAVAILABLE",
+    lab_received_at: typeof data.lab_received_at === "string" ? data.lab_received_at : null,
   };
 }
 
 export function parseAllocation(payload: unknown): AllocationStatus {
   const data = record(payload);
-  if (data.unit !== "kWh" || !["SIMULATOR", "UNAVAILABLE"].includes(String(data.delivery_environment))) {
+  if (data.unit !== "kWh" || !["SIMULATOR", "UNAVAILABLE", "AC_LAB"].includes(String(data.delivery_environment))) {
     throw new Error("Allocation status is unavailable.");
   }
   return {
@@ -149,6 +172,7 @@ export function parseConsumption(payload: unknown, selected?: MeterInfo): Consum
       if (typeof row.date !== "string" || typeof row.source !== "string") throw new Error("Invalid usage row.");
       return { date: row.date, kwh: exactDecimal(row.kwh), source: row.source };
     }),
+    ac_lab_telemetry: parseLabTelemetry(data.ac_lab_telemetry),
     simulator_telemetry: data.simulator_telemetry.map((item) => {
       const row = record(item);
       const counter = typeof row.cumulative_wh_exact === "string" ? row.cumulative_wh_exact :
@@ -189,4 +213,38 @@ export function parseLoans(payload: unknown): Loan[] {
       }),
     };
   });
+}
+
+function parseLabTelemetry(value: unknown): LabTelemetry[] {
+  if (value === undefined) return []; // Compatible with older hosted backend.
+  if (!Array.isArray(value)) throw new Error("AC lab history is unavailable.");
+  const count = (v: unknown) => {
+    if (typeof v !== "string" || !/^[0-9]+$/.test(v)) throw new Error("Invalid lab measurement.");
+    return v;
+  };
+  return value.map(item => {
+    const row = record(item);
+    if (typeof row.boot_id !== "string" || typeof row.measured_at !== "string" ||
+        typeof row.received_at !== "string" || !["OK", "FAULT"].includes(String(row.sensor_status)))
+      throw new Error("Invalid lab measurement.");
+    return { boot_id: row.boot_id, sequence: count(row.sequence), measured_at: row.measured_at,
+      received_at: row.received_at, consumed_uwh: row.consumed_uwh === null ? null : count(row.consumed_uwh),
+      remaining_credit_uwh: count(row.remaining_credit_uwh), uncertain_uwh: count(row.uncertain_uwh),
+      pzem_wh: row.pzem_wh === null ? null : count(row.pzem_wh), sensor_status: row.sensor_status as "OK" | "FAULT" };
+  });
+}
+
+/** Exact display conversion only: 1 Wh = 1,000,000 microWh. Never authoritative accounting. */
+export function microWhDisplay(value: string | null | undefined): string {
+  if (value == null || !/^[0-9]+$/.test(value)) return "Unavailable";
+  const amount = BigInt(value);
+  const fraction = (amount % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return `${amount / 1_000_000n}${fraction ? "." + fraction : ""} Wh`;
+}
+
+export function labReadingStatus(reading: AllocationStatus, now: number): "RECENT" | "STALE" | "UNAVAILABLE" {
+  if (reading.contact_status === "UNAVAILABLE" || !reading.last_measurement_at || !reading.lab_received_at) return "UNAVAILABLE";
+  const measured = Date.parse(reading.last_measurement_at), received = Date.parse(reading.lab_received_at);
+  if (!Number.isFinite(measured) || !Number.isFinite(received)) return "UNAVAILABLE";
+  return reading.contact_status === "STALE" || Math.abs(now - measured) > 90_000 || now - received > 90_000 ? "STALE" : "RECENT";
 }

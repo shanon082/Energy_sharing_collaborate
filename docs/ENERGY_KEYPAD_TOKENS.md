@@ -411,7 +411,7 @@ were embedded. This is not a release or a claim of physical-phone testing.
 ```bash
 adb install -r /home/shanon/projects/next_projects/Energy-sharing-project/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 # Optional WSL → Windows copy; substitute your actual Windows username:
-cp /home/shanon/projects/next_projects/Energy-sharing-project/mobile/android/app/build/outputs/apk/debug/app-debug.apk /mnt/c/Users/<WINDOWS_USER>/Downloads/gPawa-debug.apk
+cp /home/shanon/projects/next_projects/Energy-sharing-project/mobile/android/app/build/outputs/apk/debug/app-debug.apk /mnt/c/Users/<WINDOWS_USER>/Downloads/EnergyFlex-debug.apk
 ```
 
 Do not uninstall to update a matching certificate; if Android reports a signature

@@ -560,3 +560,4 @@ class SandboxMeterEnrollment(models.Model):
 
 # Registered in the existing meter app; no separate accounting ledger.
 from meter.keypad_models import EnergyKeypadToken, BenchDevice, BenchApplicationReceipt, DeviceAttemptBucket
+from meter.prototype_models import PrototypeDevice, PrototypeBoot, PrototypeCommand, PrototypeTelemetry

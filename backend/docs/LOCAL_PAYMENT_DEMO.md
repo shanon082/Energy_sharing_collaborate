@@ -1,5 +1,8 @@
 # Local payment demo — NO REAL MONEY
 
+> MTN resumption update (2026-11-17): [MTN_SANDBOX_RESUMPTION.md](MTN_SANDBOX_RESUMPTION.md) governs NEW payments and original-provider recovery. LOCAL_DEMO default/pause instructions below are historical. New EUR loans remain unavailable pending an automatic assessment policy. No hosted change has been made.
+
+
 > Current update (15 October 2026): [Meter credit and configured tariffs](METER_CREDIT_TARIFFS.md) supersedes the v1 fixed-price/account-score rules below. New UGX demo activity uses per-meter assessments, an 80% floor and the existing configured domestic billing engine. Follow that runbook for the two new migrations and backend-first APK rollout. Earlier fixed-price obligations retain their accepted terms.
 
 The opt-in `backend.alwaysdata_sandbox_settings` now defaults to

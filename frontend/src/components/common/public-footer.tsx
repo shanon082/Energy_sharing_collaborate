@@ -14,7 +14,7 @@ export default function PublicFooter() {
       <div className="max-w-7xl mx-auto px-4 md:px-8">
         <div className="border-t border-gray-200/80 dark:border-slate-800/70 py-10 mt-10 flex flex-col sm:flex-row items-center justify-between gap-6">
           <p className="text-gray-500 dark:text-gray-400 text-sm">
-            &copy; {new Date().getFullYear()} gPawa Inc. All rights
+            &copy; {new Date().getFullYear()} EnergyFlex. All rights
             reserved.
           </p>
           <ul className="flex flex-wrap items-center justify-center gap-6">

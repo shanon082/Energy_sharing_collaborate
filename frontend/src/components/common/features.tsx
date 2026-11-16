@@ -9,23 +9,23 @@ export default function Features() {
   const features = [
     {
       icon: CheckCircleIcon,
-      title: "Secure Energy Sharing",
-      desc: "Every transaction is recorded in your history. Share kWh between meters with a clear summary and your account password to confirm.",
+      title: "Transparent Unit Purchases",
+      desc: "Buy electricity using mobile payments and review clear transaction receipts and payment status.",
     },
     {
       icon: BoltIcon,
-      title: "Instant STS Token Delivery",
-      desc: "Purchase prepaid tokens via your mobile telecom service provider in seconds. Tokens conform to IEC 62055-41 and work on compatible Electricity Utility meters.",
+      title: "Meter-Ready Electricity",
+      desc: "Buy units for supported STS and AMI meters, with delivery and allocation status shown in your account.",
     },
     {
       icon: ChartBarIcon,
-      title: "Peer-to-Peer Unit Transfer",
-      desc: "Send electricity units directly from your meter to a neighbor's. STS meters receive keypad tokens while AMI meters auto-update.",
+      title: "Clear Loan Terms",
+      desc: "Review your loan amount, repayment schedule, and applicable interest before you accept an offer.",
     },
     {
       icon: CheckCircleIcon,
       title: "Micro-Electricity Loans",
-      desc: "gPawa credit engine offers instant micro-electricity loans capped at Uganda's statutory 2.8% per month, with no paperwork or branch visit.",
+      desc: "EnergyFlex supports electricity loans capped at Uganda's statutory 2.8% per month, with a simple online application.",
     },
   ];
 
@@ -46,10 +46,10 @@ export default function Features() {
           className="text-center mb-16"
         >
           <h3 className="text-3xl md:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-            Built for communities that share power
+            Built for reliable electricity access
           </h3>
           <p className="text-xl text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-            From Soroti to every campus grid - gPawa makes peer-to-peer electricity sharing simple, transparent, and fair.
+            EnergyFlex brings electricity purchases and loan access together in one clear, easy-to-use service.
           </p>
         </motion.div>
         <div className="grid gap-8 md:grid-cols-2">

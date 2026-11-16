@@ -3,6 +3,7 @@ from decimal import Decimal
 from datetime import timedelta
 import uuid
 from django.test import TestCase, override_settings
+from django.db import transaction
 from django.utils import timezone
 from loan.models import SandboxLoan, SandboxQuote
 from loan.sandbox_service import apply_loan, create_quote
@@ -14,7 +15,9 @@ from transactions.tests_demo_payments import DEMO, Fixtures
 @override_settings(**DEMO)
 class ConsumerSummaryTests(Fixtures, TestCase):
     def summary(self, **params):
-        return self.client.get("/api/v1/sandbox/summary/", params, **self.headers)
+        # Isolate expected DRF errors from TestCase's surrounding transaction.
+        with transaction.atomic():
+            return self.client.get("/api/v1/sandbox/summary/", params, **self.headers)
 
     def test_partial_repayment_matches_summary_and_details_without_mutating(self):
         quote = create_quote(self.owner, self.meter.pk, "5000", "LOAN")
@@ -47,6 +50,7 @@ class ConsumerSummaryTests(Fixtures, TestCase):
         payments = PaymentIntent.objects.bulk_create([PaymentIntent(owner=owner, sandbox_quote=loan.quote, sandbox_loan=loan,
             sandbox_context={"meter_id": meter.pk},
             purpose="LOAN_REPAYMENT", provider=provider, provider_reference=uuid.uuid4(), client_request_id=uuid.uuid4(),
+            provider_external_id=f"synthetic-history-{uuid.uuid4()}",
             amount=1, currency=currency, status="SETTLED",
             demo_eligible_at=timezone.now() + timedelta(minutes=5) if provider == "LOCAL_DEMO" else None) for loan in loans])
         if provider == "LOCAL_DEMO":
@@ -58,13 +62,20 @@ class ConsumerSummaryTests(Fixtures, TestCase):
             currency=currency, received=1, applied=1) for payment in payments])
 
     def test_summary_is_not_limited_to_the_history_page(self):
+        quote = create_quote(self.owner, self.meter.pk, "5000", "LOAN")
+        active = apply_loan(self.owner, quote.pk, quote.terms_hash, uuid.uuid4())[0]
+        self.settle(self.repayment(active, "2500"))
         self.historical_rows(103)
-        self.assertEqual(len(self.client.get("/api/v1/sandbox/loans/", **self.headers).data["loans"]), 100)
+        history = self.client.get("/api/v1/sandbox/loans/", **self.headers).data
+        self.assertEqual(len(history["loans"]), 101)
+        self.assertTrue(history["history"]["includes_older_active"])
+        self.assertIn(str(active.pk), [row["id"] for row in history["loans"]])
         value = self.summary(environment="UGX_DEMO").data
-        self.assertEqual(value["loan_count"], 103)
-        self.assertEqual(Decimal(value["principal"]), 103)
-        self.assertEqual(Decimal(value["applied_repayments"]), 103)
-        self.assertEqual(Decimal(value["outstanding"]), 0)
+        self.assertEqual(value["loan_count"], 104)
+        self.assertEqual(value["active_loan_count"], 1)
+        self.assertEqual(Decimal(value["principal"]), 5103)
+        self.assertEqual(Decimal(value["applied_repayments"]), 2603)
+        self.assertEqual(Decimal(value["outstanding"]), 2750)
 
     def test_owner_meter_and_currency_are_separate(self):
         self.historical_rows(2)

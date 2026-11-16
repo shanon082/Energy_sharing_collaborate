@@ -16,18 +16,18 @@ def test_domain():
     return ("UGX", DEMO_ENVIRONMENT, LOCAL_DEMO) if provider_mode() == LOCAL_DEMO else ("EUR", "MTN_SANDBOX", "MTN_SANDBOX")
 
 
-def require_demo():
-    if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is not True or provider_mode() != LOCAL_DEMO:
+def require_demo(*, recovery=False):
+    if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is not True or (not recovery and provider_mode() != LOCAL_DEMO):
         raise PermissionDenied({"code": "DEMO_DISABLED", "message": "Local demo payments are unavailable in this deployment mode."})
 
 
-def require_mtn_sandbox():
-    if provider_mode() != "MTN_SANDBOX":
-        raise PermissionDenied({"code": "MTN_PAUSED", "message": "MTN integration is paused. Existing EUR records remain available; demo payments cannot settle them."})
+def require_mtn_sandbox(*, recovery=False):
+    if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is not True or (not recovery and provider_mode() != "MTN_SANDBOX"):
+        raise PermissionDenied({"code": "MTN_PAUSED", "message": "New MTN collections are unavailable in this mode. Existing references retain their original provider for reconciliation."})
 
 
 def demo_configuration(environ):
-    mode = environ.get("PROTOTYPE_PAYMENT_PROVIDER", LOCAL_DEMO).strip()
+    mode = environ.get("PROTOTYPE_PAYMENT_PROVIDER", "MTN_SANDBOX").strip()
     if mode not in {LOCAL_DEMO, "MTN_SANDBOX"}:
         raise ImproperlyConfigured("PROTOTYPE_PAYMENT_PROVIDER must be LOCAL_DEMO or MTN_SANDBOX in the prototype profile")
     cfg = {"id": environ.get("DEMO_POLICY_VERSION", "DEMO-UGX-v2"),

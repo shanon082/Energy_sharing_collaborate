@@ -10,9 +10,13 @@ from backend.demo_config import provider_mode, require_mtn_sandbox
 from transactions.payment_settlement import PaymentSettlementError
 
 
-def configured():
+def configured(*, recovery=False):
     cfg = getattr(settings, "MTN_SANDBOX_CONFIG", {})
-    return bool(provider_mode() == "MTN_SANDBOX" and getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
+    try:
+        uuid.UUID(str(cfg.get("API_USER_ID", "")))
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return bool((recovery or provider_mode() == "MTN_SANDBOX") and getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
         and cfg.get("BASE_URL") == BASE_URL and cfg.get("ENVIRONMENT") == "sandbox" and cfg.get("CURRENCY") == "EUR"
         and all(cfg.get(key) for key in ("SUBSCRIPTION_KEY", "API_USER_ID", "API_KEY")))
 
@@ -25,16 +29,17 @@ def test_msisdn(value):
 
 
 class MTNSandbox:
-    def __init__(self):
-        require_mtn_sandbox()
-        if not configured():
-            raise PaymentSettlementError("MTN sandbox credentials are missing or its isolated EUR configuration is invalid.")
+    def __init__(self, *, recovery=False):
+        self.recovery = recovery
+        require_mtn_sandbox(recovery=recovery)
+        if not configured(recovery=recovery):
+            raise PaymentSettlementError("Sandbox payments unavailable")
         self.cfg = settings.MTN_SANDBOX_CONFIG
         uuid.UUID(self.cfg["API_USER_ID"])
 
     @sensitive_variables()
     def token(self):
-        require_mtn_sandbox()
+        require_mtn_sandbox(recovery=self.recovery)
         try:
             response = requests.post(BASE_URL + "/collection/token/", auth=(self.cfg["API_USER_ID"], self.cfg["API_KEY"]),
                 headers={"Ocp-Apim-Subscription-Key": self.cfg["SUBSCRIPTION_KEY"], "Content-Type": "application/json"}, timeout=(3, 7), allow_redirects=False)
@@ -62,7 +67,7 @@ class MTNSandbox:
             response = requests.post(BASE_URL + "/collection/v1_0/requesttopay", headers=headers,
                 json={"amount": str(intent.amount), "currency": "EUR", "externalId": intent.provider_external_id,
                       "payer": {"partyIdType": "MSISDN", "partyId": test_msisdn(intent.sandbox_context["msisdn"])},
-                      "payerMessage": "SANDBOX NO REAL MONEY", "payeeNote": "gPawa test " + intent.purpose},
+                      "payerMessage": "SANDBOX NO REAL MONEY", "payeeNote": "EnergyFlex test " + intent.purpose},
                 timeout=(3, 7), allow_redirects=False)
             return "ACCEPTED" if response.status_code == 202 else "OUTCOME_UNKNOWN"
         except requests.RequestException:
@@ -70,7 +75,7 @@ class MTNSandbox:
 
     @sensitive_variables()
     def status(self, intent):
-        require_mtn_sandbox()
+        require_mtn_sandbox(recovery=self.recovery)
         try:
             response = requests.get(BASE_URL + "/collection/v1_0/requesttopay/" + str(intent.provider_reference),
                 headers=self.headers(), timeout=(3, 7), allow_redirects=False)

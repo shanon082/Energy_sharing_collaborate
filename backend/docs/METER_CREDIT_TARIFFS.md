@@ -1,5 +1,8 @@
 # Meter credit and configured tariffs — testing deployment
 
+> MTN resumption update (2026-11-17): [MTN_SANDBOX_RESUMPTION.md](MTN_SANDBOX_RESUMPTION.md) governs NEW payments and original-provider recovery. LOCAL_DEMO default/pause instructions below are historical. New EUR loans remain unavailable pending an automatic assessment policy. No hosted change has been made.
+
+
 **Deploy this backend, review/apply the two new migrations, and initialize existing
 test meters before testing the new APK against alwaysdata.** Nothing in this
 change was uploaded or executed on the host. Authentication, Django account-page

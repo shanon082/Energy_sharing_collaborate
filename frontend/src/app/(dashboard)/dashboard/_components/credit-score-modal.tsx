@@ -12,14 +12,13 @@ import {
   TrendingDown, 
   Clock, 
   Wallet, 
-  Share2, 
+  Activity,
   CreditCard,
   Zap,
   Brain,
   Target,
   BarChart3,
   Star,
-  Activity,
   Shield
 } from "lucide-react";
 import { get } from "@/lib/fetch";
@@ -286,13 +285,13 @@ export default function CreditScoreModal({ isOpen, onClose }: CreditScoreModalPr
                   <div>
                     <div className="flex justify-between text-sm mb-1">
                       <span className="flex items-center gap-1">
-                        <Share2 className="h-3 w-3" />
-                        Historical Sharing Activity
+                        <Activity className="h-3 w-3" />
+                        Historical Unit Transfers
                       </span>
                       <span className="font-medium">{data?.components.sharing_behavior}%</span>
                     </div>
                     <Progress value={data?.components.sharing_behavior} className="h-2" />
-                    <p className="text-xs text-muted-foreground mt-1">Sharing units builds community trust</p>
+                    <p className="text-xs text-muted-foreground mt-1">Legacy unit-transfer records may contribute to this score.</p>
                   </div>
 
                   <div>

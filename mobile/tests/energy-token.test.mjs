@@ -30,3 +30,10 @@ test('new enrollment is11 digits but historical meter selection does not reinter
   const legacy = { id: 3, meter_number: 'OLD-A/001', label: 'Historical', architecture: 'AMI', status: 'ACTIVE' };
   assert.deepEqual(parseMeters({ success: true, data: { has_meter: true, meters: [legacy] } }), [legacy]);
 });
+
+test('AC lab application means durable device credit, never load switching', () => {
+  const applied = parseEnergyTokens({ tokens: [{ ...token, state: 'APPLIED', application_environment: 'AC_LAB' }] })[0];
+  assert.match(tokenLoadingLabel(applied), /Credit saved on AC lab device/);
+  assert.match(tokenLoadingLabel(applied), /relay output disabled/);
+  assert.doesNotMatch(tokenLoadingLabel(applied), /Units loaded/);
+});

@@ -19,7 +19,7 @@ export default function ContactPage() {
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 p-6">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">General &amp; support</h2>
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-            Questions about your account, meter, payments, or sharing units.
+            Questions about your account, meter, unit purchases, or loans.
           </p>
           <a
             href={`mailto:${SUPPORT_EMAIL}?subject=EnergyFlex%20support%20request`}
@@ -52,7 +52,7 @@ export default function ContactPage() {
         <li>The email or phone number on your EnergyFlex account</li>
         <li>Your meter number (if applicable)</li>
         <li>A short description of what you tried and any error message you saw</li>
-        <li>Screenshots for payment or sharing issues (if you can)</li>
+        <li>Screenshots for purchase or loan issues (if you can)</li>
       </ul>
 
       <h2>Self-service</h2>

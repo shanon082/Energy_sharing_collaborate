@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   Smartphone,
   Wallet,
-  Share2,
   Zap,
   Phone,
   Monitor,
@@ -23,7 +22,7 @@ const steps = [
     number: "2",
     title: "Register your electricity meter",
     description:
-      "Add your meter number once. gPawa supports prepaid token meters (STS) and smart networked meters (AMI).",
+      "Add your meter number once. EnergyFlex supports prepaid token meters (STS) and smart networked meters (AMI).",
     icon: Zap,
   },
   {
@@ -35,10 +34,10 @@ const steps = [
   },
   {
     number: "4",
-    title: "Use, share, or borrow",
+    title: "Apply for an electricity loan",
     description:
-      "Load units onto your meter, send kWh to family or a neighbor, or apply for a small electricity loan if you are short. Interest is capped at Uganda's legal maximum of 2.8% per month.",
-    icon: Share2,
+      "If you need extra electricity, review your eligible amount and repayment terms before applying. Interest is capped at Uganda's legal maximum of 2.8% per month.",
+    icon: Wallet,
   },
 ];
 
@@ -46,7 +45,7 @@ const channels = [
   {
     icon: Monitor,
     name: "Web portal",
-    detail: "Full dashboard — buy units, share, loans, and meter history.",
+    detail: "Full dashboard — buy units, apply for loans, and review meter history.",
   },
   {
     icon: Smartphone,
@@ -78,11 +77,11 @@ export default function HowItWorks() {
             How it works
           </p>
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            Electricity in four simple steps
+            Electricity access in four simple steps
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-            No branch visit, no agent in the middle. You buy real electricity units, see exactly what you pay for,
-            and move power between meters when someone you trust needs help.
+            Buy electricity units or apply for a loan when you need extra power. Review your purchases,
+            loan terms, repayments, and meter history in one place.
           </p>
         </motion.div>
 
@@ -116,7 +115,7 @@ export default function HowItWorks() {
           className="rounded-3xl bg-gradient-to-br from-blue-50 to-emerald-50 dark:from-blue-950/40 dark:to-emerald-950/30 border border-blue-100 dark:border-slate-800 p-8 md:p-10"
         >
           <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2 text-center">
-            Use gPawa your way
+            Use EnergyFlex your way
           </h3>
           <p className="text-center text-gray-600 dark:text-gray-300 mb-8 max-w-xl mx-auto text-sm">
             The same wallet and meter work across all channels — start on USSD and finish on the web, or the other way around.
@@ -144,7 +143,7 @@ export default function HowItWorks() {
               href="/about"
               className="inline-flex px-6 py-3 rounded-xl font-semibold text-blue-600 dark:text-blue-400 border-2 border-blue-600/30 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-all"
             >
-              Learn more about gPawa
+              Learn more about EnergyFlex
             </Link>
           </div>
         </motion.div>

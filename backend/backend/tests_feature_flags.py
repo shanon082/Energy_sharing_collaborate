@@ -10,11 +10,12 @@ from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.models import User
-from backend.feature_config import FEATURE_ENV_VARS, load_feature_flags, parse_feature_bool
+from backend.feature_config import FEATURE_ENV_VARS, RETIRED_FEATURES, load_feature_flags, parse_feature_bool
 from backend.features import FeatureDisabled
 
 
 OFF = {feature: False for feature in FEATURE_ENV_VARS}
+PUBLISHED_OFF = {**OFF, **{feature: False for feature in RETIRED_FEATURES}}
 
 
 def call_view(method, path, *, user=None, data=None):
@@ -41,7 +42,7 @@ class FeatureConfigurationTests(SimpleTestCase):
     def test_request_parameters_cannot_enable_features(self):
         response = call_view("get", "/api/v1/features/?peer_sharing=true&ussd=1")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["features"], OFF)
+        self.assertEqual(response.data["features"], PUBLISHED_OFF)
 
     @override_settings(MOBILE_PAYMENT_ACTIONS_ENABLED=False)
     def test_mobile_actions_are_server_controlled_and_disabled_by_default(self):
@@ -103,11 +104,18 @@ class DeferredRouteTests(SimpleTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["code"], "FEATURE_DISABLED")
 
-    def test_flag_can_be_reenabled_by_server_configuration(self):
-        with override_settings(FEATURE_FLAGS={**OFF, "peer_sharing": True}):
+    def test_retired_sharing_features_cannot_be_reenabled_by_server_configuration(self):
+        flags = {**OFF, "peer_sharing": True, "meter_transfers": True}
+        with override_settings(FEATURE_FLAGS=flags):
             response = call_view("get", "/api/v1/share/receiver-preview/", user=self.user)
-        self.assertEqual(response.status_code, 400)
-        self.assertNotEqual(response.data.get("code"), "FEATURE_DISABLED")
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.data["code"], "FEATURE_DISABLED")
+            self.assertEqual(response.data["feature"], "peer_sharing")
+
+            response = call_view("post", "/api/v1/share/transfer-units/", user=self.user)
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.data["code"], "FEATURE_DISABLED")
+            self.assertEqual(response.data["feature"], "meter_transfers")
 
     def test_ussd_meter_lookup_needs_peer_sharing_as_well(self):
         with override_settings(FEATURE_FLAGS={**OFF, "ussd": True}):

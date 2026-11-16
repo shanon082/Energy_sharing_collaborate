@@ -28,7 +28,7 @@ import { getApiErrorMessage } from "@/lib/api-response";
 import {
   applyWalletUnits,
   type AmiLoadSuccessResult,
-} from "@/app/(dashboard)/dashboard/share/actions";
+} from "@/app/(dashboard)/dashboard/meter-allocation/actions";
 import { generateTokenFromWallet } from "@/app/(dashboard)/dashboard/my-meters/actions";
 import type { UserMeter } from "@/interface/meter.interface";
 

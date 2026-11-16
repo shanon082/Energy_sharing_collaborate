@@ -17,9 +17,9 @@ export default function PrivacyPage() {
     >
       <h2>1. Who we are</h2>
       <p>
-        EnergyFlex (&ldquo;we&rdquo;, &ldquo;us&rdquo;) operates a digital platform for buying, sharing, and borrowing
-        electricity units. This policy applies to the EnergyFlex website, mobile application, USSD service, and related
-        APIs.
+        EnergyFlex (&ldquo;we&rdquo;, &ldquo;us&rdquo;) operates a digital platform for buying electricity units and
+        applying for or repaying electricity loans. This policy applies to the EnergyFlex website, mobile application,
+        USSD service, and related APIs.
       </p>
 
       <h2>2. Information we collect</h2>
@@ -33,8 +33,8 @@ export default function PrivacyPage() {
           token delivery or smart-meter updates.
         </li>
         <li>
-          <strong>Transaction data</strong> — purchases, shares, transfers, loan applications, repayments, amounts,
-          timestamps, and payment references from mobile-money providers.
+          <strong>Transaction data</strong> — purchases, loan applications, repayments, amounts, timestamps, and
+          payment references from mobile-money providers, plus historical records retained for audit requirements.
         </li>
         <li>
           <strong>Usage data</strong> — electricity consumption readings where available from connected smart meters.
@@ -49,7 +49,7 @@ export default function PrivacyPage() {
       <ul>
         <li>Provide and improve the EnergyFlex service</li>
         <li>Process payments and deliver units to your meter</li>
-        <li>Send service notifications (for example share confirmations, low-balance alerts, loan reminders)</li>
+        <li>Send service notifications (for example purchase receipts, low-balance alerts, and loan reminders)</li>
         <li>Comply with financial and energy regulations applicable in Uganda</li>
         <li>Detect fraud, abuse, and unauthorized access</li>
         <li>Respond to support requests you send us</li>

@@ -47,7 +47,7 @@ def create_payment(owner, data):
                     or (purpose == "PURCHASE" and data.get("terms_hash") != prior.sandbox_quote.terms_hash)):
                 raise ValidationError({"code": "REQUEST_ID_CONFLICT"})
             return prior, False
-        if PaymentIntent.objects.filter(owner=owner, provider=provider, status="PENDING").exists():
+        if PaymentIntent.objects.filter(owner=owner, provider__in=["LOCAL_DEMO", "MTN_SANDBOX"], status="PENDING").exists():
             raise ValidationError({"code": "PAYMENT_PENDING_RECONCILIATION", "message": "Reconcile the existing sandbox request before initiating another."})
         loan = None
         if purpose == "PURCHASE":
@@ -95,13 +95,14 @@ def create_payment(owner, data):
 
 def validate_sandbox_evidence(intent, evidence):
     require_sandbox()
-    require_mtn_sandbox()
+    require_mtn_sandbox(recovery=True)
     ctx = intent.sandbox_context or {}
     if (intent.provider != "MTN_SANDBOX" or evidence.get("provider") != "MTN_SANDBOX"
             or intent.currency != "EUR" or evidence.get("currency") != "EUR"
             or str(evidence.get("reference_id")) != str(intent.provider_reference)
             or evidence.get("external_id") != intent.provider_external_id
-            or ctx.get("purpose") != intent.purpose or ctx.get("owner_id") != intent.owner_id):
+            or ctx.get("purpose") != intent.purpose or ctx.get("owner_id") != intent.owner_id
+            or ctx.get("currency") != "EUR" or ctx.get("environment") != "MTN_SANDBOX"):
         raise PaymentSettlementError("Sandbox provider/reference/currency/purpose does not match.")
     try:
         amount = Decimal(str(evidence.get("amount")))
@@ -111,17 +112,30 @@ def validate_sandbox_evidence(intent, evidence):
         raise PaymentSettlementError("Sandbox amount does not match.") from None
     if evidence.get("payer") != ctx.get("msisdn"):
         raise PaymentSettlementError("Sandbox payer does not match.")
-    if evidence.get("status") == "SUCCESS" and not str(evidence.get("transaction_id") or "").strip():
+    if evidence.get("status") == "SUCCESS" and (not isinstance(evidence.get("transaction_id"), str) or not evidence["transaction_id"].strip()):
         raise PaymentSettlementError("Sandbox successful status lacks a financial transaction identity; reconcile with MTN.")
     if (not intent.sandbox_quote_id or (intent.purpose == "PURCHASE" and (not intent.meter_id or intent.sandbox_loan_id))
             or (intent.purpose == "LOAN_REPAYMENT" and (not intent.sandbox_loan_id or intent.meter_id))):
         raise PaymentSettlementError("Sandbox source binding is invalid.")
     quote = intent.sandbox_quote
     if (quote.owner_id != intent.owner_id or quote.purpose != intent.purpose or quote.amount != intent.amount
+            or quote.currency != "EUR" or quote.environment != "MTN_SANDBOX"
+            or quote.terms.get("policy", {}).get("currency") != "EUR"
             or quote.meter_id != ctx.get("meter_id") or quote.terms != ctx.get("terms")
             or (intent.purpose == "PURCHASE" and quote.meter_id != intent.meter_id)
             or (intent.purpose == "LOAN_REPAYMENT" and quote.terms.get("loan_id") != str(intent.sandbox_loan_id))):
         raise PaymentSettlementError("Sandbox accepted terms/source binding does not match.")
+    if intent.purpose == "PURCHASE":
+        from loan.sandbox_service import energy_price, eur_pricing_available
+        terms = quote.terms
+        try:
+            if not eur_pricing_available(terms["policy"]):
+                raise ValueError
+            units, billed, residual = energy_price(intent.amount, terms["policy"])
+            if units <= 0 or (units, billed, residual) != tuple(Decimal(terms[key]) for key in ("energy_kwh", "billed", "residual")):
+                raise ValueError
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            raise PaymentSettlementError("Frozen EUR pricing does not reproduce the purchase.") from None
 
 
 def apply_sandbox_settlement(intent):
@@ -156,7 +170,7 @@ def apply_sandbox_settlement(intent):
 def reconcile_sandbox_payment(intent_id):
     """Lease persists across process restarts; external I/O never holds DB locks."""
     require_sandbox()
-    require_mtn_sandbox()
+    require_mtn_sandbox(recovery=True)
     now = timezone.now()
     lease = uuid.uuid4()
     with transaction.atomic():
@@ -166,6 +180,10 @@ def reconcile_sandbox_payment(intent_id):
         if intent.reconcile_after > now:
             return intent, False
         submit = intent.submission_state == "NEW"
+        if submit:
+            # Pausing NEW collections must not prevent status recovery of an
+            # already submitted reference. Never send a new charge while paused.
+            require_mtn_sandbox()
         intent.reconcile_lease_id = lease; intent.reconcile_lease_until = now + timedelta(seconds=90)
         intent.reconcile_attempts += 1
         if submit:
@@ -174,7 +192,7 @@ def reconcile_sandbox_payment(intent_id):
     effect = False
     error = ""
     try:
-        adapter = MTNSandbox()
+        adapter = MTNSandbox(recovery=not submit)
         if submit:
             state = adapter.initiate(intent)
             PaymentIntent.objects.filter(pk=intent.pk, reconcile_lease_id=lease).update(submission_state=state)

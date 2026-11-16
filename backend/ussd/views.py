@@ -349,7 +349,7 @@ def _reply_parent_menu(session: UssdSession, user, raw_steps: list[str]):
 
 
 def _main_menu_text() -> str:
-    lines = ["gPawa", "1. Wallet & Meter", "2. Buy Units", "3. Loans"]
+    lines = ["EnergyFlex", "1. Wallet & Meter", "2. Buy Units", "3. Loans"]
     if feature_enabled("peer_sharing"):
         lines.append("4. Share Units")
     lines.extend(["5. My Tokens", "6. Manage", "7. Alerts", "8. Exit", "9. Energy Usage"])
@@ -1498,7 +1498,7 @@ def ussd_entry(request):
             ussd_session.last_text = text
             ussd_session.is_active = False
             ussd_session.save(update_fields=["user", "last_text", "is_active", "updated_at"])
-            return _session_reply(ussd_session, "END", "Thank you for using gPawa.", menu="exit")
+            return _session_reply(ussd_session, "END", "Thank you for using EnergyFlex.", menu="exit")
 
         # 9) Energy Usage — weekly text summary (AMI only)
         if steps[0] == "9":

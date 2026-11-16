@@ -10,13 +10,12 @@ export default function AboutPage() {
   return (
     <PublicPageShell
       title="About EnergyFlex"
-      subtitle="A digital platform that lets people buy, and borrow electricity units — fairly and transparently."
+      subtitle="A digital platform for buying electricity units and applying for loans — fairly and transparently."
     >
       <h2>Our mission</h2>
       <p>
-        EnergyFlex (&ldquo;give power&rdquo;) helps households, campuses, and community mini-grids move electricity
-        units between meters without queues, opaque fees, or unnecessary middlemen. We believe access to power
-        should be as straightforward as sending mobile money.
+        EnergyFlex helps households, campuses, and community mini-grids buy electricity units and access
+        transparent electricity loans without queues, opaque fees, or unnecessary middlemen.
       </p>
 
       <h2>What we do</h2>
@@ -24,10 +23,6 @@ export default function AboutPage() {
         <li>
           <strong>Buy units</strong> — Pay with mobile money and receive kilowatt-hours (kWh) credited to your wallet
           or meter, priced with ERA-compliant block tariffs.
-        </li>
-        <li>
-          <strong>Share units</strong> — Send electricity to another person&apos;s meter. Token (STS) meters receive a
-          keypad code; smart (AMI) meters update automatically over the network.
         </li>
         <li>
           <strong>Borrow units</strong> — Apply for a small electricity loan when you are short, with interest capped
@@ -42,8 +37,7 @@ export default function AboutPage() {
       <h2>Who it is for</h2>
       <p>
         EnergyFlex is built for everyday electricity consumers — families, students, small businesses, and institutions
-        on shared or campus grids. It is especially useful where neighbors already help each other with power but
-        lack a safe, recorded way to do it.
+        that need a straightforward way to purchase electricity or apply for a short-term loan.
       </p>
 
       <h2>Built for trust and compliance</h2>
@@ -51,7 +45,7 @@ export default function AboutPage() {
         <li>Transparent pricing — you see units and amounts before you confirm.</li>
         <li>Official tariff blocks aligned with Uganda Electricity Regulatory Authority (ERA) guidance.</li>
         <li>Lending limits and interest caps enforced in software, not left to informal agreements.</li>
-        <li>Every share, purchase, and loan action is logged for your history and for authorized staff review.</li>
+        <li>Purchases, loan applications, and repayments are recorded for your history and authorized staff review.</li>
       </ul>
 
       <h2>Technology</h2>

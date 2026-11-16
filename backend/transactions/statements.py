@@ -21,7 +21,7 @@ def build_statement_pdf_bytes(
 ) -> bytes:
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = [
-        "gPawa Transaction Statement",
+        "EnergyFlex Transaction Statement",
         f"Account: {user_email}",
         f"Period: {start_date} to {end_date}",
         f"Generated: {generated_at}",

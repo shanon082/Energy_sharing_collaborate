@@ -1,11 +1,11 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, Check, ChevronRight, CreditCard, Gauge, Home, Leaf, LogOut, Plus, RefreshCw, ShieldCheck, UserRound, Zap } from "lucide-react";
 import SandboxConsumer from "../sandbox-consumer";
 import { consumerClient, useConsumerRead } from "./read";
-import { consumerScreen, CONSUMER_PATHS, defaultConsumerMeter, exactAmount, parseConsumerSummary, record, type ConsumerScreen } from "../../lib/consumer-parity";
+import { consumerScreen, CONSUMER_PATHS, ConsumerReadScope, defaultConsumerMeter, exactAmount, parseConsumerSummary, record, type ConsumerScreen } from "../../lib/consumer-parity";
 import { sandboxCapabilities, parseTestPayment, type Assessment, type TestMeter } from "../../lib/sandbox";
 import { formatEnergy, formatMoney, meterReadEnvironment } from "../../lib/sandbox-presentation";
 import { normalizePrototypeMeterNumber, parsePrototypeEnrollment, METER_NUMBER_MESSAGE } from "../../lib/meter-enrollment";
@@ -17,15 +17,17 @@ import ConsumerAccount from "./account";
 type Account = { id: number; first_name: string; last_name: string; email: string; email_verified: boolean };
 function accountData(raw: unknown): Account {
   const row = record(raw);
-  if (!Number.isSafeInteger(row.id) || typeof row.email !== "string" || typeof row.first_name !== "string") throw new Error("Account unavailable.");
+  if (!Number.isSafeInteger(row.id) || Number(row.id) <= 0 || typeof row.email !== "string" || typeof row.first_name !== "string" || typeof row.last_name !== "string" || typeof row.email_verified !== "boolean") throw new Error("Account unavailable.");
   return row as Account;
 }
 function onboardingData(raw: unknown) {
   const row = record(raw);
   if (!Array.isArray(row.meters)) throw new Error("Meters unavailable.");
+  const ids = new Set<number>();
   const meters = row.meters.map(value => {
     const meter = record(value);
-    if (!Number.isSafeInteger(meter.id) || typeof meter.meter_number !== "string" || typeof meter.label !== "string" || typeof meter.status !== "string") throw new Error("Meter data unavailable.");
+    if (!Number.isSafeInteger(meter.id) || Number(meter.id) <= 0 || ids.has(Number(meter.id)) || typeof meter.meter_number !== "string" || !meter.meter_number || typeof meter.label !== "string" || typeof meter.status !== "string") throw new Error("Meter data unavailable.");
+    ids.add(Number(meter.id));
     return meter as TestMeter;
   });
   return { meters, enrollment: row.sandbox_self_enrollment === true };
@@ -52,7 +54,7 @@ export function ConsumerWorkspace({ screen }: { screen: ConsumerScreen }) {
   const flags = useConsumerRead("features/", flagsData, attempt, 0);
   const onboarding = useConsumerRead("meter/mobile-onboarding/", onboardingData, attempt, 0);
   const error = account.error || flags.error || onboarding.error;
-  if (error || !account.value || !flags.value || !onboarding.value) return <div className="consumer-app consumer-initial"><Leaf size={32} /><h1>gPawa</h1>
+  if (error || !account.value || !flags.value || !onboarding.value) return <div className="consumer-app consumer-initial"><Leaf size={32} /><h1>EnergyFlex</h1>
     {error ? <><p role="alert">{error}</p><button onClick={() => retry(value => value + 1)}>Try again</button></> : <p role="status">Loading your account…</p>}</div>;
   return <Workspace key={`${account.value.id}:${flags.value.provider ?? "unavailable"}`} account={account.value} capabilities={flags.value} initialMeters={onboarding.value.meters} enrollment={onboarding.value.enrollment} screen={screen} />;
 }
@@ -66,6 +68,19 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
   const meter = defaultConsumerMeter(meters, selected);
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
+  const meterReads = useRef(new ConsumerReadScope());
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  useEffect(() => {
+    const scope = meterReads.current;
+    const ticket = scope.begin();
+    void consumerClient.get<unknown>("meter/mobile-onboarding/").then(onboardingData).then(value => {
+      if (!scope.current(ticket)) return;
+      setMeters(value.meters); setAssignmentError(null);
+    }).catch(() => {
+      if (scope.current(ticket)) setAssignmentError("Meter assignments could not be refreshed. The displayed list may be stale; retry before continuing.");
+    });
+    return () => scope.invalidate();
+  }, [account.id, revision]);
   useEffect(() => {
     const focused = () => refresh();
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 60000);
@@ -101,6 +116,7 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
   }, []);
   async function addMeter(event: FormEvent) {
     event.preventDefault(); if (enrolling || !enrollment) return;
+    meterReads.current.invalidate();
     setEnrolling(true); setMeterError(null); setNotice(null);
     try {
       const normalized = normalizePrototypeMeterNumber(number);
@@ -119,13 +135,14 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
   const score = assessment.value?.assessment_status === "READY" || environment !== "UGX_DEMO" ? assessment.value?.score : null;
   const headlineValue = summary.loading ? "Loading…" : summary.value ? money(summary.value.outstanding) : "Unavailable";
   return <div className="consumer-app">
-    <aside className="consumer-sidebar"><Link className="consumer-brand" href="/dashboard"><span><Leaf size={25} /></span>gPawa<span className="brand-period">.</span></Link>
+    <aside className="consumer-sidebar"><Link className="consumer-brand" href="/dashboard"><span><Leaf size={25} /></span>EnergyFlex<span className="brand-period">.</span></Link>
       <p className="nav-caption">YOUR WORKSPACE</p><nav aria-label="Consumer navigation">{navigation.map(key => { const Icon = icons[key]; return <Link key={key} href={CONSUMER_PATHS[key]} aria-current={selectedScreen === key ? "page" : undefined}><Icon size={20} />{names[key]}{selectedScreen === key && <ChevronRight size={16} />}</Link>; })}</nav>
       <div className="sidebar-bottom"><div className="sidebar-help"><ShieldCheck size={22} /><strong>Your energy, simplified.</strong><p>Manage your meters and electricity credit in one place.</p></div><button className="sidebar-logout" onClick={() => void signOut()}><LogOut size={18} />Sign out</button></div>
     </aside>
-    <div className="consumer-body"><header className="consumer-header"><Link href="/dashboard" className="mobile-brand"><Leaf size={22} />gPawa</Link><span className="desktop-breadcrumb">Your account <ChevronRight size={14} /> <strong>{names[screen]}</strong></span><div className="header-actions"><Link href="/dashboard/transactions" aria-label="Activity"><Activity size={20} /></Link><span className="header-divider" /><button className="account-avatar" aria-label="Open account" onClick={() => go("account")}>{account.first_name.charAt(0) || "U"}</button><span className="header-name">{account.first_name}<small>Consumer account</small></span></div></header>
+    <div className="consumer-body"><header className="consumer-header"><Link href="/dashboard" className="mobile-brand"><Leaf size={22} />EnergyFlex</Link><span className="desktop-breadcrumb">Your account <ChevronRight size={14} /> <strong>{names[screen]}</strong></span><div className="header-actions"><Link href="/dashboard/transactions" aria-label="Activity"><Activity size={20} /></Link><span className="header-divider" /><button className="account-avatar" aria-label="Open account" onClick={() => go("account")}>{account.first_name.charAt(0) || "U"}</button><span className="header-name">{account.first_name}<small>Consumer account</small></span></div></header>
       <main className="consumer-main"><div className="consumer-heading"><div><p className="consumer-eyebrow">{screen === "home" ? "YOUR ENERGY, SIMPLIFIED" : "YOUR WORKSPACE"}</p><h1>{screen === "home" ? `Hello, ${account.first_name || "there"}` : names[screen]}{screen === "home" && <span className="greeting-dot">.</span>}</h1><p>{({ home: "A clear view of your electricity and credit.", meters: "Your meters, all in one place.", loans: "Your electricity credit and repayments.", apply: "Choose an amount, then review your terms.", purchase: "Buy electricity for your selected meter.", activity: "Your purchases, loans and repayments.", account: "Manage your account and preferences." })[screen]}</p></div><button className="consumer-refresh" onClick={refresh}><RefreshCw size={16} />Refresh</button></div>
         <div className="consumer-selection">{selector}<span><span className="connection-dot" />Hardware readings unavailable until a meter is connected.</span></div>
+        {assignmentError && <div className="consumer-alert" role="alert">{assignmentError} <button onClick={refresh}>Retry</button></div>}
         {!capabilities.enabled && <div className="consumer-alert" role="status">Consumer payments and credit are unavailable in this environment. No financial values have been assumed.</div>}
         {screen === "home" && <>
           <div className="consumer-overview"><section className="consumer-energy"><div className="energy-heading"><Zap size={20} /><span>Cloud energy</span><span className="allocation-label">ALLOCATION</span></div><div className="energy-amount">{energy.loading ? "Loading…" : energy.value ? formatEnergy(energy.value.available) : "Unavailable"}</div><p>{meter ? `Available for ${meter.label || "your meter"}` : "Select a meter to view its entitlement"}</p><div className="energy-foot"><span>Reserved / unresolved <strong>{energy.value ? formatEnergy(energy.value.pending) : "—"}</strong></span><Link href="/dashboard/my-meters">View details <ArrowUpRight size={17} /></Link></div></section>
@@ -142,7 +159,7 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
         <div className="consumer-finance-shell" hidden={!(screen === "loans" || screen === "apply" || screen === "purchase" || screen === "activity")}>
           {capabilities.enabled && <SandboxConsumer client={consumerClient} owner={account.id} meters={meters} selectedMeter={meter} capabilities={capabilities} surface="web" view={screen === "loans" || screen === "apply" || screen === "purchase" || screen === "activity" ? screen : "hidden"} onSelectMeter={select} onAddMeter={() => go("meters")} onNavigate={destination => go(destination)} onChanged={refresh} refreshVersion={revision} />}
         </div>
-        <footer className="consumer-footer"><Leaf size={15} />gPawa <span>Electricity, within reach.</span><span>Cloud records · hardware connection pending</span></footer>
+        <footer className="consumer-footer"><Leaf size={15} />EnergyFlex <span>Electricity, within reach.</span><span>Cloud records · hardware connection pending</span></footer>
       </main>
     </div><nav className="consumer-bottom-nav" aria-label="Mobile navigation">{navigation.filter(key => key !== "activity").map(key => { const Icon = icons[key]; return <Link key={key} href={CONSUMER_PATHS[key]} aria-current={selectedScreen === key ? "page" : undefined}><Icon size={21} /><span>{names[key]}</span></Link>; })}</nav>
   </div>;

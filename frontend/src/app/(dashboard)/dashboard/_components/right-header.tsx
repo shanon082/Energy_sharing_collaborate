@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import logout from "../logout";
-import { GpawaLogo, LOGO_SIZES } from "@/components/common/gpawa-logo";
+import { EnergyFlexLogo, LOGO_SIZES } from "@/components/common/energyflex-logo";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { ModeToggle } from "@/components/theme-toggle";
@@ -84,7 +84,7 @@ export default function RightHeader({ onProfileClick, onMeterClick }: RightHeade
         <SheetContent side="left" className="flex w-[88vw] max-w-[360px] flex-col overflow-y-auto">
           <SheetTitle className="sr-only">Navigation menu</SheetTitle>
           <nav className="grid gap-2 text-lg font-medium">
-            <GpawaLogo
+            <EnergyFlexLogo
               href="/"
               textSize={LOGO_SIZES.sidebar.textSize}
               logoSize={LOGO_SIZES.sidebar.logoSize}

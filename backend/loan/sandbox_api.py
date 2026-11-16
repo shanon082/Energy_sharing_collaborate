@@ -31,6 +31,9 @@ class SandboxAssessmentView(SandboxConsumerView):
         cfg = policy()
         result = assessment(request.user, meter_id=request.query_params.get("meter_id"))
         pricing = {"available": True, "message": ""}
+        if cfg.get("currency") == "EUR":
+            from loan.sandbox_service import eur_pricing_available
+            pricing = {"available": eur_pricing_available(cfg), "message": "" if eur_pricing_available(cfg) else "EUR test pricing unavailable; a versioned EUR policy is required."}
         if cfg.get("environment") == "UGX_DEMO":
             from loan.demo_tariffs import pricing_inputs, fingerprint
             try:
@@ -57,8 +60,14 @@ class SandboxQuoteView(SandboxConsumerView):
 class SandboxLoanView(SandboxConsumerView):
     def get(self, request):
         from loan.consumer_summary import loans_with_applied
-        rows = loans_with_applied(SandboxLoan.objects.filter(owner=request.user)).select_related("energy_allocation").order_by("-created_at")[:100]
-        return Response({"loans": [loan_record(row) for row in rows]})
+        rows = loans_with_applied(SandboxLoan.objects.filter(owner=request.user)).select_related("energy_allocation")
+        recent = list(rows.order_by("-created_at", "-pk")[:100])
+        # An older outstanding obligation must remain visible/repayable even
+        # when more recent historical decisions fill the bounded history.
+        older_active = list(rows.filter(status="DISBURSED").exclude(pk__in=[row.pk for row in recent]))
+        visible = sorted(recent + older_active, key=lambda row: row.created_at, reverse=True)
+        return Response({"loans": [loan_record(row) for row in visible],
+                         "history": {"recent_limit": 100, "includes_older_active": bool(older_active)}})
 
     def post(self, request):
         if request.data.get("accept_test_terms") is not True:

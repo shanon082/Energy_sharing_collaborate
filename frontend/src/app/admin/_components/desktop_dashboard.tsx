@@ -1,6 +1,6 @@
 'use client';
 
-import { GpawaLogo, LOGO_SIZES } from "@/components/common/gpawa-logo";
+import { EnergyFlexLogo, LOGO_SIZES } from "@/components/common/energyflex-logo";
 import AdminNavLinks from "./admin-nav-links";
 import { Badge } from "@/components/ui/badge";
 
@@ -13,7 +13,7 @@ export default function AdminDesktopSidebar({ userRole, isSuperuser }: AdminDesk
   return (
     <div className="gpawa-sidebar hidden h-full border-r md:flex md:flex-col">
       <div className="flex h-14 flex-col justify-center border-b border-[hsl(var(--sidebar-border))] px-4 lg:h-[60px] lg:px-6">
-        <GpawaLogo
+        <EnergyFlexLogo
           href="/admin/dashboard"
           showText={false}
           suffix="Admin Panel"

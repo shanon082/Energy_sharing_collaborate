@@ -50,17 +50,17 @@ def deliver_account_email(job):
         if user.profile.email_verified:
             return AccountEmailDelivery.SKIPPED
         link = account_email_link(user)
-        subject, body = "Verify your gPawa account", f"Verify your account: {link}"
+        subject, body = "Verify your EnergyFlex account", f"Verify your account: {link}"
     elif job.kind == AccountEmailDelivery.PASSWORD_RESET:
         link = account_email_link(user, reset=True)
-        subject, body = "Reset your gPawa password", f"Reset your password: {link}\nIgnore this email if you did not request it."
+        subject, body = "Reset your EnergyFlex password", f"Reset your password: {link}\nIgnore this email if you did not request it."
     elif job.kind == AccountEmailDelivery.SETTINGS_CODE:
         code = SettingsConfirmationEmailCode.objects.filter(
             pk=job.code_id, user=user, status=SettingsConfirmationEmailCode.ACTIVE,
         ).first()
         if code is None or code.create_date < timezone.now() - timedelta(minutes=10):
             return AccountEmailDelivery.SKIPPED
-        subject, body = "gPawa security code", f"Security code: {code.code}"
+        subject, body = "EnergyFlex security code", f"Security code: {code.code}"
     else:
         return AccountEmailDelivery.SKIPPED
     sent, _ = send_email(settings.DEFAULT_EMAIL_SENDER, [user.email], subject, body, [settings.DEFAULT_EMAIL_SENDER])

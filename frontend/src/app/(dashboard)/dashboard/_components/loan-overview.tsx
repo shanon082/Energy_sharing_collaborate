@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { get } from "@/lib/fetch";
 import { useEffect, useState, useCallback } from "react";
-import { useFeatures } from "@/contexts/features-context";
 
 interface LoanStats {
   active_loans: number;
@@ -39,7 +38,6 @@ interface WalletBalanceResponse {
 }
 
 export default function LoanOverview() {
-  const { peer_sharing } = useFeatures();
   const [stats, setStats] = useState<LoanStats>({
     active_loans: 0,
     pending_applications: 0,
@@ -51,7 +49,7 @@ export default function LoanOverview() {
   });
   const [loading, setLoading] = useState(true);
   const [moneyBalance, setMoneyBalance] = useState<number>(0);  // UGX money
-  const [unitBalance, setUnitBalance] = useState<number>(0);   // Energy units available to share
+  const [unitBalance, setUnitBalance] = useState<number>(0);   // Historical unit wallet balance
   const [meterUnits, setMeterUnits] = useState<number>(0);     // Units already on meters
 
   // Fetch all balances
@@ -63,7 +61,7 @@ export default function LoanOverview() {
         // Money in wallet (UGX) - for deposits/withdrawals/purchases
         setMoneyBalance(Number(response.data.wallet?.balance || 0));
         
-        // Units available for sharing (energy units from purchases/loans)
+        // Historical unit wallet balance from purchases and loans
         // FIX: Use unit_balance.balance
         setUnitBalance(Number(response.data.unit_balance?.balance || 0));
         
@@ -168,7 +166,7 @@ export default function LoanOverview() {
           </CardContent>
         </Card>
         
-        {/* Unit Balance Card (available to share) */}
+        {/* Unit Balance Card */}
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -307,12 +305,12 @@ export default function LoanOverview() {
               View My Loans
             </Link>
           </Button>
-          {peer_sharing && <Button asChild variant="outline" className="flex-1">
-            <Link href="/dashboard/share">
+          <Button asChild variant="outline" className="flex-1">
+            <Link href="/dashboard/meter-allocation">
               <TrendingUpIcon className="h-4 w-4 mr-2" />
-              Share Units
+              Load My Meter
             </Link>
-          </Button>}
+          </Button>
         </CardContent>
       </Card>
     </div>

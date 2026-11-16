@@ -667,7 +667,7 @@
 -      <button className="icon-button notification-button" aria-label="Preview notifications" onClick={() => go("notifications")}><Icon name="bell" />{!read && <span />}</button>
 -      <button className="avatar-button" aria-label="Preview account" onClick={() => go("account")}>{profile.first.charAt(0)}{profile.last.charAt(0)}</button>
 -    </div></header>
-+    <header className="topbar"><div className="topbar-identity"><span className="brand-lockup"><Icon name="bolt" />gPawa<span className="brand-dot">.</span></span><span className="topbar-page">{title}</span></div><div className="header-actions"><button className="icon-button" aria-label="Notifications" onClick={() => go("notifications")}><Icon name="bell" /></button><button className="avatar-button" aria-label="Your account" onClick={() => go("account")}>A</button></div></header>
++    <header className="topbar"><div className="topbar-identity"><span className="brand-lockup"><Icon name="bolt" />EnergyFlex</span><span className="topbar-page">{title}</span></div><div className="header-actions"><button className="icon-button" aria-label="Notifications" onClick={() => go("notifications")}><Icon name="bell" /></button><button className="avatar-button" aria-label="Your account" onClick={() => go("account")}>A</button></div></header>
      <main className="content">
 -      {detail && <button className="text-button back-link" onClick={back}><Icon name="back" />Back</button>}
 -      {scenario === "offline" && <div className="offline-preview" role="status"><Icon name="phone" /><span>Offline example. Displayed sample values are stale. Requests are not queued.</span><button onClick={() => setScenario("sample")}>Retry</button></div>}
@@ -839,7 +839,7 @@
 -          <MenuRow icon="meter" title="Your meters" subtitle="View assigned meters" onClick={() => go("meters")} />
 -          <MenuRow icon="help" title="Help and information" subtitle="How electricity credit works" onClick={() => go("help")} /></Card>
 -        <button className="logout-button" onClick={onExit}><Icon name="logout" />Leave design preview</button>
--        <p className="centered muted small">gPawa consumer app · interface preview</p>
+-        <p className="centered muted small">EnergyFlex consumer app · interface preview</p>
 -      </>}
 -      {screen === "profile" && <>
 -        <Heading title="Personal details" text="Edit this sample profile to explore the form." />

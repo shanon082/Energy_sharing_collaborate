@@ -8,10 +8,12 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from backend.feature_config import FEATURE_ENV_VARS
+from backend.feature_config import FEATURE_ENV_VARS, RETIRED_FEATURES
 
 
 def feature_enabled(feature):
+    if feature in RETIRED_FEATURES:
+        return False
     if feature not in FEATURE_ENV_VARS:
         raise ValueError(f"Unknown feature: {feature}")
     return getattr(settings, "FEATURE_FLAGS", {}).get(feature) is True
@@ -62,12 +64,19 @@ class FeatureAvailabilityView(APIView):
         currency, environment, provider = test_domain()
         sandbox_enabled = getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
         test_payments = sandbox_enabled and (provider == LOCAL_DEMO or configured())
+        from loan.sandbox_service import policy, eur_pricing_available
+        energy_pricing = provider == LOCAL_DEMO or eur_pricing_available(policy())
+        loan_policy = provider == LOCAL_DEMO or getattr(settings, "SANDBOX_EUR_LOANS_ENABLED", False) is True
         response = Response({
             "sandbox": {"enabled": sandbox_enabled, "currency": currency, "environment": environment, "label": "UGX DEMO / NO REAL MONEY" if provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
-                        "loans": sandbox_enabled, "purchases": test_payments, "repayments": test_payments,
+                        "loans": sandbox_enabled and energy_pricing and loan_policy, "purchases": test_payments and energy_pricing, "repayments": test_payments,
+                        "payment_message": "" if test_payments else "Sandbox payments unavailable",
                         "provider": provider, "physical_delivery": False,
                         "self_declared_meter_enrollment": sandbox_enabled},
-            "features": {key: feature_enabled(key) for key in FEATURE_ENV_VARS},
+            "features": {
+                **{feature: False for feature in RETIRED_FEATURES},
+                **{key: feature_enabled(key) for key in FEATURE_ENV_VARS},
+            },
             "consumer_capabilities": {
                 "meter_requests": True, "sandbox_self_enrollment": sandbox_enabled, "read_only_monitoring": True,
                 "provisional_quotes": True,

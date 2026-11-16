@@ -54,7 +54,7 @@ export default function BalanceCard() {
         <CardContent>
           <div className="flex items-center gap-2 text-muted-foreground">
             <TrendingUp className="h-4 w-4" />
-            <span className="text-xs">Units available to share</span>
+            <span className="text-xs">Units available to load</span>
           </div>
         </CardContent>
       </Card>

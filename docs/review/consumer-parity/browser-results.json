@@ -1,0 +1,29 @@
+{
+  "scope": "Synthetic loopback API; no hosted records, providers or physical devices",
+  "viewports": [
+    1440,
+    834,
+    390,
+    360
+  ],
+  "checks": [
+    "partial repayment parity",
+    "assessment selection",
+    "below-80% explanation",
+    "late meter response",
+    "stale quote invalidation",
+    "duplicate-click prevention",
+    "countdown does not settle",
+    "navigation/reload recovery",
+    "unavailable is not zero",
+    "historical meter selection",
+    "no legacy bootstrap",
+    "logout cleanup",
+    "loan submission and partial repayment",
+    "profile historical choice preservation",
+    "pending assessment",
+    "empty meter onboarding",
+    "server rejection and decision history"
+  ],
+  "runtimeErrors": []
+}

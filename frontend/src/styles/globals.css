@@ -132,7 +132,7 @@
   }
 }
 
-/* ── gPawa brand tokens (sampled from logo: cyan→blue bolt, navy text) ── */
+/* ── EnergyFlex brand tokens (cyan→blue bolt, navy text) ── */
 :root {
   --gpawa-cyan:   199 80% 60%;   /* #4FB4E8 — top of bolt */
   --gpawa-blue:   213 66% 48%;   /* #2E7DD1 — mid bolt / primary CTA */
@@ -152,14 +152,14 @@
   background-clip: text;
 }
 
-/* ── gPawa Admin Sidebar ──────────────────────────────────────── */
+/* ── EnergyFlex Admin Sidebar ─────────────────────────────────── */
 .gpawa-sidebar {
   background-color: hsl(var(--sidebar-bg)) !important;
   color: hsl(var(--sidebar-text)) !important;
   border-color: hsl(var(--sidebar-border));
 }
 
-.gpawa-sidebar-brand {
+.energyflex-sidebar-brand {
   color: hsl(var(--sidebar-text-active)) !important;
 }
 

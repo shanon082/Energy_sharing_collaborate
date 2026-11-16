@@ -23,3 +23,11 @@ test("web token parser accepts exactly 15 digits for the matching allocation", (
   assert.throws(() => parseEnergyTokens({ tokens: [token("1234567890123456")] }, 5), /Invalid electricity token/);
   assert.throws(() => parseEnergyTokens({ tokens: [token("123456789012345")] }, 6), /Invalid electricity token/);
 });
+
+test("AC lab acknowledgement parses separately from software bench evidence", async () => {
+  const { tokenLoadingLabel } = await import("../src/lib/energy-token.ts");
+  const row = { ...token("123456789012345"), state: "APPLIED", application_environment: "AC_LAB" };
+  assert.equal(parseEnergyTokens({ tokens: [row] })[0].application_environment, "AC_LAB");
+  assert.match(tokenLoadingLabel(row), /Credit saved on AC lab device/);
+  assert.match(tokenLoadingLabel(row), /load feedback unknown/);
+});

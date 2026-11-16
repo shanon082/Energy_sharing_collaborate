@@ -43,7 +43,7 @@ function TokenDetails({ client, owner, allocationId, meterId, compact }: {
     {error && <p className="error" role="alert">{error}</p>}
     {tokens?.length === 0 && <p className="muted small">Token unavailable for this historical transaction.</p>}
     {tokens?.map(row => <div key={row.id} className="token-detail">
-      <p><strong>{row.source === "PURCHASE" ? "Payment successful — enter this token on your meter." : "Loan disbursed — enter this token on your meter."}</strong></p>
+      <p><strong>{row.environment === "SANDBOX" ? "EUR test allocation — token issued; incompatible with the current AC lab device." : row.source === "PURCHASE" ? "Payment confirmed — token issued." : "Loan disbursed — token issued."}</strong></p>
       <label>15-digit electricity token<input className="energy-token-value" readOnly type="text" inputMode="numeric" value={row.token} aria-label="15-digit electricity token" /></label>
       <p className="small">Meter {row.meter_number} · {row.energy_kwh} kWh</p>
       <p className="reference small">{row.source === "PURCHASE" ? "Purchase" : "Loan"} reference: {row.source_reference}</p>
@@ -54,7 +54,7 @@ function TokenDetails({ client, owner, allocationId, meterId, compact }: {
         if (!navigator.clipboard?.writeText) { setCopyNotice("Select the token text and copy it manually."); return; }
         void navigator.clipboard.writeText(row.token).then(() => setCopyNotice("Token copied. Paste only where intended.")).catch(() => setCopyNotice("Select the token text and copy it manually."));
       }}>Copy Token</button>
-      {compact ? <><p className="muted small">Enter all 15 digits on the meter keypad. Hardware connection pending.</p><details><summary>Meter connection</summary><p>Internet is needed to validate a new token. Only the isolated software bench is connected; this is not an STS token or physical delivery confirmation.</p></details></> : <p className="muted small">Enter all 15 digits on the meter keypad. Internet is needed to validate a new token. Prototype: only the isolated software bench is connected; this is not an STS token.</p>}
+      {row.environment === "SANDBOX" ? <p className="muted small">EUR test tokens are retained for history or the isolated software bench. AC_LAB accepts UGX_DEMO only. No credit saved on the physical device is implied.</p> : compact ? <><p className="muted small">Enter all 15 digits on the meter keypad. Application needs a commissioned device.</p><details><summary>Meter connection</summary><p>Internet is needed to validate a new token. This is a prototype token for commissioned lab devices or the isolated software bench. It is not an STS token or proof of load switching.</p></details></> : <p className="muted small">Enter all 15 digits on the meter keypad. Internet is needed to validate a new token. Prototype lab token; this is not an STS token or proof of load switching.</p>}
     </div>)}
     {copyNotice && <p role="status">{copyNotice}</p>}
     <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh loading status</button>

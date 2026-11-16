@@ -146,7 +146,7 @@ const TransList = () => {
     const html = `
       <html>
         <head>
-          <title>gPawa Statement</title>
+          <title>EnergyFlex Statement</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
             h1 { margin: 0 0 6px 0; }
@@ -161,7 +161,7 @@ const TransList = () => {
           </style>
         </head>
         <body>
-          <h1>gPawa Transaction Statement</h1>
+          <h1>EnergyFlex Transaction Statement</h1>
           <div class="meta">Period: ${period} | Generated: ${new Date().toLocaleString()}</div>
           <div class="grid">
             <div class="card"><div class="label">Transactions</div><div class="value">${printSummary?.transactions_count ?? 0}</div></div>

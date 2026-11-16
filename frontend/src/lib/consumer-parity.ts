@@ -1,4 +1,4 @@
-import { parseStoredDemoAssessment, type Assessment, type TestEnvironment, type TestMeter } from "./sandbox";
+import type { TestEnvironment, TestMeter } from "./sandbox";
 
 export type ConsumerScreen = "home" | "meters" | "loans" | "apply" | "purchase" | "activity" | "account";
 export const CONSUMER_PATHS: Record<ConsumerScreen, string> = { home: "/dashboard", meters: "/dashboard/my-meters", loans: "/dashboard/loans", apply: "/dashboard/loans?tab=apply", purchase: "/dashboard/buy-units", activity: "/dashboard/transactions", account: "/dashboard/myaccount" };
@@ -25,13 +25,10 @@ export type ConsumerSummary = { owner_id: number; environment: TestEnvironment; 
 export function parseConsumerSummary(raw: unknown, owner: number, environment: TestEnvironment): ConsumerSummary {
   const row = record(raw);
   if (row.owner_id !== owner || row.environment !== environment || row.currency !== (environment === "UGX_DEMO" ? "UGX" : "EUR") ||
-      row.scope !== "OWNER" || row.meter_id !== null || !Number.isSafeInteger(row.active_loan_count) || Number(row.active_loan_count) < 0 || !Number.isSafeInteger(row.loan_count))
+      row.scope !== "OWNER" || row.meter_id !== null || !Number.isSafeInteger(row.active_loan_count) || Number(row.active_loan_count) < 0 || !Number.isSafeInteger(row.loan_count) || Number(row.loan_count) < 0 || Number(row.active_loan_count) > Number(row.loan_count))
     throw new Error("The summary does not match this account and environment.");
   for (const key of ["principal", "total_due", "applied_repayments", "outstanding"]) exactAmount(row[key]);
   return row as ConsumerSummary;
-}
-export function selectedAssessment(raw: unknown, owner: number, meter: TestMeter | null): Assessment {
-  return parseStoredDemoAssessment(record(raw).assessment, { owner, meterId: meter?.id ?? null });
 }
 /** Read tickets are also useful outside React, including delayed-response tests. */
 export class ConsumerReadScope {

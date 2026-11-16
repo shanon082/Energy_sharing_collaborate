@@ -10,7 +10,7 @@ import { get } from "@/lib/fetch-client";
 import { getApiErrorMessage } from "@/lib/api-response";
 import {
   applyWalletUnits,
-} from "@/app/(dashboard)/dashboard/share/actions";
+} from "@/app/(dashboard)/dashboard/meter-allocation/actions";
 import type { UserMeter } from "@/interface/meter.interface";
 
 interface AmiStatusCardProps {

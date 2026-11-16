@@ -1,5 +1,5 @@
 """
-gPawa Trust Ladder — starter access for every customer, growth through repayment.
+EnergyFlex Trust Ladder — starter access for every customer, growth through repayment.
 
 New users can borrow up to STARTER_MAX_LOAN immediately. Each successfully repaid
 loan unlocks a higher cap; late or missed payments pull the score and cap back down.

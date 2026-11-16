@@ -185,3 +185,30 @@ def entitlement_summary(owner, meter=None, environment=None):
         "pending_kwh": reserved - applied,
         "confirmed_kwh": applied,
     }
+
+
+@transaction.atomic
+def reserve_ac_lab_token(token):
+    """Entire source allocation reservation; shares the existing delivery ledger.
+
+    Only the authenticated adapter may bind a command to this reservation. No
+    separate balance is created and ordinary consumer/simulator loading remains
+    unable to spend a token-held allocation.
+    """
+    from meter.models import EnergyKeypadToken
+    from meter.prototype_device import require_lab, lab_source
+    require_lab()
+    allocation = EnergyAllocation.objects.select_for_update().get(pk=token.allocation_id)
+    token = EnergyKeypadToken.objects.select_for_update().get(pk=token.pk)
+    if (token.state != 'ISSUED' or token.delivery_id or allocation.deliveries.exists()
+            or allocation.accounting_environment != 'UGX_DEMO' or token.environment != 'UGX_DEMO'
+            or token.owner_id != allocation.owner_id or token.meter_id != allocation.meter_id
+            or token.amount_wh != allocation.amount_kwh * 1000 or not lab_source(allocation)):
+        raise AllocationError('Token allocation requires reconciliation.')
+    from django.utils import timezone
+    delivery = MeterDelivery.objects.create(allocation=allocation, amount_kwh=allocation.amount_kwh,
+        command_id=token.command_id, transport='AC_LAB', status=MeterDelivery.DISPATCHED,
+        dispatched_at=timezone.now(), attempt_count=1)
+    token.delivery, token.state = delivery, 'DELIVERY_PENDING'
+    token.save(update_fields=['delivery', 'state'])
+    return delivery

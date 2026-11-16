@@ -10,6 +10,7 @@ import { MeterOnboarding } from "./Onboarding.tsx";
 import { ForegroundPoller } from "./api/polling.ts";
 import { Access } from "./Access.tsx";
 import { ProfileEditor } from "./Profile.tsx";
+import { LabReadings } from "./LabReadings.tsx";
 import { DeliveryPanel } from "./Delivery.tsx";
 import { Activity } from "./Activity.tsx";
 import { LoanQuote } from "./LoanQuote.tsx";
@@ -17,7 +18,7 @@ import { PurchasePanel, RepaymentPanel } from "./PaymentActions.tsx";
 import { Brand, Icon } from "./ui.tsx";
 import { CONSUMER_TABS, activeConsumerTab, type ConsumerTab } from "./consumer-navigation.ts";
 import { LatestRead } from "./api/read-scope.ts";
-import { parseMeterDashboard, selectedMeterStillAssigned, parseConsumption, parseLoans, parseMeters,
+import { microWhDisplay, parseMeterDashboard, selectedMeterStillAssigned, parseConsumption, parseLoans, parseMeters,
   type AllocationStatus, type ConsumptionHistory, type Loan, type MeterInfo } from "./api/contracts.ts";
 import { ApiError, SessionExpired, SessionManager, TransportError, type ConsumerIdentity } from "./auth/session.ts";
 import { AndroidSecureStore } from "./auth/secure-store.ts";
@@ -68,7 +69,7 @@ function PasswordChange({ required, onDone, onCancel }: {
     } catch (cause) { setError(message(cause)); }
     finally { setBusy(false); }
   };
-  return <main className="login-shell"><div className="brand">gPawa <span>consumer prototype</span></div>
+  return <main className="login-shell"><div className="brand">EnergyFlex <span>consumer app</span></div>
     <form className="panel login-card" onSubmit={(event) => void submit(event)}>
       <h1>{required ? "Change required password" : "Change password"}</h1>
       {required && <p className="muted">Set a new password before using your account.</p>}
@@ -261,7 +262,7 @@ export default function App() {
       if (selected) return await loadSelected(selected);
       await loadMeters();
       return false;
-    });
+    }, 30_000);
     let nativeActive = true;
     const visibility = () => poller.setActive(nativeActive && document.visibilityState !== "hidden");
     visibility();
@@ -396,6 +397,7 @@ export default function App() {
         {meter && <><Panel title={meter.label || "Meter details"}>
           <p className="meter-number muted">{meter.meter_number}</p><StateLine data={allocation} offline={offline} />
           <div className="detail-grid"><div><span>Cloud energy available</span><strong>{energy(allocation.value?.available_kwh)}</strong></div><div><span>Reserved energy</span><strong>{energy(allocation.value?.pending_kwh)}</strong></div><div><span>{allocation.value?.contact_source === "SIMULATOR" ? "Simulator remaining credit" : "Physical meter balance"}</span><strong>{allocation.value?.meter_reported_remaining_wh == null ? "Unavailable" : `${allocation.value.meter_reported_remaining_wh} Wh`}</strong></div></div>
+          {allocation.value?.contact_source === "AC_LAB" && <LabReadings reading={allocation.value} stale={offline || Boolean(allocation.error)} />}
           <div className="button-pair"><button onClick={() => navigate("purchase")}>Buy Units</button><button className="secondary" onClick={() => navigate("consumption")}>View usage</button></div>
           <details className="info-disclosure"><summary>Meter information</summary><p>Cloud allocations are separate from electricity applied to the physical meter.</p>
             {meter.ownership_provenance === "SELF_DECLARED" && <p>Linked using the number you provided. Ownership has not been checked with the utility.</p>}
@@ -415,6 +417,7 @@ export default function App() {
             {!consumption.value.consumer_attribution_available && <p className="muted small">Meter history; previous consumer attribution is unavailable.</p>}
             {consumption.value.daily_usage.map(row => <div className="list-row" key={row.date}><span>{row.date}<small>{row.source === "STUB" ? "Sample reading" : row.source}</small></span><strong>{energy(row.kwh)}</strong></div>)}
           </> : <div className="empty-inline"><Icon name="chart" /><h3>No readings yet</h3><p className="muted">Actual consumption appears when meter readings become available.</p></div>}</Panel>
+          {!!consumption.value?.ac_lab_telemetry.length && <Panel title="AC lab measured history"><p className="muted small">Cumulative device readings; missing intervals are not interpolated. Relay output disabled.</p>{consumption.value.ac_lab_telemetry.map(row => <div className="list-row" key={`${row.boot_id}:${row.sequence}`}><span>{dateTime(row.measured_at)}<small>{row.sensor_status} · Received {dateTime(row.received_at)}</small></span><strong>{row.pzem_wh == null ? "Unavailable" : `${row.pzem_wh} Wh cumulative`}</strong><small>Credit debited {microWhDisplay(row.consumed_uwh)} · Remaining {microWhDisplay(row.remaining_credit_uwh)}</small></div>)}</Panel>}
           {!!consumption.value?.simulator_telemetry.length && <details className="panel info-disclosure"><summary>Simulated readings</summary>{consumption.value.simulator_telemetry.map(row => <div className="list-row" key={row.event_id}><span>{dateTime(row.measured_at)}<small>{row.classification}</small></span><strong>{row.cumulative_wh} Wh</strong></div>)}</details>}
         </>}
       </>}
@@ -442,7 +445,7 @@ export default function App() {
       {tab === "dashboard" && <>
         <section className="panel menu-card"><MenuRow icon="loan" title="My loans & repayments" text="Check your balance, due date and loan history" onClick={() => navigate("loans")} />
           <MenuRow icon="activity" title="Activity & receipts" text="Review payments and account updates" onClick={() => navigate("activity")} /></section>
-        <div className="connection-note"><Icon name="meter" /><div><strong>{allocation.value?.contact_source === "SIMULATOR" ? "Simulator readings available" : allocation.value?.last_meter_contact ? "Stored meter readings" : "Hardware contact unavailable"}</strong><p>{allocation.value?.last_meter_contact ? `Last contact ${dateTime(allocation.value.last_meter_contact)}` : "Live balance and usage will appear after hardware connection."}</p></div><button className="text-button" onClick={() => navigate("consumption")}>Usage</button></div>
+        <div className="connection-note"><Icon name="meter" /><div><strong>{allocation.value?.contact_source === "SIMULATOR" ? "Simulator readings available" : allocation.value?.contact_source === "AC_LAB" ? `AC lab · ${allocation.value.contact_status?.toLowerCase()}` : allocation.value?.last_meter_contact ? "Stored meter readings" : "Hardware contact unavailable"}</strong><p>{allocation.value?.last_meter_contact ? `Last contact ${dateTime(allocation.value.last_meter_contact)}` : "Live balance and usage will appear after hardware connection."}</p></div><button className="text-button" onClick={() => navigate("consumption")}>Usage</button></div>
       </>}
       {tab === "activity" && <>
         <button className="text-button" onClick={() => navigate("dashboard")}><Icon name="back" />Home</button>

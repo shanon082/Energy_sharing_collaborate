@@ -1,3 +1,16 @@
+# MTN resumption update — 2026-11-17
+
+New purchases and self-repayments select the server's MTN_SANDBOX/EUR domain.
+See [the backend transition runbook](../backend/docs/MTN_SANDBOX_RESUMPTION.md).
+Missing credentials show “Sandbox payments unavailable”; no local-demo fallback.
+The shared controller polls Django and recovers both original-provider histories.
+The five-second countdown applies only to LOCAL_DEMO records, never MTN payments.
+Existing EUR debt is repayable; new EUR loans await an automatic assessment policy.
+Existing UGX_DEMO loans and scores are not converted. EUR tokens cannot provision
+the current AC lab. No new APK or actual phone/MTN test is claimed by this update.
+
+---
+
 # Current repository integration — 15 October 2026
 
 > Subsequent implemented phase (15 October 2026): Django now stores per-meter demo evidence and uses configured tariff snapshots. Shared web/mobile eligibility and stale-quote handling were updated; see [backend rollout](../backend/docs/METER_CREDIT_TARIFFS.md) and [validation](VALIDATION.md). Authentication/Keystore and the redesigned layouts remain preserved. The earlier integration report below is historical and its unchanged-backend claim applies only to that earlier phase.
@@ -12,7 +25,7 @@ See VALIDATION.md for final build evidence. Do not rerun the original overlay-co
 
 ---
 
-# gPawa mobile redesign — 14 October 2026
+# EnergyFlex mobile redesign — 14 October 2026
 
 This package edits the supplied mobile source files. It is not an APK or a complete repository.
 

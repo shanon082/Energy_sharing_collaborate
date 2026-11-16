@@ -90,7 +90,7 @@ def request_payment(intent, phone_number):
         amount=intent.amount, phone_number=phone_number,
         reference_id=str(intent.provider_reference),
         external_id=intent.provider_external_id,
-        payer_message="gPawa electricity payment",
+        payer_message="EnergyFlex electricity payment",
     )
 
 

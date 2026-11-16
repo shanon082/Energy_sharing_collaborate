@@ -1,9 +1,14 @@
 # alwaysdata Free testing deployment
 
+> MTN resumption update (2026-11-17): [MTN_SANDBOX_RESUMPTION.md](MTN_SANDBOX_RESUMPTION.md) governs NEW payments and original-provider recovery. LOCAL_DEMO default/pause instructions below are historical. New EUR loans remain unavailable pending an automatic assessment policy. No hosted change has been made.
+
+
 For new-source 15-digit keypad tokens, see
 [the hosted/isolated-bench rollout](../../docs/ENERGY_KEYPAD_TOKENS.md).
 This requires additive meter migration0031, cryptography and private token keys.
-Alwaysdata remains consumer-only: no bench/physical device enablement.
+Alwaysdata remains consumer-only by default. The separately opt-in, output-disabled
+[AC lab milestone](PROTOTYPE_AC_LAB.md) adds four strictly scoped firmware routes;
+software-bench and general physical control remain blocked.
 
 This is an opt-in backend profile, not a live financial deployment. Render's
 profile, Next.js server features, accounting policies, and the existing APK

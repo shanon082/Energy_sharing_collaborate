@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { MeterEnergyTokens } from "./meter-energy-tokens";
 import { get } from "@/lib/fetch-client";
-import { applyWalletUnits } from "@/app/(dashboard)/dashboard/share/actions";
+import { applyWalletUnits } from "@/app/(dashboard)/dashboard/meter-allocation/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

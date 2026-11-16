@@ -38,7 +38,7 @@ export function Icon({ name, className = "" }: { name: IconName; className?: str
 export function Brand({ light = false }: { light?: boolean }) {
   return <div className={`brand-lockup${light ? " brand-light" : ""}`}>
     <img src="./gpawa-mark.png" width="34" height="34" alt="" />
-    <span>gPawa<span className="brand-dot">.</span></span>
+    <span>EnergyFlex<span className="brand-dot">.</span></span>
   </div>;
 }
 
@@ -48,7 +48,7 @@ export function EnergyArtwork() {
     <div className="art-spark spark-one"><Icon name="bolt" /></div>
     <div className="art-spark spark-two"><Icon name="home" /></div>
     <div className="art-meter">
-      <div className="art-meter-top"><span>gPawa</span><span className="art-led" /></div>
+      <div className="art-meter-top"><span>EnergyFlex</span><span className="art-led" /></div>
       <div className="art-display"><Icon name="bolt" /><span>Power for<br /><strong>your everyday.</strong></span></div>
       <div className="art-wave"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div>
       <div className="art-meter-bottom"><span>SMART ENERGY</span><span>kWh</span></div>

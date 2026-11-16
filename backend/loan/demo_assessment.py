@@ -107,7 +107,7 @@ def complete_demo_assessment(owner, meter):
 
 def refresh_demo_purchase_contribution(owner, meter):
     """Settlement event or explicit operator review only; never GET/login refresh."""
-    require_demo()
+    require_demo(recovery=True)
     with transaction.atomic():
         User.objects.select_for_update().get(pk=owner.pk)
         row = DemoCreditAssessment.objects.select_for_update().filter(owner=owner, environment="UGX_DEMO", scope="METER", meter=meter, status="READY").first()

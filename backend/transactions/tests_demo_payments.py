@@ -160,7 +160,7 @@ class DemoPaymentTests(Fixtures, TestCase):
         with patch("requests.sessions.Session.request", side_effect=AssertionError("No external provider request")) as request:
             intent = self.purchase(); self.settle(intent)
             with self.assertRaises(PermissionDenied): adapter.token()
-            with self.assertRaises(PermissionDenied): reconcile_sandbox_payment(intent.pk)
+            with self.assertRaises(PaymentIntent.DoesNotExist): reconcile_sandbox_payment(intent.pk)
             request.assert_not_called()
         with override_settings(CONSUMER_SANDBOX_ENABLED=False):
             with self.assertRaises(PermissionDenied): complete_demo_payment(intent.pk, owner=self.owner)
@@ -265,7 +265,7 @@ class DemoConfigurationTests(TestCase):
         with self.assertRaises(ImproperlyConfigured): sandbox_configuration({"MTN_BASE_URL": "https://production.example.invalid"}, validate_credentials=False)
 
     def test_only_explicit_provider_modes_and_versioned_demo_values_are_accepted(self):
-        self.assertEqual(demo_configuration({})[0], "LOCAL_DEMO")
+        self.assertEqual(demo_configuration({})[0], "MTN_SANDBOX")
         for values in ({"PROTOTYPE_PAYMENT_PROVIDER": "MTN_PRODUCTION"}, {"DEMO_POLICY_VERSION": "utility-approved"},
                        {"DEMO_MINIMUM": "1.5"}, {"DEMO_STARTER_LIMIT": "1"}, {"DEMO_INTEREST_PERCENT": "NaN"}):
             with self.assertRaises(ImproperlyConfigured): demo_configuration(values)

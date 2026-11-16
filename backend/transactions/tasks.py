@@ -51,12 +51,12 @@ def handle_send_transaction_statement_email(user_id, start_date, end_date):
         entries=entries,
     )
 
-    subject = f"gPawa transaction statement ({start_date} to {end_date})"
+    subject = f"EnergyFlex transaction statement ({start_date} to {end_date})"
     body = (
         f"Hi {user.first_name or user.email},<br/><br/>"
         f"Attached is your transaction statement for <b>{start_date}</b> to <b>{end_date}</b>.<br/>"
         "You can also view details in Transaction History on the app.<br/><br/>"
-        "Regards,<br/>gPawa"
+        "Regards,<br/>EnergyFlex"
     )
     msg = EmailMessage(
         subject=subject,

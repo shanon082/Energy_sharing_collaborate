@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowUpRight, FileTextIcon, Forward, Home, PlusCircleIcon, Smartphone } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { GpawaLogo, LOGO_SIZES } from "@/components/common/gpawa-logo";
+import { EnergyFlexLogo, LOGO_SIZES } from "@/components/common/energyflex-logo";
 import DashboardNavLinks from "@/components/dashboard/dashboard-nav-links";
 import { IconMoneybag } from "@tabler/icons-react";
 import { PersonIcon } from "@radix-ui/react-icons";
@@ -12,13 +12,13 @@ import { useFeatures } from "@/contexts/features-context";
 
 export default function DesktopSidebar() {
   const pathname = usePathname();
-  const { peer_sharing, ussd } = useFeatures();
+  const { ussd } = useFeatures();
 
   return (
     <div className="hidden border-r bg-muted/40 md:block">
       <div className="flex h-full max-h-screen flex-col gap-2">
         <div className="flex h-14 items-center border-b px-4 lg:h-[60px] lg:px-6">
-          <GpawaLogo
+          <EnergyFlexLogo
             href="/"
             textSize={LOGO_SIZES.sidebar.textSize}
             logoSize={LOGO_SIZES.sidebar.logoSize}
@@ -47,14 +47,14 @@ export default function DesktopSidebar() {
               Buy Units
             </Link>
             <Link
-              href="/dashboard/share"
+              href="/dashboard/meter-allocation"
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary",
-                { "bg-muted text-primary": pathname === "/dashboard/share" }
+                { "bg-muted text-primary": pathname === "/dashboard/meter-allocation" }
               )}
             >
               <Forward className="h-4 w-4" />
-              {peer_sharing ? "Load / Share Units" : "Load My Meter"}
+              Load My Meter
             </Link>            
             {/* <Link
               href="/dashboard/transfering"

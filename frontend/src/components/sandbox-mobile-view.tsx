@@ -71,7 +71,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
   const showRepayment = !!repaymentContext && !!selectedLoan && repaymentContext.loan === p.loanId &&
     repaymentContext.receipt === lastRepayment(p.loanId);
   const activityRows = [
-    ...currentLoans.filter(loan => loan.status === "DISBURSED" || loan.status === "COMPLETED")
+    ...currentLoans.filter(loan => web || loan.status === "DISBURSED" || loan.status === "COMPLETED")
       .map(loan => ({ kind: "LOAN" as const, id: loan.id, date: loan.created_at ?? loan.due_at, loan })),
     ...p.payments.filter(payment => payment.environment === p.environment)
       .map(payment => ({ kind: payment.purpose as "PURCHASE" | "LOAN_REPAYMENT", id: payment.reference, date: payment.initiated_at, payment })),
@@ -122,7 +122,9 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
     <div className="section-title"><h3>{row.purpose === "PURCHASE" ? "Electricity purchase" : "Loan repayment"}</h3><span className={`status-pill ${row.status === "PENDING" ? "pending" : row.status === "FAILED" ? "neutral" : ""}`}>{label(row.status)}</span></div>
     <strong className="payment-amount">{money(row.amount, row.currency)}</strong><p className="muted small">{when(row.initiated_at)} · {row.currency === "UGX" ? "UGX demo" : "EUR test"}</p>
     {row.status === "PENDING" && row.environment === "UGX_DEMO" && <div className="payment-progress" role="status"><span className="loading-spinner" /><div><strong>Processing payment</strong><p>{(demoCountdown(row, p.clock) ?? 0) > 0 ? `Please wait · ${demoCountdown(row, p.clock)} seconds` : "Waiting for server confirmation"}</p><small>No real money or phone PIN is required.</small></div></div>}
+    {row.status === "PENDING" && row.environment === "MTN_SANDBOX" && <p role="status">Waiting for MTN sandbox confirmation. Closing this app will not start another charge.</p>}
     {row.status === "SETTLED" && <p className="small">{row.environment === "UGX_DEMO" ? "Demo payment successful. No real money was deducted." : "Sandbox payment verified."}</p>}
+    {row.status === "SETTLED" && row.purpose === "PURCHASE" && row.environment === "MTN_SANDBOX" && <p className="muted small">Payment confirmed; cloud allocation recorded. EUR test tokens cannot be saved on the current UGX_DEMO-only AC lab device.</p>}
     {row.status === "SETTLED" && row.purpose === "PURCHASE" && <EnergyTokenCard compact={web} client={p.client} owner={p.owner} allocationId={row.allocation_id} />}
     {row.status === "FAILED" && <p className="muted">Payment failed. Review the receipt before trying again.</p>}
     {row.status === "PENDING" && row.environment !== p.environment && <p className="muted small">This earlier payment belongs to a different test environment. It has not been cancelled or converted.</p>}
@@ -131,21 +133,21 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
       <TariffDetails pricing={row.pricing} currency={row.currency} />
       <p className="muted small">Remainders and excess are recorded for reconciliation. Cloud allocation does not confirm physical delivery.</p><InfoRow title="Settled" value={when(row.settled_at)} /><p className="small">{row.environment} · {label(row.submission_state)}</p>{row.reconciliation_error && <p className="error">{row.reconciliation_error}</p>}
     </details>
-    {row.status === "PENDING" && row.environment === p.environment && <button type="button" className="secondary" disabled={p.busy || p.refreshing || p.offline || (p.demo && demoCountdown(row, p.clock) !== 0)} onClick={() => p.checkPayment(row)}>Check payment status</button>}
+    {row.status === "PENDING" && <button type="button" className="secondary" disabled={p.busy || p.refreshing || p.offline || (row.environment === "UGX_DEMO" && demoCountdown(row, p.clock) !== 0)} onClick={() => p.checkPayment(row)}>Check payment status</button>}
   </article>;
 
   const loanCard = (loan: TestLoan, historical = false) => <article className="panel loan-card" key={loan.id}>
     <div className="section-title"><h3>Electricity loan</h3><span className={`status-pill ${loan.status === "REJECTED" ? "pending" : "neutral"}`}>{label(loan.status)}</span></div>
     <p className="muted small">Meter {p.meters.find(meter => meter.id === loan.meter_id)?.meter_number ?? loan.meter_id}{historical ? ` · ${loan.currency} test history` : ""}</p>
     <span className="muted small">Outstanding balance</span><strong className="loan-balance">{money(loan.outstanding, loan.currency)}</strong>
-    <InfoRow title="Principal" value={money(loan.principal, loan.currency)} />
+    <InfoRow title={web && loan.status === "REJECTED" ? "Requested principal" : "Principal"} value={money(loan.principal, loan.currency)} />
     {web ? <>
-      <InfoRow title="Total due" value={money(loan.total_due, loan.currency)} />
+      <InfoRow title={loan.status === "REJECTED" ? "Quoted total (not owed)" : "Total due"} value={money(loan.total_due, loan.currency)} />
       <InfoRow title="Repayments applied" value={money(loan.applied_repayments ?? exactDifference(loan.total_due, loan.outstanding), loan.currency)} />
       <InfoRow title="Due date" value={when(loan.due_at)} />
     </> : <><InfoRow title="Total repayment" value={money(loan.total_due, loan.currency)} /><InfoRow title="Due" value={when(loan.due_at)} /></>}
-    {!web && <p className="muted small">{loan.reason}</p>}
-    {web && !loan.allocation_id && <p className="muted small">Token unavailable for this historical transaction.</p>}
+    {(!web || loan.status === "REJECTED") && <p className="muted small">{loan.reason}</p>}
+    {web && loan.status !== "REJECTED" && !loan.allocation_id && <p className="muted small">Token unavailable for this historical transaction.</p>}
     {loan.allocation_id && <EnergyTokenCard compact={web} client={p.client} owner={p.owner} allocationId={loan.allocation_id} />}
     {!historical && loan.status === "DISBURSED" && <button type="button" className="primary-button" disabled={!p.capabilities.repayments || (web && Number(loan.outstanding) <= 0)} onClick={() => chooseRepayment(loan)}>{web ? "Make a repayment" : "Pay Loan →"}</button>}
     <details className="info-disclosure"><summary>Loan details & repayments</summary>{web ? <CopyReference value={loan.id} /> : <p className="reference">Reference: {loan.id}</p>}{web && <p>{loan.reason}</p>}<InfoRow title="Accepted policy" value={loan.terms.policy.id} /><TariffDetails pricing={loan.terms.pricing} currency={loan.currency} /><InfoRow title="Cloud allocation" value={loan.allocated_kwh == null ? (web ? "Unavailable" : "None") : web ? energy(loan.allocated_kwh) : `${loan.allocated_kwh} kWh`} /><InfoRow title="Closed" value={when(loan.closed_at)} />
@@ -162,6 +164,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
       ? <div className="error" role="alert"><p>Couldn’t load transactions.</p><button className="secondary" type="button" onClick={p.refresh}>Retry</button></div>
       : <p className="error" role="alert">{p.error}</p>)}{p.notice && !(p.pending && p.notice.startsWith("Demo payment:")) && <p className="tag" role="status">{p.notice}</p>}
     {p.unresolved && <p className="muted small">A previous request needs checking. Refresh before starting another.</p>}
+    {p.capabilities.paymentMessage && <p role="status">{p.capabilities.paymentMessage}</p>}
     {p.pending && <div className="pending-summary"><strong>Payment pending</strong><p>We’re waiting for its confirmed outcome before allowing another payment.</p>{p.view === "home" && <button className="text-button" onClick={() => p.navigate("activity")}>View payment →</button>}</div>}
 
     {p.view === "home" && <>{assessmentCard}{currentLoan ? loanCard(currentLoan) : p.fetched && <section className="panel"><h2>No active loan</h2><p className="muted">Review your options when you need electricity credit.</p><button className="secondary" onClick={() => p.navigate("apply")}>Apply for Loan →</button></section>}
@@ -206,7 +209,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
           <div className="quote-summary"><InfoRow title={p.view === "apply" ? "Loan principal" : "Payment amount"} value={money(activeQuote.terms.amount, p.currency)} /><InfoRow title={web ? "Estimated energy" : "Cloud energy"} value={energy(activeQuote.terms.energy_kwh)} />{web && p.view === "purchase" && <InfoRow title="Quoted total" value={money(activeQuote.terms.pricing?.breakdown.total ?? activeQuote.terms.billed, p.currency)} />}{p.view === "apply" && <><InfoRow title={`Interest (${activeQuote.terms.policy.interest_percent}%)`} value={money(activeQuote.terms.interest, p.currency)} /><InfoRow title="Fee" value={money(activeQuote.terms.fee, p.currency)} />{web ? <InfoRow title="Due date" value={when(activeQuote.terms.due_at ?? null)} /> : <InfoRow title="Loan term" value={`${activeQuote.terms.policy.due_days} days`} />}<div className="quote-total"><span>{web ? "Total due" : "Total repayment"}</span><strong>{money(activeQuote.terms.total_due, p.currency)}</strong></div></>}</div>
           <details className="info-disclosure"><summary>Pricing & policy details</summary>{activeQuote.terms.pricing ? <TariffDetails pricing={activeQuote.terms.pricing} currency={p.currency} /> : <InfoRow title="Original fixed price per kWh" value={money(activeQuote.terms.policy.rate_per_kwh, p.currency)} />}<InfoRow title="Billed" value={money(activeQuote.terms.billed, p.currency)} /><InfoRow title="Rounding remainder" value={money(activeQuote.terms.residual, p.currency)} /><p>Remainder retained for reconciliation; no automatic refund or energy conversion.</p><p>{activeQuote.terms.policy.rounding} · {activeQuote.terms.policy.id}</p><p>Overdue charge {activeQuote.terms.policy.penalty_percent}%. Cloud allocation does not confirm physical delivery.</p></details>
           <p className={expired ? "error" : "muted small"}>{expired ? "This quote expired. Get a fresh quote." : `Quote valid until ${when(activeQuote.expires_at)}`}</p>
-          {p.view === "purchase" && phoneField}<p className="payment-disclosure">{web ? p.view === "apply" ? "Demo loan — test credit only." : "Demo payment — no real money will be deducted." : p.view === "apply" ? "Demo loan: these are test obligations and cloud units, not real-money credit or physical meter delivery." : disclosure}</p>
+          {p.view === "purchase" && phoneField}<p className="payment-disclosure">{p.view === "apply" ? "Test loan — cloud allocation only; no physical meter delivery." : disclosure}</p>
           {!confirming && <label className="check-row"><input type="checkbox" checked={p.accepted} onChange={event => p.setAccepted(event.target.checked)} />I accept these test terms.</label>}
           <button type="button" disabled={p.blocked || !allowed || !p.accepted || expired || (p.view === "purchase" && !p.demo && !p.validPhone)} onClick={() => { if (p.view === "apply" && !confirming) setConfirming(true); else p.submit(); }}>{p.busy ? "Submitting…" : p.view === "apply" ? confirming ? "Submit application" : "Continue →" : "Confirm purchase"}</button>
           <button type="button" className="secondary" disabled={p.busy} onClick={() => { p.clearQuote(); setConfirming(false); }}>Edit amount</button>
@@ -233,8 +236,8 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
           <div className="section-title"><h3>Loan decision · electricity</h3><span className="status-pill">{label(row.loan.status)}</span></div>
           <p className="muted small">{when(row.loan.created_at)} · Meter {p.meters.find(meter => meter.id === row.loan.meter_id)?.meter_number ?? row.loan.meter_id}</p>
           <strong>{money(row.loan.principal, row.loan.currency)}</strong>
-          <p>{energy(row.loan.allocated_kwh)} allocated to cloud entitlement; this is not cash.</p>
-          <details className="info-disclosure"><summary>View details</summary><CopyReference value={row.loan.id} /><InfoRow title="Total due" value={money(row.loan.total_due, row.loan.currency)} /><InfoRow title="Outstanding" value={money(row.loan.outstanding, row.loan.currency)} /></details>
+          <p>{row.loan.status === "REJECTED" ? "No energy allocated." : `${energy(row.loan.allocated_kwh)} allocated to cloud entitlement; this is not cash.`}</p>
+          <details className="info-disclosure"><summary>View details</summary><CopyReference value={row.loan.id} /><InfoRow title="Total due" value={money(row.loan.total_due, row.loan.currency)} /><InfoRow title="Outstanding" value={money(row.loan.outstanding, row.loan.currency)} /><p>{row.loan.reason}</p></details>
         </article> : <article className="panel transaction-card" key={row.id}>
           <div className="section-title"><h3>{row.kind === "PURCHASE" ? "Electricity purchase" : "Loan repayment"}</h3><span className={`status-pill ${row.payment.status === "PENDING" ? "pending" : ""}`}>{label(row.payment.status)}</span></div>
           <p className="muted small">{when(row.payment.initiated_at)} · Meter {p.meters.find(meter => meter.id === row.payment.meter_id)?.meter_number ?? row.payment.meter_id}</p>
@@ -242,18 +245,18 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
           {row.kind === "PURCHASE" ? <p>{row.payment.status === "SETTLED" ? energy(row.payment.allocated_kwh) : "Energy pending settlement"} · Purchase</p>
             : <p>{row.payment.status === "SETTLED" ? `Applied to debt ${money(row.payment.applied, row.payment.currency)} · no energy created` : "No debt reduction until settled"}</p>}
           <details className="info-disclosure"><summary>View receipt</summary><CopyReference value={row.payment.reference} />
-            {row.kind === "PURCHASE" && row.payment.status === "SETTLED" && <EnergyTokenCard compact={web} client={p.client} owner={p.owner} allocationId={row.payment.allocation_id} />}
+            {row.kind === "PURCHASE" && row.payment.status === "SETTLED" && row.payment.allocation_id == null && <p>Token unavailable for this historical transaction.</p>}{row.kind === "PURCHASE" && row.payment.status === "SETTLED" && <EnergyTokenCard compact={web} client={p.client} owner={p.owner} allocationId={row.payment.allocation_id} />}
             {row.kind === "LOAN_REPAYMENT" && <><InfoRow title="Loan" value={row.payment.loan_id ?? "Unavailable"} /><InfoRow title="Applied" value={money(row.payment.applied, row.payment.currency)} /></>}
           </details>
         </article>)}
         {!filteredActivity.length && <p className="muted">No transactions yet.</p>}
-        <p className="muted small">Showing up to 100 recent loans and payments. These history counts are not account totals.</p>
+        <p className="muted small">Showing the latest 100 loans and payments, plus older active loans and pending payments. History counts are not account totals.</p>
         {activityPages > 1 && <div className="activity-pagination"><button className="secondary" disabled={activityPage <= 1} onClick={() => setActivityPage(page => page - 1)}>Previous</button><span>Page {activityPage} of {activityPages}</span><button className="secondary" disabled={activityPage >= activityPages} onClick={() => setActivityPage(page => page + 1)}>Next</button></div>}
       </> : null}</>}
     {p.view === "activity" && printing && <div className="statement-print">
-      <h1>gPawa transaction statement</h1><p>{p.environment} · {startDate || "All time"} to {endDate || "Now"}</p>
+      <h1>EnergyFlex transaction statement</h1><p>{p.environment} · {startDate || "All time"} to {endDate || "Now"}</p>
       <table><thead><tr><th>Date</th><th>Transaction</th><th>Meter</th><th>Amount / Energy</th><th>Status</th></tr></thead><tbody>
-        {filteredActivity.map(row => row.kind === "LOAN" ? <tr key={row.id}><td>{when(row.date)}</td><td>Loan disbursement</td><td>{p.meters.find(meter => meter.id === row.loan.meter_id)?.meter_number ?? row.loan.meter_id}</td><td>{money(row.loan.principal, row.loan.currency)} · {energy(row.loan.allocated_kwh)}</td><td>{label(row.loan.status)}</td></tr>
+        {filteredActivity.map(row => row.kind === "LOAN" ? <tr key={row.id}><td>{when(row.date)}</td><td>Loan decision</td><td>{p.meters.find(meter => meter.id === row.loan.meter_id)?.meter_number ?? row.loan.meter_id}</td><td>{money(row.loan.principal, row.loan.currency)} · {energy(row.loan.allocated_kwh)}</td><td>{label(row.loan.status)}</td></tr>
           : <tr key={row.id}><td>{when(row.date)}</td><td>{row.kind === "PURCHASE" ? "Electricity purchase" : "Loan repayment"}</td><td>{p.meters.find(meter => meter.id === row.payment.meter_id)?.meter_number ?? row.payment.meter_id}</td><td>{money(row.payment.amount, row.payment.currency)} · {row.kind === "PURCHASE" ? energy(row.payment.allocated_kwh) : money(row.payment.applied, row.payment.currency)}</td><td>{label(row.payment.status)}</td></tr>)}
       </tbody></table>
     </div>}

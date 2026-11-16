@@ -7,7 +7,7 @@ import { parseMeters } from '../src/api/contracts.ts';
 
 test('sandbox actions fail closed on missing currency/provider/isolation; optional flags stay independent', () => {
   const good = { enabled: true, loans: true, purchases: true, repayments: true, currency: 'EUR', provider: 'MTN_SANDBOX', physical_delivery: false };
-  assert.deepEqual(sandboxCapabilities(good), { enabled: true, loans: true, purchases: true, repayments: true });
+  assert.deepEqual(sandboxCapabilities(good), { enabled: true, loans: true, purchases: true, repayments: true, currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" });
   for (const raw of [undefined, { ...good, enabled: 'true' }, { ...good, currency: 'UGX' }, { ...good, provider: 'MTN_PRODUCTION' }, { ...good, physical_delivery: true }])
     assert.deepEqual(sandboxCapabilities(raw), NO_SANDBOX);
   assert.equal(sandboxCapabilities({ ...good, purchases: 'true' }).purchases, false);

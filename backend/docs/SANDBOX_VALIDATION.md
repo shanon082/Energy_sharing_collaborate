@@ -161,7 +161,7 @@ From WSL:
 ```bash
 /home/shanon/Android/Sdk/platform-tools/adb install -r /home/shanon/projects/next_projects/Energy-sharing-project/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 # Or copy for manual Android installation; replace <WindowsUser>:
-cp mobile/android/app/build/outputs/apk/debug/app-debug.apk '/mnt/c/Users/<WindowsUser>/Downloads/gPawa-sandbox-debug.apk'
+cp mobile/android/app/build/outputs/apk/debug/app-debug.apk '/mnt/c/Users/<WindowsUser>/Downloads/EnergyFlex-sandbox-debug.apk'
 ```
 
 These installation commands were **not executed**. Update assumes the installed

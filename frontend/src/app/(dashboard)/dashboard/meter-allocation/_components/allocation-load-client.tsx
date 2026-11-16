@@ -1,21 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import EnergyStatusCard from "@/components/dashboard/energy-status-card";
 import { useSelectedMeter } from "@/contexts/selected-meter-context";
 
-export default function AllocationLoadClient({ onBack }: { onBack: () => void }) {
+export default function AllocationLoadClient() {
   const { meters, isLoading } = useSelectedMeter();
   const [meterNo, setMeterNo] = useState("");
   const selected = meters.find((meter) => meter.meter_number === meterNo);
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 px-2 py-4">
-      <Button type="button" variant="outline" onClick={onBack} className="gap-2">
-        <ArrowLeft className="h-4 w-4" /> Back
-      </Button>
       <h2 className="text-xl font-semibold">Load your own meter</h2>
       <p className="text-sm text-muted-foreground">
         Choose the intended AMI meter. Only verified purchases and disbursed loans

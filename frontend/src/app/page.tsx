@@ -11,9 +11,9 @@ import { CheckCircle2 } from "lucide-react";
 export default function Home() {
   const pillars = [
     "No hidden service fees",
-    "Mobile telecom service provider payments",
+    "Mobile money unit purchases",
     "ERA-compliant block tariffs",
-    "Peer-to-peer unit sharing",
+    "Electricity loans with clear terms",
     "Statutory lending caps enforced",
     "STS & AMI meter support",
   ];
@@ -37,18 +37,18 @@ export default function Home() {
               className="space-y-6 lg:space-y-8"
             >
               <span className="inline-flex items-center rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-cyan-700 dark:text-cyan-300">
-                Energy Sharing and Borrowing Platform
+                Electricity Units and Loans
               </span>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight">
-                <span className="block text-gray-900 dark:text-gray-100">Give Power,</span>
+                <span className="block text-gray-900 dark:text-gray-100">Buy Units,</span>
                 <span className="block bg-gradient-to-r from-blue-600 via-emerald-500 to-blue-700 bg-clip-text text-transparent">
-                  Get Power
+                  Get a Loan
                 </span>
               </h1>
 
               <p className="text-lg sm:text-xl text-gray-600 dark:text-gray-300 max-w-xl leading-relaxed">
-                EnergyFlex lets households and institutions buy, share, and borrow energy units -
-                no middleman, no branch visit, no delays.
+                EnergyFlex helps households buy electricity units or apply for a loan when they need
+                power - with clear terms and no branch visit.
               </p>
 
               <div className="flex flex-wrap gap-2">
@@ -112,7 +112,7 @@ export default function Home() {
               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/15 to-emerald-500/15 rounded-3xl blur-2xl" />
               <Image
                 src="/hero-network.png"
-                alt="Community energy grid sharing"
+                alt="EnergyFlex electricity units and loan services"
                 fill
                 className="object-cover rounded-3xl shadow-2xl ring-1 ring-white/60 dark:ring-slate-800/70"
                 priority

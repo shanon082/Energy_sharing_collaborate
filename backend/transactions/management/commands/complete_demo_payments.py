@@ -19,7 +19,7 @@ class Command(BaseCommand):
         parser.add_argument("--max-seconds", type=int, default=50)
 
     def handle(self, *args, **options):
-        require_demo()
+        require_demo(recovery=True)
         if not 1 <= options["limit"] <= 100 or not 1 <= options["max_seconds"] <= 55:
             raise CommandError("Use limit 1–100 and max-seconds 1–55.")
         ids = list(PaymentIntent.objects.filter(provider=LOCAL_DEMO, currency="UGX", status="PENDING",

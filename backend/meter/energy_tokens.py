@@ -115,5 +115,5 @@ def token_record(token):
             "meter_number": token.meter_number, "energy_wh": str(token.amount_wh),
             "energy_kwh": str(Decimal(token.amount_wh) / 1000), "environment": token.environment,
             "source": "PURCHASE" if allocation.purchase_intent_id else "LOAN", "source_reference": reference,
-            "state": token.state, "application_environment": "SOFTWARE_BENCH" if token.state == "APPLIED" else "UNCONFIRMED",
+            "state": token.state, "application_environment": ("AC_LAB" if token.delivery_id and token.delivery.transport == "AC_LAB" else "SOFTWARE_BENCH") if token.state == "APPLIED" else "UNCONFIRMED",
             "created_at": token.created_at.isoformat()}

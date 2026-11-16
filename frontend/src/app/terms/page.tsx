@@ -15,8 +15,8 @@ export default function TermsPage() {
     >
       <h2>1. The service</h2>
       <p>
-        EnergyFlex provides a platform to purchase electricity units, share units between registered meters, apply for
-        micro-electricity loans, and view transaction history. Availability may vary by pilot site, meter type, and
+        EnergyFlex provides a platform to purchase electricity units, apply for micro-electricity loans, and view
+        transaction history. Availability may vary by pilot site, meter type, and
         payment method.
       </p>
 
@@ -42,11 +42,11 @@ export default function TermsPage() {
         <li>We are not liable for delays caused by third-party networks, utilities, or incorrect meter numbers you enter.</li>
       </ul>
 
-      <h2>5. Sharing and transfers</h2>
+      <h2>5. Transaction history</h2>
       <p>
-        When you share units, you confirm the recipient meter number and amount. Shares are generally final once
-        confirmed with your password or PIN. Only share with people you trust — EnergyFlex records the transaction but
-        cannot reverse informal agreements between users except where required by law or our refund policy.
+        Purchase and loan transactions are recorded in your account history. Legacy unit-transfer records, where
+        present, are retained for audit and dispute-resolution purposes; new unit-sharing and transfer services are not
+        available.
       </p>
 
       <h2>6. Loans</h2>

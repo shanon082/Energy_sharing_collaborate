@@ -1,4 +1,4 @@
-/** Dispatched after a successful unit purchase, share, or apply-to-meter. */
+/** Dispatched after a successful unit purchase or own-meter allocation. */
 export const WALLET_BALANCE_UPDATED = "gpawa:wallet-balance-updated";
 
 export function notifyWalletBalanceUpdated() {

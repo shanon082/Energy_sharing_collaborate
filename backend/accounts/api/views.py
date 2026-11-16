@@ -62,7 +62,7 @@ from loan.scoring import get_or_create_credit_signal, profile_scoring_fields_com
 
 logger = logging.getLogger(__name__)
 
-PASSWORD_RESET_SUBJECT = "gPawa: Reset Your Password"
+PASSWORD_RESET_SUBJECT = "EnergyFlex: Reset Your Password"
  
 # import logging
 # from accounts.tasks import handle_send_email_code, handle_send_email_verification
@@ -122,7 +122,7 @@ PASSWORD_RESET_SUBJECT = "gPawa: Reset Your Password"
 
 # logger = logging.getLogger(__name__)
 
-# PASSWORD_RESET_SUBJECT = "gPawa: Reset Your Password"
+# PASSWORD_RESET_SUBJECT = "EnergyFlex: Reset Your Password"
  
 # @api_view(['GET', 'POST'])
 # @permission_classes([IsAuthenticated])
@@ -1364,7 +1364,7 @@ class RequiredPasswordChangeAPIView(GenericAPIView):
         user.save(update_fields=["password", "must_change_password", "modify_date"])
 
         return Response(
-            {"success": True, "message": "Password updated. You can now use gPawa."},
+            {"success": True, "message": "Password updated. You can now use EnergyFlex."},
             status=status.HTTP_200_OK,
         )
 

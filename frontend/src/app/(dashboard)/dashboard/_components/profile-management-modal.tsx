@@ -412,18 +412,18 @@ export default function ProfileManagementModal({
                                                                             name="meter_sharing"
                                                                             render={({ field }) => (
                                                                                 <FormItem>
-                                                                                    <FormLabel>Meter Sharing</FormLabel>
+                                                                                    <FormLabel>Household Coverage</FormLabel>
                                                                                     <Select onValueChange={field.onChange} value={field.value}>
                                                                                         <FormControl>
                                                                                             <SelectTrigger>
-                                                                                                <SelectValue placeholder="Select sharing status" />
+                                                                                                <SelectValue placeholder="Select household coverage" />
                                                                                             </SelectTrigger>
                                                                                         </FormControl>
                                                                                         <SelectContent>
-                                                                                            <SelectItem value="No sharing">No sharing</SelectItem>
-                                                                                            <SelectItem value="Shared with 1 household">Shared with 1 household</SelectItem>
-                                                                                            <SelectItem value="Shared with 2+ households">Shared with 2+ households</SelectItem>
-                                                                                            <SelectItem value="Commercial sharing">Commercial sharing</SelectItem>
+                                                                                            <SelectItem value="No sharing">One household</SelectItem>
+                                                                                            <SelectItem value="Shared with 1 household">Two households</SelectItem>
+                                                                                            <SelectItem value="Shared with 2+ households">Three or more households</SelectItem>
+                                                                                            <SelectItem value="Commercial sharing">Commercial premises</SelectItem>
                                                                                         </SelectContent>
                                                                                     </Select>
                                                                                     <FormMessage />

@@ -65,7 +65,7 @@ export default function GenerateTokenCard({
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
             Balance updates may take a few minutes to reflect on the physical meter after a purchase
-            or share.
+            or loan disbursement.
           </p>
         </CardContent>
       </Card>

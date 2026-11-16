@@ -37,7 +37,7 @@ export function PreviewApp({ onExit }: { onExit: () => void }) {
   const showPreviewResult = () => setNotice("Preview complete. No request was submitted and no money or units changed.");
   return <div className="app-shell consumer-redesign preview-shell">
     <div className="preview-banner"><span><span className="preview-dot" />Design preview · sample data</span><button onClick={onExit}>Exit preview</button></div>
-    <header className="topbar"><div className="topbar-identity"><span className="brand-lockup"><Icon name="bolt" />gPawa<span className="brand-dot">.</span></span><span className="topbar-page">{title}</span></div><div className="header-actions"><button className="icon-button" aria-label="Notifications" onClick={() => go("notifications")}><Icon name="bell" /></button><button className="avatar-button" aria-label="Your account" onClick={() => go("account")}>A</button></div></header>
+    <header className="topbar"><div className="topbar-identity"><span className="brand-lockup"><Icon name="bolt" />EnergyFlex</span><span className="topbar-page">{title}</span></div><div className="header-actions"><button className="icon-button" aria-label="Notifications" onClick={() => go("notifications")}><Icon name="bell" /></button><button className="avatar-button" aria-label="Your account" onClick={() => go("account")}>A</button></div></header>
     <main className="content">
       {screen === "dashboard" && <>
         <PageHeading eyebrow="YOUR ENERGY, SIMPLIFIED" title="Hello, Alex" text="Everything you need to keep going." />

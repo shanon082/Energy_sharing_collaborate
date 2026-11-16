@@ -18,11 +18,11 @@ interface LogoMarkProps {
   className?: string;
 }
 
-export function GpawaLogoMark({ size = 36, className }: LogoMarkProps) {
+export function EnergyFlexLogoMark({ size = 36, className }: LogoMarkProps) {
   return (
     <Image
       src={LOGO_MARK_SRC}
-      alt="gPawa"
+      alt="EnergyFlex"
       width={size}
       height={size}
       priority
@@ -44,7 +44,7 @@ interface LogoProps {
   suffixVariant?: "default" | "sidebar";
 }
 
-export function GpawaLogo({
+export function EnergyFlexLogo({
   href = "/",
   textSize = "base",
   showText = true,
@@ -62,7 +62,7 @@ export function GpawaLogo({
 
   const inner = (
     <span className={cn("flex items-center gap-2.5", className)}>
-      <GpawaLogoMark size={logoSize} />
+      <EnergyFlexLogoMark size={logoSize} />
       {showText && (
         <span
           className={cn(
@@ -70,8 +70,7 @@ export function GpawaLogo({
             textClass
           )}
         >
-          <span className="text-blue-600 dark:text-blue-400">g</span>
-          <span className="text-gray-900 dark:text-white">Pawa</span>
+          <span className="text-gray-900 dark:text-white">EnergyFlex</span>
         </span>
       )}
       {!showText && suffix && (
@@ -80,7 +79,7 @@ export function GpawaLogo({
             "font-semibold tracking-tight",
             textClass,
             suffixVariant === "sidebar"
-              ? "gpawa-sidebar-brand"
+              ? "energyflex-sidebar-brand"
               : "text-foreground"
           )}
         >

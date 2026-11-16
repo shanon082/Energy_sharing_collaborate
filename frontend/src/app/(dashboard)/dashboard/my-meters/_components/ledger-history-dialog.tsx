@@ -136,7 +136,7 @@ export default function LedgerHistoryDialog({
 
             {!history.events?.length ? (
               <p className="text-sm text-muted-foreground text-center py-6">
-                No ledger events recorded yet. Loads and shares will appear here.
+                No ledger events recorded yet. Purchases and meter loads will appear here.
               </p>
             ) : (
               <ul className="divide-y rounded-lg border overflow-hidden">

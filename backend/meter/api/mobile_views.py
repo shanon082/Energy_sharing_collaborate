@@ -48,6 +48,12 @@ def mobile_meter_record(meter):
 
 
 def application_confirmed(delivery):
+    if delivery.transport == "AC_LAB":
+        command = getattr(delivery, "prototype_command", None)
+        return bool(command and command.receipt_id and command.applied_at
+                    and delivery.status == MeterDelivery.APPLIED and delivery.applied_at
+                    and command.device.meter_id == delivery.allocation.meter_id
+                    and str(command.device.pk) == delivery.command_payload.get("device_id"))
     if delivery.transport == "KEYPAD_BENCH":
         receipt = getattr(delivery, "bench_receipt", None)
         return bool(delivery.status == MeterDelivery.APPLIED and delivery.applied_at and receipt
@@ -72,6 +78,11 @@ class MobileMeterListView(APIView):
 class MobileMeterDashboardView(APIView):
     permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
     def get(self, request, meter_id):
         meter = get_object_or_404(Meter, pk=meter_id, user=request.user, is_deleted=False)
         environment = request.query_params.get("environment")
@@ -89,7 +100,9 @@ class MobileMeterDashboardView(APIView):
         uncertain = bool(device and (device.reset_count > 0 or device.telemetry.filter(
             classification__in=["INITIAL", "RESET"], cumulative_wh__gt=0,
         ).exists() or device.telemetry.filter(classification="DISCONTINUITY").exists()))
-        return Response({
+        from meter.prototype_reads import lab_device, lab_dashboard
+        lab = lab_device(request.user, meter) if environment in {None, "UGX_DEMO"} else None
+        response = Response({
             "meter": mobile_meter_record(meter),
             "unit": "kWh", "quantum_kwh": "0.01",
             "observed_at": timezone.now().isoformat(), "stale_after_seconds": stale_after,
@@ -101,21 +114,31 @@ class MobileMeterDashboardView(APIView):
             "reported_relay_state": device.reported_relay_state if device else None,
             "relay_source": "SIMULATOR" if device else "UNAVAILABLE",
             "last_measurement_at": device.last_measured_at.isoformat() if device and device.last_measured_at else None,
-            **{key: str(value) for key, value in entitlement_summary(request.user, meter, environment).items()},
+            **{key: str(value) for key, value in entitlement_summary(request.user, meter, "UGX_DEMO" if lab and environment is None else environment).items()},
             "last_meter_contact": device.last_contact_at.isoformat()
                 if device is not None and device.last_contact_at else None,
             "delivery_environment": "SIMULATOR" if simulated else "UNAVAILABLE",
             "contact_source": "SIMULATOR" if device is not None else "UNAVAILABLE",
         })
+        if lab:
+            response.data.update(lab_dashboard(lab))
+        response["Cache-Control"] = "private, no-store"
+        return response
 
 
 class MobileConsumptionHistoryView(APIView):
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
     permission_classes = [IsAuthenticated, ConsumerAccountPermission]
 
     def get(self, request):
         if request.user.user_role != User.CLIENT:
             return Response({"code": "CONSUMER_ONLY"}, status=403)
         meter = selected_meter(request)
+        from meter.prototype_reads import lab_history
         daily = MeterUsageDaily.objects.filter(meter=meter).order_by("-usage_date")[:30]
         telemetry = SimulatedTelemetry.objects.filter(device__meter=meter).order_by("-received_at")[:30]
         return Response({
@@ -126,6 +149,7 @@ class MobileConsumptionHistoryView(APIView):
                 "date": row.usage_date.isoformat(), "kwh": str(row.kwh_used),
                 "source": row.source,
             } for row in daily],
+            "ac_lab_telemetry": lab_history(request.user, meter),
             "simulator_telemetry": [{
                 "event_id": str(row.event_id), "cumulative_wh": row.cumulative_wh,
                 "cumulative_wh_exact": str(row.cumulative_wh),
@@ -146,7 +170,7 @@ class MobileDeliveryHistoryView(APIView):
             return Response({"code": "CONSUMER_ONLY"}, status=403)
         meter = selected_meter(request)
         rows, page = read_page(MeterDelivery.objects.filter(allocation__owner=request.user,
-                          allocation__meter=meter).select_related("allocation", "simulated_command__device"), request.query_params)
+                          allocation__meter=meter).select_related("allocation", "simulated_command__device", "prototype_command__device"), request.query_params)
         return Response({"meter_no": meter.meter_no, "meter": mobile_meter_record(meter),
                          "pagination": page, "deliveries": [{
             "id": row.pk, "command_id": str(row.command_id),
@@ -155,7 +179,7 @@ class MobileDeliveryHistoryView(APIView):
             "allocation_id": row.allocation_id,
             "source": "PURCHASE" if row.allocation.purchase_intent_id else "SANDBOX_LOAN" if row.allocation.sandbox_loan_id else "APPROVED_LOAN",
             "application_confirmed": application_confirmed(row),
-            "environment": "SOFTWARE_BENCH" if row.transport == "KEYPAD_BENCH" else "SIMULATOR" if hasattr(row, "simulated_command") else "UNCONFIRMED",
+            "environment": "AC_LAB" if row.transport == "AC_LAB" else "SOFTWARE_BENCH" if row.transport == "KEYPAD_BENCH" else "SIMULATOR" if hasattr(row, "simulated_command") else "UNCONFIRMED",
             "created_at": row.created_at.isoformat(),
             "applied_at": row.applied_at.isoformat() if row.applied_at else None,
         } for row in rows]})

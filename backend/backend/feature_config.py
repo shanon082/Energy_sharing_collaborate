@@ -4,14 +4,14 @@ from django.core.exceptions import ImproperlyConfigured
 
 
 FEATURE_ENV_VARS = {
-    "peer_sharing": "FEATURE_PEER_SHARING_ENABLED",
-    "meter_transfers": "FEATURE_METER_TRANSFERS_ENABLED",
     "third_party_repayment": "FEATURE_THIRD_PARTY_REPAYMENT_ENABLED",
     "ussd": "FEATURE_USSD_ENABLED",
     "wallet_deposits": "FEATURE_WALLET_DEPOSITS_ENABLED",
     "wallet_withdrawals": "FEATURE_WALLET_WITHDRAWALS_ENABLED",
     "external_crb": "FEATURE_EXTERNAL_CRB_ENABLED",
 }
+
+RETIRED_FEATURES = frozenset({"peer_sharing", "meter_transfers"})
 
 
 def parse_feature_bool(value, *, name="feature flag"):

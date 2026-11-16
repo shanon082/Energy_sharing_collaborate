@@ -18,7 +18,7 @@ interface PinInputProps {
 
 /**
  * Reusable transaction-PIN field used as the final authentication step before
- * buying, sharing, or requesting a loan. Numeric, masked, fixed length.
+ * buying units or requesting a loan. Numeric, masked, fixed length.
  */
 export function PinInput({
   value,

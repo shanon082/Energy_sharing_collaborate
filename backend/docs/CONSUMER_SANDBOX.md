@@ -1,5 +1,8 @@
 # Consumer sandbox: implementation and testing deployment
 
+> MTN resumption update (2026-11-17): [MTN_SANDBOX_RESUMPTION.md](MTN_SANDBOX_RESUMPTION.md) governs NEW payments and original-provider recovery. LOCAL_DEMO default/pause instructions below are historical. New EUR loans remain unavailable pending an automatic assessment policy. No hosted change has been made.
+
+
 > Current deployment: use [METER_CREDIT_TARIFFS.md](METER_CREDIT_TARIFFS.md). The old EUR/starter/fixed-price tables below are historical v1 policy descriptions, not new-loan authorization rules. MTN remains paused.
 
 **Current mode:** the prototype now defaults to `LOCAL_DEMO` with a distinct

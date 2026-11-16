@@ -3,7 +3,7 @@ import { Disclosure } from "@headlessui/react";
 import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
-import { GpawaLogo, LOGO_SIZES } from "@/components/common/gpawa-logo";
+import { EnergyFlexLogo, LOGO_SIZES } from "@/components/common/energyflex-logo";
 import { ModeToggle } from "../theme-toggle";
 import { motion } from "framer-motion";
 
@@ -21,7 +21,7 @@ export default function PublicHeader() {
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex h-16 items-center justify-between">
               <div className="flex items-center">
-                <GpawaLogo
+                <EnergyFlexLogo
                   href="/"
                   textSize={LOGO_SIZES.header.textSize}
                   logoSize={LOGO_SIZES.header.logoSize}

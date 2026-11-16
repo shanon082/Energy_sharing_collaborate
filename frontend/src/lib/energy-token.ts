@@ -2,7 +2,7 @@ export type EnergyToken = {
   id: string; allocation_id: number; token: string; meter_number: string;
   energy_wh: string; energy_kwh: string; environment: "CORE" | "SANDBOX" | "UGX_DEMO";
   source: "PURCHASE" | "LOAN"; source_reference: string; state: "ISSUED" | "DELIVERY_PENDING" | "APPLIED";
-  application_environment: "SOFTWARE_BENCH" | "UNCONFIRMED"; created_at: string;
+  application_environment: "SOFTWARE_BENCH" | "AC_LAB" | "UNCONFIRMED"; created_at: string;
 };
 export function parseEnergyTokens(value: unknown, allocationId?: number): EnergyToken[] {
   if (!value || typeof value !== "object" || !("tokens" in value) || !Array.isArray(value.tokens)) throw new Error("Token service returned an unreadable response.");
@@ -16,10 +16,10 @@ export function parseEnergyTokens(value: unknown, allocationId?: number): Energy
         typeof row.energy_kwh !== "string" || !/^[0-9]+(?:\.[0-9]+)?$/.test(row.energy_kwh) ||
         !["CORE", "SANDBOX", "UGX_DEMO"].includes(String(row.environment)) || !["PURCHASE", "LOAN"].includes(String(row.source)) ||
         typeof row.source_reference !== "string" || !["ISSUED", "DELIVERY_PENDING", "APPLIED"].includes(String(row.state)) ||
-        (row.state === "APPLIED" && row.application_environment !== "SOFTWARE_BENCH")) throw new Error("Invalid electricity token or loading evidence.");
+        (row.state === "APPLIED" && !["SOFTWARE_BENCH", "AC_LAB"].includes(String(row.application_environment)))) throw new Error("Invalid electricity token or loading evidence.");
     return row as EnergyToken;
   });
 }
 export function tokenLoadingLabel(token: EnergyToken): string {
-  return token.state === "APPLIED" ? "Units loaded on meter — software bench confirmation only." : "Awaiting meter confirmation.";
+  return token.state === "APPLIED" && token.application_environment === "AC_LAB" ? "Credit saved on AC lab device — relay output disabled; load feedback unknown." : token.state === "APPLIED" ? "Units loaded on meter — software bench confirmation only." : "Awaiting meter confirmation.";
 }

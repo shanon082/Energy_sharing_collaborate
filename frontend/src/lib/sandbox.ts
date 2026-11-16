@@ -1,7 +1,7 @@
 /** Currency-isolated test contract, shared by Next.js and Capacitor. */
 export type TestCurrency = "EUR" | "UGX";
 export type TestEnvironment = "MTN_SANDBOX" | "UGX_DEMO";
-export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO" };
+export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string };
 export const NO_SANDBOX: SandboxCapabilities = { enabled: false, loans: false, purchases: false, repayments: false };
 export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   if (!raw || typeof raw !== "object") return { ...NO_SANDBOX };
@@ -9,7 +9,9 @@ export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   const demo = row.currency === "UGX" && row.environment === "UGX_DEMO" && row.provider === "LOCAL_DEMO";
   const mtn = row.currency === "EUR" && row.provider === "MTN_SANDBOX" && (row.environment === undefined || row.environment === "MTN_SANDBOX");
   if (row.enabled !== true || (!demo && !mtn) || row.physical_delivery !== false) return { ...NO_SANDBOX };
-  return { enabled: true, loans: row.loans === true, purchases: row.purchases === true, repayments: row.repayments === true, ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : {}) };
+  return { enabled: true, loans: row.loans === true, purchases: row.purchases === true, repayments: row.repayments === true,
+    ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : { currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" } as const),
+    ...(typeof row.payment_message === "string" && row.payment_message ? { paymentMessage: row.payment_message } : {}) };
 }
 export interface SandboxClient { get<T>(path: string): Promise<T>; post<T>(path: string, body: unknown): Promise<T> }
 export type TestMeter = { label?: string; status?: string; id: number; meter_number: string; sandbox_inventory?: boolean };
@@ -72,9 +74,22 @@ export function demoCountdown(row: TestPayment, now = Date.now()): number | null
   if (row.environment !== "UGX_DEMO" || row.status !== "PENDING" || !row.server_time || !row.demo_eligible_at || row.observed_at === undefined) return null;
   return Math.max(0, Math.ceil((Date.parse(row.demo_eligible_at) - Date.parse(row.server_time) - Math.max(0, now - row.observed_at)) / 1000));
 }
+/** Both clients poll Django. Elapsed time never constitutes a successful payment. */
+export function paymentStatusMethod(row: TestPayment, now = Date.now()): "GET" | "POST" {
+  if (row.status !== "PENDING") return "GET";
+  if (row.environment === "UGX_DEMO") return demoCountdown(row, now) === 0 ? "POST" : "GET";
+  const next = Date.parse(row.next_check_at);
+  return Number.isFinite(next) && next <= now ? "POST" : "GET";
+}
+/** A missing recovery row may race an in-flight POST; it is not proof of failure. */
+export function canClearRecoveredRetry(row: { status: string } | null): boolean {
+  return row !== null && ["SETTLED", "FAILED", "DISBURSED", "COMPLETED", "REJECTED"].includes(row.status);
+}
 export function testPhone(value: string): boolean { return /^\d{10,15}$/.test(value); }
 export function parseTestPayment(value: unknown): TestPayment {
   const row = obj(value);
+  if (row.environment === "MTN_SANDBOX" && row.provider !== undefined && row.provider !== "MTN_SANDBOX")
+    throw new Error("Payment provider does not match its test environment.");
   if (!validDomain(row) || !["PENDING", "SETTLED", "FAILED"].includes(String(row.status)) ||
     !["PURCHASE", "LOAN_REPAYMENT"].includes(String(row.purpose)) || typeof row.reference !== "string" || !/^[0-9a-f-]{36}$/i.test(row.reference) ||
     typeof row.amount !== "string" || !/^\d+(?:\.\d+)?$/.test(row.amount) || !Number.isSafeInteger(row.meter_id)) throw new Error("Invalid sandbox receipt; no UGX conversion is available.");

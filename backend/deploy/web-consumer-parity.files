@@ -1,0 +1,8 @@
+backend/settings.py
+loan/consumer_summary.py
+loan/sandbox_api.py
+loan/sandbox_models.py
+loan/sandbox_service.py
+loan/sandbox_urls.py
+loan/tests_consumer_summary.py
+deploy/web-consumer-parity.files

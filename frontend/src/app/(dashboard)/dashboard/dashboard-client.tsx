@@ -148,7 +148,7 @@ export default function DashboardClient({
                 </div>
                 <h3 className="mt-4 text-lg font-semibold">Step 1: Complete Meter Registration</h3>
                 <p className="mb-4 mt-2 text-sm text-muted-foreground">
-                  Please register your electricity meter to continue using gPawa services.
+                  Please register your electricity meter to continue using EnergyFlex services.
                 </p>
                 <p className="text-xs text-muted-foreground">Follow the steps in the popup above to continue.</p>
               </div>

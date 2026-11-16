@@ -43,6 +43,13 @@ class FreeTestingMiddleware:
             "/api/v1/meter/power-usage/",
             "/api/v1/loans/payment-status/", "/api/v1/transactions/statement/email/",
         )
+        # Exact lab transport allowlist only. Views independently enforce the same
+        # capability, unique device authentication, schema and meter binding.
+        from meter.prototype_device import enabled as ac_lab_enabled
+        ac_lab_write = ac_lab_enabled() and request.method == "POST" and path in {
+            "/api/v1/prototype-device/v1/session/", "/api/v1/prototype-device/v1/redeem/",
+            "/api/v1/prototype-device/v1/ack/", "/api/v1/prototype-device/v1/telemetry/",
+        }
         auth = path.startswith("/api/v1/auth/")
         account_page = (getattr(settings, "DJANGO_HOSTED_ACCOUNT_PAGES", False)
                         and path in ACCOUNT_PAGE_PATHS and request.method == "POST")
@@ -64,7 +71,10 @@ class FreeTestingMiddleware:
         }
         if request.method != "OPTIONS" and (
                 path.startswith(unavailable_reads)
-                or (request.method not in {"GET", "HEAD"} and not (auth or account_page or local_metadata or sandbox_write))):
-            return JsonResponse({"code": "TESTING_OPERATION_UNAVAILABLE",
+                or (request.method not in {"GET", "HEAD"} and not (auth or account_page or local_metadata or sandbox_write or ac_lab_write))):
+            response = JsonResponse({"code": "TESTING_OPERATION_UNAVAILABLE",
                                  "message": "Financial, delivery and worker-dependent operations are unavailable on this testing host."}, status=503)
+            if path.startswith("/api/v1/prototype-device/v1/"):
+                response["Cache-Control"] = "private, no-store"
+            return response
         return self.get_response(request)

@@ -21,7 +21,7 @@ class DemoNotReady(APIException):
 
 
 def validate_demo_intent(intent):
-    require_demo()
+    require_demo(recovery=True)
     verified_consumer(intent.owner)
     ctx = intent.sandbox_context or {}
     if (intent.provider != LOCAL_DEMO or intent.currency != "UGX"
@@ -72,7 +72,7 @@ def validate_demo_intent(intent):
 
 def complete_demo_payment(intent_id, *, owner=None):
     """Explicit POST or bounded job only. Status GET never calls this operation."""
-    require_demo()
+    require_demo(recovery=True)
     with transaction.atomic():
         rows = PaymentIntent.objects.select_for_update().filter(pk=intent_id, provider=LOCAL_DEMO)
         if owner is not None:

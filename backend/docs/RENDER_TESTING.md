@@ -92,13 +92,13 @@ These names must remain disabled; the Render profile **rejects** enabled values:
 
 | Flag | Default |
 | --- | --- |
-| `FEATURE_PEER_SHARING_ENABLED` | `false` |
-| `FEATURE_METER_TRANSFERS_ENABLED` | `false` |
 | `FEATURE_THIRD_PARTY_REPAYMENT_ENABLED` | `false` |
 | `FEATURE_USSD_ENABLED` | `false` |
 | `FEATURE_WALLET_DEPOSITS_ENABLED` | `false` |
 | `FEATURE_WALLET_WITHDRAWALS_ENABLED` | `false` |
 | `FEATURE_EXTERNAL_CRB_ENABLED` | `false` |
+
+Peer sharing and meter transfers are retired and cannot be re-enabled by environment flags.
 | `MOBILE_PAYMENT_ACTIONS_ENABLED` | `false` |
 | `SIMULATED_METER_ENABLED` | `false`; the simulator remains development-only |
 | `MTN_USE_SIMULATED_PAYMENTS` | Explicit `false`; different legacy parser: case-insensitive `false/0/no`, **without** whitespace stripping. Missing values normally auto-select simulation if keys are absent; Render explicitly prevents that fallback. |

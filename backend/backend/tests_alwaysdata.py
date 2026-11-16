@@ -254,7 +254,8 @@ class AlwaysdataProfileTests(SimpleTestCase):
         else:
             self.assertEqual(db_options, "-c search_path=custom,public")
         self.assertLessEqual(settings.EMAIL_TIMEOUT, 30)
-        self.assertEqual(settings.CSRF_TRUSTED_ORIGINS, [settings.PRODUCTION_ORIGIN])
+        # Django-hosted CSRF-protected account forms need their exact HTTPS origin.
+        self.assertEqual(settings.CSRF_TRUSTED_ORIGINS, list(dict.fromkeys([settings.ACCOUNT_PAGES_ORIGIN, settings.PRODUCTION_ORIGIN])))
         with patch.dict(connection.settings_dict, {"ATOMIC_REQUESTS": False}):
             for origin in ("http://localhost", "https://localhost"):
                 response = self.client.post("/api/v1/auth/login/", data="{}", content_type="application/json", HTTP_ORIGIN=origin, **self.headers)

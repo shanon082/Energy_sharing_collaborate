@@ -1,4 +1,4 @@
-# gPawa Backend — Transactions & Meter Flows
+# EnergyFlex Backend — Transactions & Meter Flows
 
 This document describes what happens on the Django backend when users buy electricity units, and how **STS** vs **AMI** meters are handled differently.
 

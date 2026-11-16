@@ -176,7 +176,7 @@ def handle_send_share_verification(user_id, code, transaction_details):
                 <p style="margin: 14px 0 6px 0;">This code expires in <strong>10 minutes</strong>.</p>
                 <p style="margin: 0 0 14px 0; color:#dc2626;">If you didn't initiate this transaction, contact support immediately.</p>
 
-                <p style="margin: 0;">Best regards,<br/>gPawa Team</p>
+                <p style="margin: 0;">Best regards,<br/>EnergyFlex Team</p>
             </div>
             <p style="font-size:12px; color:#6b7280; margin-top:12px;">Do not share this code with anyone.</p>
         </div>
@@ -236,7 +236,7 @@ def handle_send_transfer_verification(user_id, code, transaction_details):
         If you didn't initiate this transfer, please contact support immediately.
         
         Best regards,
-        gPawa Team
+        EnergyFlex Team
         """
         
         logger.info(f"[TRANSFER VERIFICATION] About to send email to {user.email}")
@@ -301,7 +301,7 @@ def handle_send_wallet_update(user_id, transaction_details):
                 </div>
 
                 <p style="margin: 14px 0 6px 0; color:#dc2626;">If you didn't authorize this transaction, contact support immediately.</p>
-                <p style="margin: 0;">Best regards,<br/>gPawa Team</p>
+                <p style="margin: 0;">Best regards,<br/>EnergyFlex Team</p>
             </div>
             <p style="font-size:12px; color:#6b7280; margin-top:12px;">Do not share sensitive information from this email.</p>
         </div>
@@ -372,7 +372,7 @@ def handle_send_share_token(user_id, token, units, meter_number, sender_meter=No
                 <p style="margin: 0 0 12px 0;">Use this token to load the units onto your meter.</p>
                 <p style="margin: 0 0 14px 0; color:#dc2626;">If you did not expect this token, contact support immediately.</p>
 
-                <p style="margin: 0;">Best regards,<br/>gPawa Team</p>
+                <p style="margin: 0;">Best regards,<br/>EnergyFlex Team</p>
             </div>
             <p style="font-size:12px; color:#6b7280; margin-top:12px;">Do not share this token with anyone else.</p>
         </div>
@@ -409,13 +409,13 @@ def handle_send_low_units_alert_email(user_id, meter_no, units_kwh, notification
 
         frontend_url = settings.FRONTEND_URL.rstrip("/")
         meter_path = f"{frontend_url}/dashboard/tokens"
-        subject = f"gPawa: Low units on meter {meter_no}"
+        subject = f"EnergyFlex: Low units on meter {meter_no}"
         message = (
             f"<p>Hello {user.first_name or 'there'},</p>"
             f"<p>Your AMI meter <strong>{meter_no}</strong> is running low: "
             f"<strong>{units_kwh:.2f} kWh</strong> remaining.</p>"
             f"<p><a href=\"{meter_path}\">Open your meter dashboard</a> to check units or top up.</p>"
-            f"<p>— gPawa Energy Wallet</p>"
+            f"<p>— EnergyFlex Energy Wallet</p>"
         )
 
         sent, email_message = send_email(
@@ -449,7 +449,7 @@ def handle_send_payment_receipt_email(
             return False
 
         frontend_url = settings.FRONTEND_URL.rstrip("/")
-        subject = f"gPawa: Payment receipt #{transaction_id}"
+        subject = f"EnergyFlex: Payment receipt #{transaction_id}"
         message = (
             f"<p>Hello {user.first_name or 'there'},</p>"
             "<p>Your payment was completed successfully.</p>"
@@ -460,7 +460,7 @@ def handle_send_payment_receipt_email(
             f"<li><strong>Reference:</strong> {transaction_reference or 'N/A'}</li>"
             "</ul>"
             f"<p><a href=\"{frontend_url}/dashboard/transactions\">View transaction history</a></p>"
-            "<p>— gPawa Energy Wallet</p>"
+            "<p>— EnergyFlex Energy Wallet</p>"
         )
 
         sent, email_message = send_email(
@@ -488,7 +488,7 @@ def handle_send_loan_application_email(user_id, loan_id, status_value, amount_re
             return False
 
         approved = str(status_value).upper() == "APPROVED"
-        subject = "gPawa: Loan application update"
+        subject = "EnergyFlex: Loan application update"
         if approved:
             body = (
                 f"<p>Hello {user.first_name or 'there'},</p>"
@@ -500,7 +500,7 @@ def handle_send_loan_application_email(user_id, loan_id, status_value, amount_re
                 "</ul>"
                 "<p>Your electricity units are being credited to your wallet automatically — "
                 "you'll receive a follow-up email once disbursement completes.</p>"
-                "<p>— gPawa Energy Wallet</p>"
+                "<p>— EnergyFlex Energy Wallet</p>"
             )
         else:
             body = (
@@ -512,7 +512,7 @@ def handle_send_loan_application_email(user_id, loan_id, status_value, amount_re
                 f"<li><strong>Amount requested:</strong> UGX {float(amount_requested):,.2f}</li>"
                 "</ul>"
                 "<p>You can continue buying units directly from your dashboard.</p>"
-                "<p>— gPawa Energy Wallet</p>"
+                "<p>— EnergyFlex Energy Wallet</p>"
             )
 
         sent, msg = send_email(
@@ -539,7 +539,7 @@ def handle_send_loan_disbursed_email(user_id, loan_id, amount_approved, units_di
             logger.warning("[LOAN DISBURSEMENT] No user/email for loan %s", loan_id)
             return False
 
-        subject = "gPawa: Loan disbursed to your wallet"
+        subject = "EnergyFlex: Loan disbursed to your wallet"
         body = (
             f"<p>Hello {user.first_name or 'there'},</p>"
             "<p>Your approved electricity loan has been <strong>disbursed</strong>.</p>"
@@ -549,7 +549,7 @@ def handle_send_loan_disbursed_email(user_id, loan_id, amount_approved, units_di
             f"<li><strong>Units credited:</strong> {float(units_disbursed):.2f} kWh</li>"
             "</ul>"
             "<p>Check your dashboard wallet and meter pages for details.</p>"
-            "<p>— gPawa Energy Wallet</p>"
+            "<p>— EnergyFlex Energy Wallet</p>"
         )
 
         sent, msg = send_email(
@@ -577,7 +577,7 @@ def handle_send_loan_repayment_email(user_id, loan_id, amount_paid, outstanding_
             return False
 
         if is_fully_repaid:
-            subject = "gPawa: Loan fully repaid"
+            subject = "EnergyFlex: Loan fully repaid"
             body = (
                 f"<p>Hello {user.first_name or 'there'},</p>"
                 "<p>Your electricity loan has been <strong>fully repaid</strong>. Thank you!</p>"
@@ -587,10 +587,10 @@ def handle_send_loan_repayment_email(user_id, loan_id, amount_paid, outstanding_
                 f"<li><strong>Outstanding balance:</strong> UGX 0.00</li>"
                 "</ul>"
                 "<p>Your loan account is now clear. You can apply for a new loan anytime.</p>"
-                "<p>— gPawa Energy Wallet</p>"
+                "<p>— EnergyFlex Energy Wallet</p>"
             )
         else:
-            subject = "gPawa: Loan repayment received"
+            subject = "EnergyFlex: Loan repayment received"
             body = (
                 f"<p>Hello {user.first_name or 'there'},</p>"
                 "<p>We have received your loan repayment.</p>"
@@ -600,7 +600,7 @@ def handle_send_loan_repayment_email(user_id, loan_id, amount_paid, outstanding_
                 f"<li><strong>Remaining balance:</strong> UGX {float(outstanding_balance):,.2f}</li>"
                 "</ul>"
                 "<p>Keep making payments to clear your loan and improve your credit score.</p>"
-                "<p>— gPawa Energy Wallet</p>"
+                "<p>— EnergyFlex Energy Wallet</p>"
             )
 
         sent, msg = send_email(
@@ -626,7 +626,7 @@ def handle_send_third_party_loan_payment_to_owner(owner_id, loan_id, amount_paid
         if not owner or not owner.email:
             return False
         verb = "fully repaid" if is_fully_repaid else "partially paid"
-        subject = f"gPawa: Your loan has been {verb}"
+        subject = f"EnergyFlex: Your loan has been {verb}"
         body = (
             f"<p>Hello {owner.first_name or 'there'},</p>"
             f"<p>Your electricity loan <strong>{loan_id}</strong> has been <strong>{verb}</strong> by "
@@ -636,7 +636,7 @@ def handle_send_third_party_loan_payment_to_owner(owner_id, loan_id, amount_paid
             f"<li><strong>Loan status:</strong> {'Fully cleared' if is_fully_repaid else 'Partially repaid'}</li>"
             f"</ul>"
             f"<p>Check your dashboard for the updated balance.</p>"
-            f"<p>— gPawa Energy Wallet</p>"
+            f"<p>— EnergyFlex Energy Wallet</p>"
         )
         sent, msg = send_email(
             sender=settings.DEFAULT_EMAIL_SENDER,
@@ -661,7 +661,7 @@ def handle_send_third_party_loan_payment_to_payer(payer_id, owner_name, loan_id,
         if not payer or not payer.email:
             return False
         verb = "fully repaid" if is_fully_repaid else "partially paid"
-        subject = f"gPawa: You {verb} a loan on behalf of {owner_name}"
+        subject = f"EnergyFlex: You {verb} a loan on behalf of {owner_name}"
         body = (
             f"<p>Hello {payer.first_name or 'there'},</p>"
             f"<p>You have successfully {verb} the electricity loan belonging to "
@@ -672,7 +672,7 @@ def handle_send_third_party_loan_payment_to_payer(payer_id, owner_name, loan_id,
             f"<li><strong>Status:</strong> {'Loan fully cleared' if is_fully_repaid else 'Partial payment applied'}</li>"
             f"</ul>"
             f"<p>Thank you for your generosity.</p>"
-            f"<p>— gPawa Energy Wallet</p>"
+            f"<p>— EnergyFlex Energy Wallet</p>"
         )
         sent, msg = send_email(
             sender=settings.DEFAULT_EMAIL_SENDER,

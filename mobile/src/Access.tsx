@@ -117,7 +117,7 @@ export function Access({ session, onLogin, loginBusy, loginError }: Props) {
     <header className="access-top"><button type="button" className="icon-button" aria-label="Back to welcome"
       disabled={busy || loginBusy} onClick={() => change("welcome")}><Icon name="back" /></button><Brand /></header>
     <div className="access-heading"><span className="access-symbol"><Icon name={mode === "verify" ? "mail" : mode === "forgot" || mode === "reset" ? "lock" : "bolt"} /></span>
-      <span className="eyebrow">{mode === "register" ? "JOIN GPAWA" : "YOUR ENERGY ACCOUNT"}</span>
+      <span className="eyebrow">{mode === "register" ? "JOIN ENERGYFLEX" : "YOUR ENERGY ACCOUNT"}</span>
       <h1>{titles[mode]}</h1><p>{subtitles[mode]}</p>
     </div>
     {mode === "login" || mode === "register" ? <div className="auth-tabs" aria-label="Account access">
