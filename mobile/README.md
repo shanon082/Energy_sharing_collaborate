@@ -1,6 +1,9 @@
 # EnergyFlex consumer Android app
 
-Current meter-credit/tariff update: [backend-first deployment](../backend/docs/METER_CREDIT_TARIFFS.md) and [validation](VALIDATION.md). Each selected sandbox meter has stored evidence and an 80% minimum; new quotes use configured Django tariffs. The header demo badge is removed, while payment disclosures remain. Current APK: **4,477,512 bytes**, SHA-256 `ae19c909a9d0ce840d10ed706b4462326edce76dcc304c6e4c356473a7cd6439`; API `https://shanonsimon.alwaysdata.net/api/v1`. Deploy migrations 0026/0027 and initialize existing meters before installing/testing it. Earlier APK hashes below are historical.
+Current combined AC_LAB/MTN debug APK: [build identity, tests and installation](COMBINED_BUILD.md). **4,635,116 bytes**, SHA-256 `cd8bfafdeb60331e5f05d008531081ba738b9695e963e0ee9f3dff6761024476`; same original certificate and HTTPS alwaysdata API. [Combined backend rollout](../backend/docs/COMBINED_AC_MTN_ROLLOUT.md) is prepared; hosted SSH authentication is blocked and the public backend still reports LOCAL_DEMO. New EUR loan origination remains unavailable pending its automatic assessment policy.
+
+
+Earlier meter-credit/tariff update: [backend-first deployment](../backend/docs/METER_CREDIT_TARIFFS.md) and [validation](VALIDATION.md). Each selected sandbox meter has stored evidence and an 80% minimum; new quotes use configured Django tariffs. The header demo badge is removed, while payment disclosures remain. APK from that phase: **4,477,512 bytes**, SHA-256 `ae19c909a9d0ce840d10ed706b4462326edce76dcc304c6e4c356473a7cd6439`; API `https://shanonsimon.alwaysdata.net/api/v1`. Deploy migrations 0026/0027 and initialize existing meters before installing/testing it. Earlier APK hashes below are historical.
 
 The latest LOCAL_DEMO UGX flow and automatic assessment are documented in
 [CONSUMER_EXPANSION.md](CONSUMER_EXPANSION.md) and

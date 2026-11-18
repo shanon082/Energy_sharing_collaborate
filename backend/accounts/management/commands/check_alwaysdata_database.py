@@ -19,8 +19,10 @@ class Command(BaseCommand):
             name, user = cursor.fetchone()
             if (name, user) != ("shanonsimon_energy_test", "shanonsimon"):
                 raise CommandError("Connected database identity does not match the testing target")
-            cursor.execute("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
+            cursor.execute("SELECT ssl, version, cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
             result = cursor.fetchone()
+            if not result or result[0] is not True:
+                raise CommandError("Refusing an unencrypted database connection; require DB_SSLMODE=require and verify PostgreSQL TLS")
             cursor.execute("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'custom')")
             custom_exists = cursor.fetchone()[0]
-        self.stdout.write(f"database={name} user={user} encrypted={bool(result and result[0])} custom_schema_exists={custom_exists}")
+        self.stdout.write(f"database={name} user={user} encrypted=True tls={result[1]} cipher={result[2]} custom_schema_exists={custom_exists}")

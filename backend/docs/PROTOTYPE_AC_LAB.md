@@ -1,5 +1,8 @@
 # ESP32-S3 / PZEM AC lab milestone — physical output disabled
 
+> Combined build: follow [COMBINED_AC_MTN_ROLLOUT.md](COMBINED_AC_MTN_ROLLOUT.md) for the single reviewed upload/backup/plan/migration/restart/scheduler checklist. AC_LAB stays disabled in MTN mode. Do not enable or provision the lab from this historical standalone runbook during the MTN rollout.
+
+
 This is a local implementation, not a hosted or electrical commissioning report.
 No hosted migrations, provider/ThingsBoard/device calls, key rotations or firmware
 writes were performed. The existing Android design is preserved.

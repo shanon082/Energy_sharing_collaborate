@@ -53,6 +53,52 @@ const props = {
   navigate: noop, setSelectedMeter: noop, setAmount: noop, clearQuote: noop, setAccepted: noop, setPhone: noop, selectLoan: noop,
   setRepayment: noop, setRepayAccepted: noop, validAmount: () => true, validPhone: true, refresh: noop, getQuote: noop, submit: noop, repay: noop, checkPayment: noop,
 };
+test('both clients explain unavailable loan origination before the Amount step', () => {
+  for (const surface of ['web', 'mobile']) {
+    const html = render({ ...props, surface, view: 'apply', purpose: 'LOAN', selectedMeter: {...props.selectedMeter, sandbox_inventory: true},
+      loanReason: 'EUR test loan assessment policy unavailable. UGX demo assessments cannot authorize EUR debt.' });
+    assert.match(html, /Loan applications unavailable/);
+    assert.match(html, /EUR test loan assessment policy unavailable/);
+    assert.doesNotMatch(html, /loan-stepper|<form|Submit application|Review terms/);
+  }
+});
+test('eligible EUR purchases remain reviewable and older UGX debts explain the currency boundary', () => {
+  for (const surface of ['web', 'mobile']) {
+    const ready = {...props, surface, selectedMeter: {...props.selectedMeter, sandbox_inventory: true}, pending: false,
+      policy: {id: 'SANDBOX-TEST-v1', minimum: '1.00', maximum: '20.00'}};
+    const buy = render({...ready, view: 'purchase', purpose: 'PURCHASE'});
+    assert.match(buy, /Review terms/);
+    assert.match(buy, /<button(?:(?!disabled)[^>])*>Review terms/);
+    assert.match(buy, /Amount \(EUR/);
+    const old = {id: 'old-ugx-loan', meter_id: 7, status: 'DISBURSED', currency: 'UGX', environment: 'UGX_DEMO', principal: '1000',
+      total_due: '1050', outstanding: '750', applied_repayments: '300', due_at: pending.initiated_at, allocated_kwh: null, allocation_id: null,
+      terms: {policy: {id: 'DEMO-UGX-v2'}}, reason: 'Historical demo loan'};
+    const loans = render({...ready, view: 'loans', loans: [old]});
+    assert.match(loans, /UGX debt cannot be repaid with EUR payments/);
+    assert.match(loans, /750/); assert.match(loans, /300|1,?050/);
+    const activity = render({...ready, view: 'activity', payments: [{...pending, status: 'SETTLED', provider: 'LOCAL_DEMO', environment: 'UGX_DEMO', currency: 'UGX', amount: '1000'}]});
+    assert.match(activity, /1,?000/);
+    assert.match(activity, /UGX/);
+  }
+});
+test('enabled LOCAL_DEMO loans retain Amount, Terms and explicit-consent progression', () => {
+  for (const surface of ['web', 'mobile']) {
+    const policy = {id: 'DEMO-UGX-v2', currency: 'UGX', environment: 'UGX_DEMO', minimum: '1000', maximum: '50000',
+      interest_percent: '5', fee: '0', due_days: 7, penalty_percent: '0', rounding: 'Whole UGX; 10 Wh allocations'};
+    const ready = {...props, surface, demo: true, currency: 'UGX', environment: 'UGX_DEMO', view: 'apply', purpose: 'LOAN',
+      capabilities: {...props.capabilities, loans: true}, policy, loanReason: null, pending: false, amount: '1000',
+      assessment: {score: 85, assessment_status: 'READY', eligible: true, maximum: '37500'},
+      selectedMeter: {...props.selectedMeter, sandbox_inventory: true}};
+    const amount = render(ready);
+    assert.match(amount, /loan-stepper/); assert.match(amount, /<button(?:(?!disabled)[^>])*>Review terms/);
+    const quote = {id: 'synthetic-quote', expires_at: '2030-01-01T00:00:00Z', terms: {policy, purpose: 'LOAN', amount: '1000', energy_kwh: '1.00',
+      billed: '1000', residual: '0', interest: '50', fee: '0', total_due: '1050', due_at: '2030-01-01T00:00:00Z'}};
+    const review = render({...ready, quote});
+    assert.match(review, /Review loan terms/); assert.match(review, /<button[^>]*disabled[^>]*>Continue/);
+    const accepted = render({...ready, quote, accepted: true});
+    assert.match(accepted, /<button(?:(?!disabled)[^>])*>Continue/);
+  }
+});
 test('Next.js and Android present the same pending, settled and failed server receipt', () => {
   for (const surface of ['web', 'mobile']) {
     const wait = render({ ...props, surface });

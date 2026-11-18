@@ -1,5 +1,8 @@
 # New collections: MTN Sandbox, existing ledgers retained
 
+> Combined build: follow [COMBINED_AC_MTN_ROLLOUT.md](COMBINED_AC_MTN_ROLLOUT.md) for the single reviewed upload/backup/plan/migration/restart/scheduler checklist. AC_LAB stays disabled in MTN mode. Do not enable or provision the lab from this historical standalone runbook during the MTN rollout.
+
+
 Prepared locally on 2026-11-17. **Not deployed. No actual MTN, board or phone test
 was performed for this change.** This document supersedes the LOCAL_DEMO default
 and the “pause MTN reconciliation” instructions in older prototype runbooks.

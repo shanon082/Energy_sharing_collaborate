@@ -10,6 +10,8 @@ import { MeterOnboarding } from "./Onboarding.tsx";
 import { ForegroundPoller } from "./api/polling.ts";
 import { Access } from "./Access.tsx";
 import { ProfileEditor } from "./Profile.tsx";
+import { AllocationLedgers } from "../../frontend/src/components/allocation-ledgers.tsx";
+import { meterReadEnvironment } from "../../frontend/src/lib/sandbox-presentation.ts";
 import { LabReadings } from "./LabReadings.tsx";
 import { DeliveryPanel } from "./Delivery.tsx";
 import { Activity } from "./Activity.tsx";
@@ -198,7 +200,7 @@ export default function App() {
     setConsumption((old) => ({ ...old, loading: true, error: null }));
     const path = encodeURIComponent(meterNo);
     const [allocationResult, consumptionResult] = await Promise.allSettled([
-      session.get<unknown>(`meter/mobile-meters/${selected.id}/`).then((data) => parseMeterDashboard(data, selected)),
+      session.get<unknown>(`meter/mobile-meters/${selected.id}/?environment=${sandbox.enabled ? meterReadEnvironment(sandbox.environment ?? "MTN_SANDBOX") : "CORE"}`).then((data) => parseMeterDashboard(data, selected)),
       session.get<unknown>(`meter/mobile-consumption/?meter_id=${selected.id}&meter_no=${path}`)
         .then((data) => parseConsumption(data, selected)),
     ]);
@@ -228,7 +230,7 @@ export default function App() {
       setConsumption((old) => ({ ...old, loading: false, error: message(consumptionResult.reason) }));
     }
     return allocationResult.status === "fulfilled" && consumptionResult.status === "fulfilled";
-  }, [expire]);
+  }, [expire, sandbox.enabled, sandbox.environment]);
 
   const chooseMeter = (selected: MeterInfo) => {
     selectedRef.current = selected; setSelectedMeter(selected.meter_number); setMeterNotice(null);
@@ -405,7 +407,7 @@ export default function App() {
             <p>Recorded application: {allocation.value?.contact_source === "UNAVAILABLE" ? "Unavailable" : energy(allocation.value?.confirmed_kwh)}.</p>
             {allocation.value?.contact_source === "SIMULATOR" && <p>Contact and delivery readings are simulated.</p>}
           </details>
-        </Panel><details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
+        </Panel>{account && <AllocationLedgers client={session} owner={account.id} meterId={meter.id} />}{sandbox.provider === "MTN_SANDBOX" && <p role="status">AC lab redemption is unavailable in MTN mode. EUR TEST allocations cannot be saved on the current UGX DEMO-only device; relay output remains disabled.</p>}<details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
       </>}
 
       {tab === "consumption" && <>

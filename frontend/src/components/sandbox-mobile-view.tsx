@@ -9,6 +9,7 @@ import type { SandboxClient } from "../lib/sandbox";
 import { TariffDetails } from "./tariff-details";
 import { financeBackAction } from "../lib/finance-navigation";
 import { exactDifference, formatEnergy, formatMoney } from "../lib/sandbox-presentation";
+import { quoteAvailabilityReason } from "../lib/quote-availability";
 
 export type ConsumerFinanceView = "home" | "loans" | "apply" | "purchase" | "activity" | "hidden";
 export type FinanceDestination = "loans" | "apply" | "purchase" | "activity" | "meters";
@@ -62,9 +63,12 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
   const oldLoans = p.loans.filter(loan => loan.environment !== p.environment);
   const currentLoan = currentLoans.find(loan => loan.status === "DISBURSED");
   const selectedLoan = currentLoans.find(loan => loan.id === p.loanId && loan.status === "DISBURSED");
-  const ready = p.assessment && (!p.demo || p.assessment.assessment_status === "READY");
+  const ready = p.assessment && p.assessment.score !== null && (!p.assessment.assessment_status || p.assessment.assessment_status === "READY");
   const score = ready && !p.assessment?.starter ? p.assessment?.score : null;
   const allowed = p.purpose === "LOAN" ? p.capabilities.loans : p.capabilities.purchases;
+  const reviewReason = quoteAvailabilityReason({ busy: p.busy, refreshing: p.refreshing, offline: p.offline, unresolved: p.unresolved,
+    pending: p.pending, blocked: p.blocked, policy: p.policy !== null, allowed, pricing: p.pricingStatus, validAmount: p.validAmount(p.amount),
+    purpose: p.purpose, assessmentReady: Boolean(ready), loanReason: p.loanReason });
   const activeQuote = p.quote?.terms.purpose === p.purpose ? p.quote : null;
   const expired = activeQuote ? Date.parse(activeQuote.expires_at) <= p.clock : false;
   const lastRepayment = (id: string) => p.payments.find(row => row.loan_id === id)?.reference ?? null;
@@ -149,6 +153,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
     {(!web || loan.status === "REJECTED") && <p className="muted small">{loan.reason}</p>}
     {web && loan.status !== "REJECTED" && !loan.allocation_id && <p className="muted small">Token unavailable for this historical transaction.</p>}
     {loan.allocation_id && <EnergyTokenCard compact={web} client={p.client} owner={p.owner} allocationId={loan.allocation_id} />}
+    {historical && loan.status === "DISBURSED" && <p role="status">{loan.currency} debt cannot be repaid with {p.currency} payments. Same-currency servicing is unavailable in this mode; your existing obligation is preserved.</p>}
     {!historical && loan.status === "DISBURSED" && <button type="button" className="primary-button" disabled={!p.capabilities.repayments || (web && Number(loan.outstanding) <= 0)} onClick={() => chooseRepayment(loan)}>{web ? "Make a repayment" : "Pay Loan →"}</button>}
     <details className="info-disclosure"><summary>Loan details & repayments</summary>{web ? <CopyReference value={loan.id} /> : <p className="reference">Reference: {loan.id}</p>}{web && <p>{loan.reason}</p>}<InfoRow title="Accepted policy" value={loan.terms.policy.id} /><TariffDetails pricing={loan.terms.pricing} currency={loan.currency} /><InfoRow title="Cloud allocation" value={loan.allocated_kwh == null ? (web ? "Unavailable" : "None") : web ? energy(loan.allocated_kwh) : `${loan.allocated_kwh} kWh`} /><InfoRow title="Closed" value={when(loan.closed_at)} />
       {p.payments.filter(row => row.loan_id === loan.id).map(row => <div className="list-row" key={row.reference}><span>{label(row.status)}<small>Applied {money(row.applied, row.currency)} · excess {money(row.excess, row.currency)}</small></span><strong>{money(row.amount, row.currency)}</strong></div>)}
@@ -189,13 +194,14 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
     </>}
 
     {(p.view === "apply" || p.view === "purchase") && <>
-      {p.view === "apply" && <ol className="loan-stepper">{["Amount", "Terms", "Confirm"].map((name, index) => { const step = !activeQuote ? 0 : confirming ? 2 : 1; return <li key={name} className={index === step ? "current" : index < step ? "done" : ""} aria-current={index === step ? "step" : undefined}><span>{index + 1}</span>{name}</li>; })}</ol>}
-      {!web && p.view === "apply" && p.loanReason && <p className="muted" role="status" id="loan-eligibility-reason">{p.loanReason}</p>}
+      {p.view === "apply" && p.capabilities.loans && <ol className="loan-stepper">{["Amount", "Terms", "Confirm"].map((name, index) => { const step = !activeQuote ? 0 : confirming ? 2 : 1; return <li key={name} className={index === step ? "current" : index < step ? "done" : ""} aria-current={index === step ? "step" : undefined}><span>{index + 1}</span>{name}</li>; })}</ol>}
+      {p.view === "apply" && !p.capabilities.loans && <section className="panel" role="status"><h2>Loan applications unavailable</h2><p>{p.loanReason || "The server has not enabled loan applications in this mode."}</p><p>Existing loans remain in My Loans. No questionnaire, currency conversion or fallback approval is available.</p><button type="button" className="secondary" onClick={() => p.navigate("loans")}>My Loans</button></section>}
+      {!web && p.view === "apply" && p.loanReason && p.capabilities.loans && <p className="muted" role="status" id="loan-eligibility-reason">{p.loanReason}</p>}
       {web && p.view === "apply" && <label>Meter<select value={p.selectedMeter?.sandbox_inventory ? String(p.selectedMeter.id) : ""} onChange={event => p.setSelectedMeter(event.target.value)} required>
         <option value="">{eligibleMeters.length ? "Choose a meter" : "No meter linked"}</option>
         {eligibleMeters.map(meter => <option key={meter.id} value={meter.id}>{meter.meter_number}</option>)}
       </select></label>}
-      {!p.selectedMeter?.sandbox_inventory ? web ? <section className="panel empty-card">
+      {p.view === "apply" && !p.capabilities.loans ? null : !p.selectedMeter?.sandbox_inventory ? web ? <section className="panel empty-card">
         {p.view === "purchase" && eligibleMeters.length > 0 && <label>Meter<select value="" onChange={event => p.setSelectedMeter(event.target.value)} required>
           <option value="">Choose a meter</option>{eligibleMeters.map(meter => <option key={meter.id} value={meter.id}>{meter.meter_number}</option>)}
         </select></label>}
@@ -205,6 +211,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
         {p.view === "apply" && assessmentCard}
         {!allowed && <p className="muted" role="status">{p.view === "apply" ? "Loan applications" : "Purchases"} are currently unavailable. Refresh to check again.</p>}
         {!p.pricingStatus.available && <p className="error" role="status">{p.pricingStatus.message}</p>}
+        {!activeQuote && reviewReason && <p id="quote-availability-reason" role="status">{reviewReason}</p>}
         {!activeQuote ? !p.pending &&         <form className="panel form-panel" onSubmit={event => { setConfirming(false); p.getQuote(event); }}><h2>{web ? p.view === "apply" ? "Request a loan" : "Buy Units" : p.view === "apply" ? "How much do you need?" : "How much would you like to buy?"}</h2>{web && p.view === "purchase" && <label>Meter<select value={String(p.selectedMeter.id)} onChange={event => p.setSelectedMeter(event.target.value)} required>{eligibleMeters.map(meter => <option key={meter.id} value={meter.id}>{meter.meter_number}</option>)}</select></label>}<label>Amount ({p.currency})<input aria-label={p.currency === "UGX" ? "Amount (UGX)" : "Amount (EUR TEST)"} inputMode={p.demo ? "numeric" : "decimal"} value={p.amount} onChange={event => p.setAmount(event.target.value)} required /></label>{!web && <p className="muted small">{p.demo ? "Enter whole shillings." : "Use EUR test amounts."} Range {money(p.policy?.minimum, p.currency)}–{money(p.policy?.maximum, p.currency)}.</p>}{p.view === "apply" && web && <p className="muted small">Borrowing limit: {money(p.assessment?.maximum, p.currency)}.</p>}{p.view === "apply" && !web && <p className="muted small">Your limit: {money(p.assessment?.maximum, p.currency)}. Eligibility is checked when you submit.</p>}{web && p.view === "apply" && p.loanReason && <p id="loan-eligibility-reason" className="eligibility-reason" role="status">{p.loanReason}</p>}<button type="submit" aria-describedby={web && p.view === "apply" && p.loanReason ? "loan-eligibility-reason" : undefined} disabled={p.blocked || !p.policy || !allowed || !p.pricingStatus.available || !p.validAmount(p.amount) || (p.view === "apply" && (!ready || !!p.loanReason))}>{p.busy ? "Getting quote…" : web ? p.view === "apply" ? "Review terms" : "Review terms" : "Review terms →"}</button></form> : <section className="panel form-panel"><h2>{p.view === "apply" ? confirming ? "Confirm your application" : "Review loan terms" : "Review your purchase"}</h2>
           <div className="quote-summary"><InfoRow title={p.view === "apply" ? "Loan principal" : "Payment amount"} value={money(activeQuote.terms.amount, p.currency)} /><InfoRow title={web ? "Estimated energy" : "Cloud energy"} value={energy(activeQuote.terms.energy_kwh)} />{web && p.view === "purchase" && <InfoRow title="Quoted total" value={money(activeQuote.terms.pricing?.breakdown.total ?? activeQuote.terms.billed, p.currency)} />}{p.view === "apply" && <><InfoRow title={`Interest (${activeQuote.terms.policy.interest_percent}%)`} value={money(activeQuote.terms.interest, p.currency)} /><InfoRow title="Fee" value={money(activeQuote.terms.fee, p.currency)} />{web ? <InfoRow title="Due date" value={when(activeQuote.terms.due_at ?? null)} /> : <InfoRow title="Loan term" value={`${activeQuote.terms.policy.due_days} days`} />}<div className="quote-total"><span>{web ? "Total due" : "Total repayment"}</span><strong>{money(activeQuote.terms.total_due, p.currency)}</strong></div></>}</div>
           <details className="info-disclosure"><summary>Pricing & policy details</summary>{activeQuote.terms.pricing ? <TariffDetails pricing={activeQuote.terms.pricing} currency={p.currency} /> : <InfoRow title="Original fixed price per kWh" value={money(activeQuote.terms.policy.rate_per_kwh, p.currency)} />}<InfoRow title="Billed" value={money(activeQuote.terms.billed, p.currency)} /><InfoRow title="Rounding remainder" value={money(activeQuote.terms.residual, p.currency)} /><p>Remainder retained for reconciliation; no automatic refund or energy conversion.</p><p>{activeQuote.terms.policy.rounding} · {activeQuote.terms.policy.id}</p><p>Overdue charge {activeQuote.terms.policy.penalty_percent}%. Cloud allocation does not confirm physical delivery.</p></details>
@@ -249,6 +256,7 @@ export default function SandboxMobileView(p: MobileFinanceProps) {
             {row.kind === "LOAN_REPAYMENT" && <><InfoRow title="Loan" value={row.payment.loan_id ?? "Unavailable"} /><InfoRow title="Applied" value={money(row.payment.applied, row.payment.currency)} /></>}
           </details>
         </article>)}
+        {p.payments.some(row => row.environment !== p.environment) && <details className="panel info-disclosure"><summary>Earlier test-currency receipts</summary>{p.payments.filter(row => row.environment !== p.environment).map(paymentCard)}</details>}
         {!filteredActivity.length && <p className="muted">No transactions yet.</p>}
         <p className="muted small">Showing the latest 100 loans and payments, plus older active loans and pending payments. History counts are not account totals.</p>
         {activityPages > 1 && <div className="activity-pagination"><button className="secondary" disabled={activityPage <= 1} onClick={() => setActivityPage(page => page - 1)}>Previous</button><span>Page {activityPage} of {activityPages}</span><button className="secondary" disabled={activityPage >= activityPages} onClick={() => setActivityPage(page => page + 1)}>Next</button></div>}
