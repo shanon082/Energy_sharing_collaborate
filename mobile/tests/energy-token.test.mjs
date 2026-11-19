@@ -37,3 +37,14 @@ test('AC lab application means durable device credit, never load switching', () 
   assert.match(tokenLoadingLabel(applied), /relay output disabled/);
   assert.doesNotMatch(tokenLoadingLabel(applied), /Units loaded/);
 });
+
+test('EUR purchase energy requires an explicit SANDBOX V2 device contract, not payment success alone', () => {
+  const sandbox = {...token, environment: 'SANDBOX', redemption_enabled: true, redemption_protocol: 'GPAWA_PZEM_V2'};
+  const issued = parseEnergyTokens({tokens: [sandbox]})[0];
+  assert.match(tokenLoadingLabel(issued), /Awaiting/);
+  assert.match(tokenLoadingLabel({...issued, state: 'DELIVERY_PENDING'}), /Awaiting/);
+  assert.match(tokenLoadingLabel({...issued, state: 'APPLIED', application_environment: 'AC_LAB'}), /Credit saved/);
+  assert.throws(() => parseEnergyTokens({tokens: [{...sandbox, redemption_protocol: 'GPAWA_PZEM_V1'}]}));
+  assert.throws(() => parseEnergyTokens({tokens: [{...sandbox, environment: 'UGX_DEMO'}]}));
+  assert.throws(() => parseEnergyTokens({tokens: [{...sandbox, environment: 'CORE', redemption_protocol: 'UNSUPPORTED'}]}));
+});

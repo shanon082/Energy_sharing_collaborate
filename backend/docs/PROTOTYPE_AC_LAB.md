@@ -1,3 +1,12 @@
+# Superseding SANDBOX domain milestone
+
+See [MTN_AC_LAB_SANDBOX.md](MTN_AC_LAB_SANDBOX.md) for the current MTN/SANDBOX
+V2 implementation, migration0033 and provisioning instructions. UGX-only/MTN-denied
+statements below describe the original V1 milestone; they are not the current
+capability contract. Physical output remains disabled.
+
+---
+
 # ESP32-S3 / PZEM AC lab milestone — physical output disabled
 
 > Combined build: follow [COMBINED_AC_MTN_ROLLOUT.md](COMBINED_AC_MTN_ROLLOUT.md) for the single reviewed upload/backup/plan/migration/restart/scheduler checklist. AC_LAB stays disabled in MTN mode. Do not enable or provision the lab from this historical standalone runbook during the MTN rollout.

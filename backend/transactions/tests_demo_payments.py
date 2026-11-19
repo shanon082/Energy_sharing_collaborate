@@ -30,7 +30,7 @@ from loan.tests_sandbox import SANDBOX
 from mtn_momo.sandbox import MTNSandbox
 from wallet.models import UnitBalance
 
-DEMO = {**SANDBOX, "PROTOTYPE_PAYMENT_PROVIDER": "LOCAL_DEMO", "DEMO_POLICY": demo_configuration({})[1]}
+DEMO = {**SANDBOX, "PROTOTYPE_PAYMENT_PROVIDER": "LOCAL_DEMO", "DEMO_POLICY": demo_configuration({})[1], "ENERGY_TOKEN_ISSUANCE_ENABLED": False}
 
 
 class Fixtures:

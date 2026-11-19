@@ -41,3 +41,14 @@ test('cached lab snapshots expire without another successful network response', 
   assert.equal(labReadingStatus(reading, Date.parse(instant) + 91_000), 'STALE');
   assert.equal(labReadingStatus({ ...reading, last_measurement_at: null }, Date.parse(instant)), 'UNAVAILABLE');
 });
+
+test('SANDBOX readings identify the V2 energy domain without reinterpreting UGX history', () => {
+  const reading = parseMeterDashboard({...snapshot, lab_environment: 'SANDBOX', lab_protocol: 'GPAWA_PZEM_V2'}, meter);
+  assert.equal(reading.lab_environment, 'SANDBOX');
+  assert.equal(reading.lab_protocol, 'GPAWA_PZEM_V2');
+  assert.equal(reading.lab_consumed_uwh, '1000001');
+  assert.equal(reading.contact_status, 'STALE');
+  for (const [environment, protocol] of [['SANDBOX', 'GPAWA_PZEM_V1'], ['UGX_DEMO', 'GPAWA_PZEM_V2'], ['CORE', 'GPAWA_PZEM_V2']]) {
+    assert.throws(() => parseMeterDashboard({...snapshot, lab_environment: environment, lab_protocol: protocol}, meter));
+  }
+});

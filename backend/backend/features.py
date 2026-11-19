@@ -67,10 +67,18 @@ class FeatureAvailabilityView(APIView):
         from loan.sandbox_service import policy, eur_pricing_available
         energy_pricing = provider == LOCAL_DEMO or eur_pricing_available(policy())
         loan_policy = provider == LOCAL_DEMO or getattr(settings, "SANDBOX_EUR_LOANS_ENABLED", False) is True
+        from meter.prototype_device import enabled as lab_enabled, permitted_environment, DOMAIN_PROTOCOLS, require_mtn_purchase_tokens
+        tokens_ready = True
+        try:
+            require_mtn_purchase_tokens()
+        except PaymentSettlementError:
+            tokens_ready = False
         response = Response({
             "sandbox": {"enabled": sandbox_enabled, "currency": currency, "environment": environment, "label": "UGX DEMO / NO REAL MONEY" if provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
-                        "loans": sandbox_enabled and energy_pricing and loan_policy, "purchases": test_payments and energy_pricing, "repayments": test_payments,
-                        "payment_message": "" if test_payments else "Sandbox payments unavailable",
+                        "loans": sandbox_enabled and energy_pricing and loan_policy, "purchases": test_payments and energy_pricing and tokens_ready, "repayments": test_payments,
+                        "payment_message": "Sandbox payments unavailable" if not test_payments else "Sandbox token service unavailable" if not tokens_ready else "",
+                        "ac_lab": {"enabled": lab_enabled(), "environment": permitted_environment(),
+                                   "protocol": DOMAIN_PROTOCOLS.get(permitted_environment()), "physical_output": False},
                         "provider": provider, "physical_delivery": False,
                         "self_declared_meter_enrollment": sandbox_enabled},
             "features": {

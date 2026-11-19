@@ -1,7 +1,7 @@
 /** Currency-isolated test contract, shared by Next.js and Capacitor. */
 export type TestCurrency = "EUR" | "UGX";
 export type TestEnvironment = "MTN_SANDBOX" | "UGX_DEMO";
-export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string };
+export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO" };
 export const NO_SANDBOX: SandboxCapabilities = { enabled: false, loans: false, purchases: false, repayments: false };
 export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   if (!raw || typeof raw !== "object") return { ...NO_SANDBOX };
@@ -9,7 +9,10 @@ export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   const demo = row.currency === "UGX" && row.environment === "UGX_DEMO" && row.provider === "LOCAL_DEMO";
   const mtn = row.currency === "EUR" && row.provider === "MTN_SANDBOX" && (row.environment === undefined || row.environment === "MTN_SANDBOX");
   if (row.enabled !== true || (!demo && !mtn) || row.physical_delivery !== false) return { ...NO_SANDBOX };
-  return { enabled: true, loans: row.loans === true, purchases: row.purchases === true, repayments: row.repayments === true,
+  const lab = row.ac_lab && typeof row.ac_lab === "object" ? row.ac_lab as Record<string, unknown> : null;
+  const labEnvironment = demo ? "UGX_DEMO" : "SANDBOX";
+  const labValid = lab?.environment === labEnvironment && lab?.protocol === (demo ? "GPAWA_PZEM_V1" : "GPAWA_PZEM_V2") && lab?.physical_output === false;
+  return { enabled: true, ...(lab ? {labEnabled: labValid && lab.enabled === true, labEnvironment} : {}), loans: row.loans === true, purchases: row.purchases === true, repayments: row.repayments === true,
     ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : { currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" } as const),
     ...(typeof row.payment_message === "string" && row.payment_message ? { paymentMessage: row.payment_message } : {}) };
 }

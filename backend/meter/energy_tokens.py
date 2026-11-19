@@ -111,7 +111,10 @@ def token_record(token):
     reference = (str(allocation.purchase_intent.provider_reference) if allocation.purchase_intent_id else
                  str(allocation.sandbox_loan_id) if allocation.sandbox_loan_id else
                  allocation.loan_disbursement.loan_application.loan_id)
+    from meter.prototype_device import enabled, permitted_environment, DOMAIN_PROTOCOLS
     return {"id": str(token.pk), "allocation_id": allocation.pk, "token": value,
+            "redemption_enabled": enabled() and token.environment == permitted_environment() and token.state in {'ISSUED', 'DELIVERY_PENDING'},
+            "redemption_protocol": DOMAIN_PROTOCOLS.get(token.environment),
             "meter_number": token.meter_number, "energy_wh": str(token.amount_wh),
             "energy_kwh": str(Decimal(token.amount_wh) / 1000), "environment": token.environment,
             "source": "PURCHASE" if allocation.purchase_intent_id else "LOAN", "source_reference": reference,

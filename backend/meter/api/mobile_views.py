@@ -86,6 +86,9 @@ class MobileMeterDashboardView(APIView):
     def get(self, request, meter_id):
         meter = get_object_or_404(Meter, pk=meter_id, user=request.user, is_deleted=False)
         environment = request.query_params.get("environment")
+        from meter.prototype_device import permitted_environment
+        if environment is None and getattr(settings, 'CONSUMER_SANDBOX_ENABLED', False):
+            environment = permitted_environment()
         allowed_environments = {"CORE", "UGX_DEMO", "SANDBOX"}
         if environment is not None and environment not in allowed_environments:
             raise ValidationError({"environment": "Use CORE, UGX_DEMO, or SANDBOX."})
@@ -101,7 +104,7 @@ class MobileMeterDashboardView(APIView):
             classification__in=["INITIAL", "RESET"], cumulative_wh__gt=0,
         ).exists() or device.telemetry.filter(classification="DISCONTINUITY").exists()))
         from meter.prototype_reads import lab_device, lab_dashboard
-        lab = lab_device(request.user, meter) if environment in {None, "UGX_DEMO"} else None
+        lab = lab_device(request.user, meter, environment) if environment in {'SANDBOX', 'UGX_DEMO'} else None
         response = Response({
             "meter": mobile_meter_record(meter),
             "unit": "kWh", "quantum_kwh": "0.01",
@@ -114,7 +117,7 @@ class MobileMeterDashboardView(APIView):
             "reported_relay_state": device.reported_relay_state if device else None,
             "relay_source": "SIMULATOR" if device else "UNAVAILABLE",
             "last_measurement_at": device.last_measured_at.isoformat() if device and device.last_measured_at else None,
-            **{key: str(value) for key, value in entitlement_summary(request.user, meter, "UGX_DEMO" if lab and environment is None else environment).items()},
+            **{key: str(value) for key, value in entitlement_summary(request.user, meter, environment).items()},
             "last_meter_contact": device.last_contact_at.isoformat()
                 if device is not None and device.last_contact_at else None,
             "delivery_environment": "SIMULATOR" if simulated else "UNAVAILABLE",
@@ -138,6 +141,10 @@ class MobileConsumptionHistoryView(APIView):
         if request.user.user_role != User.CLIENT:
             return Response({"code": "CONSUMER_ONLY"}, status=403)
         meter = selected_meter(request)
+        from meter.prototype_device import permitted_environment
+        environment = request.query_params.get('environment', permitted_environment())
+        if environment not in {'CORE', 'SANDBOX', 'UGX_DEMO', None}:
+            raise ValidationError({'environment': 'Use CORE, UGX_DEMO, or SANDBOX.'})
         from meter.prototype_reads import lab_history
         daily = MeterUsageDaily.objects.filter(meter=meter).order_by("-usage_date")[:30]
         telemetry = SimulatedTelemetry.objects.filter(device__meter=meter).order_by("-received_at")[:30]
@@ -149,7 +156,7 @@ class MobileConsumptionHistoryView(APIView):
                 "date": row.usage_date.isoformat(), "kwh": str(row.kwh_used),
                 "source": row.source,
             } for row in daily],
-            "ac_lab_telemetry": lab_history(request.user, meter),
+            "ac_lab_telemetry": lab_history(request.user, meter, environment),
             "simulator_telemetry": [{
                 "event_id": str(row.event_id), "cumulative_wh": row.cumulative_wh,
                 "cumulative_wh_exact": str(row.cumulative_wh),

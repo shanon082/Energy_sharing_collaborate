@@ -34,6 +34,9 @@ def create_payment(owner, data):
     purpose = data.get("purpose")
     if purpose not in {"PURCHASE", "LOAN_REPAYMENT"}:
         raise ValidationError({"purpose": "Use PURCHASE or LOAN_REPAYMENT."})
+    if provider == 'MTN_SANDBOX' and purpose == 'PURCHASE':
+        from meter.prototype_device import require_mtn_purchase_tokens
+        require_mtn_purchase_tokens()
     with transaction.atomic():
         owner = User.objects.select_for_update().get(pk=owner.pk)
         verified_consumer(owner)
@@ -54,6 +57,8 @@ def create_payment(owner, data):
             if data.get("accept_test_terms") is not True:
                 raise ValidationError({"accept_test_terms": "Accept the quoted sandbox purchase/remainder terms."})
             quote = accepted_quote(owner, data.get("quote_id"), data.get("terms_hash"), "PURCHASE")
+            if provider == 'MTN_SANDBOX':
+                require_mtn_purchase_tokens(quote.terms)
             if PaymentIntent.objects.filter(sandbox_quote=quote).exists():
                 raise ValidationError({"code": "QUOTE_ALREADY_USED"})
             amount = quote.amount
@@ -151,7 +156,14 @@ def apply_sandbox_settlement(intent):
         billed, residual = Decimal(terms["billed"]), Decimal(terms["residual"])
         if billed + residual != intent.amount or min(billed, residual) < 0:
             raise PaymentSettlementError("Sandbox purchase receipt does not conserve received test money.")
-        authorize_purchase_allocation(intent, Decimal(terms["energy_kwh"]))
+        if intent.provider == 'MTN_SANDBOX':
+            from meter.prototype_device import require_mtn_purchase_tokens
+            require_mtn_purchase_tokens(terms, recovery=True)
+        allocation = authorize_purchase_allocation(intent, Decimal(terms["energy_kwh"]))
+        if intent.provider == 'MTN_SANDBOX':
+            from meter.models import EnergyKeypadToken
+            if not EnergyKeypadToken.objects.filter(allocation=allocation).exists():
+                raise PaymentSettlementError('Sandbox purchase token requires reconciliation.')
         SandboxSettlement.objects.create(intent=intent, currency=currency, environment=environment, received=intent.amount, billed=billed, residual=residual)
         if intent.provider == LOCAL_DEMO:
             from loan.demo_assessment import refresh_demo_purchase_contribution

@@ -1,0 +1,10 @@
+{
+  "Firmware.cpp": "856f885e543af12bba871b7c5862aca0b929cb60d2ded52ee8f6fada18e89c67",
+  "Protocol.h": "7c93595302e4c3ed67f9d844e8b3b3389c22a0ddcc742a1bed73ea864b3a2791",
+  "MeterCore.h": "683e4de2293fbf3214107629b37f9e514ebf1df7d8d2cccb9bfafec4c9dcb9f3",
+  "HardwareConfig.h": "e8529d4935a9de014ed0f6d844392364c922f614aed1a3295da2bdeca13f95a2",
+  "DeviceConfig.example.h": "c6a6686d319eacf6f2bf6e4cca1188485b147ef790964236896254863de914a8",
+  "PzemFrame.h": "800a041fb2a633ed6b4151074dd32ddaff3f524359093ffd1f72904435949139",
+  "GpawaAC.ino": "77846376cf40b0531ac5569e1c296e232a1956f61034dd1e1725cfaa478974b5",
+  "WifiCheck.cpp": "abb3cdd6bdbd27c892b250069a34bb627ee821807320d87ba91ce572bfed4fa0"
+}

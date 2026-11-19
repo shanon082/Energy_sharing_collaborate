@@ -11,6 +11,7 @@ export function LabReadings({ reading, stale }: { reading: AllocationStatus; sta
   }, []);
   const status = stale ? "STALE" : labReadingStatus(reading, now);
   return <section className="panel"><h2>AC lab meter</h2>
+    {reading.lab_environment && <p className="muted small">{reading.lab_environment} energy · {reading.lab_protocol}. This is device evidence, not utility verification.</p>}
     <p className="muted small">Periodic PZEM readings · {status.toLowerCase()} · relay output disabled. Load feedback unknown.</p>
     <div className="detail-grid"><div><span>Usage since previous stored sample</span><strong>{reading.lab_interval_usage_wh == null ? "Unavailable" : `${reading.lab_interval_usage_wh} Wh`}</strong></div><div><span>Device-reported credit</span><strong>{microWhDisplay(reading.lab_remaining_credit_uwh)}</strong></div></div>
     <p className="muted small">PZEM cumulative energy: {reading.lab_pzem_wh == null ? "Unavailable" : `${reading.lab_pzem_wh} Wh`}. Credit debited: {microWhDisplay(reading.lab_consumed_uwh)}.</p>

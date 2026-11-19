@@ -24,10 +24,10 @@ class CombinedRolloutTests(Fixtures, TestCase):
         self.assertTrue(flags["sandbox"]["repayments"])
         self.assertFalse(flags["sandbox"]["loans"])
         with override_settings(PROTOTYPE_AC_LAB_ENABLED=True, ALWAYSDATA_TESTING=True, PROTOTYPE_RELAY_OUTPUT_ENABLED=False):
-            self.assertFalse(lab_enabled())
+            self.assertTrue(lab_enabled())
             if getattr(settings, "ROOT_URLCONF", "") == "backend.alwaysdata_urls":
                 response = self.client.post("/api/v1/prototype-device/v1/redeem/", {}, **self.headers)
-                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.status_code, 401)
 
     def test_0032_additive_plan_preview_on_simulated_previous_schema(self):
         from django.db import connection

@@ -407,7 +407,7 @@ export default function App() {
             <p>Recorded application: {allocation.value?.contact_source === "UNAVAILABLE" ? "Unavailable" : energy(allocation.value?.confirmed_kwh)}.</p>
             {allocation.value?.contact_source === "SIMULATOR" && <p>Contact and delivery readings are simulated.</p>}
           </details>
-        </Panel>{account && <AllocationLedgers client={session} owner={account.id} meterId={meter.id} />}{sandbox.provider === "MTN_SANDBOX" && <p role="status">AC lab redemption is unavailable in MTN mode. EUR TEST allocations cannot be saved on the current UGX DEMO-only device; relay output remains disabled.</p>}<details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
+        </Panel>{account && <AllocationLedgers client={session} owner={account.id} meterId={meter.id} />}{sandbox.provider === "MTN_SANDBOX" && <p role="status">{sandbox.labEnabled ? "SANDBOX AC lab redemption is configured. Credit is saved only after acknowledgement from the matching commissioned device; relay output stays disabled." : "AC lab redemption is disabled on the server. Your cloud allocation is retained; physical credit and relay output are not implied."}</p>}<details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
       </>}
 
       {tab === "consumption" && <>

@@ -90,7 +90,7 @@ def main():
     remote = ("PYTHONDONTWRITEBYTECODE=1 DJANGO_SETTINGS_MODULE=backend.alwaysdata_sandbox_settings "
               "ALWAYSDATA_ENV_FILE=/home/shanonsimon/.config/energy-sharing/backend.env "
               "/home/shanonsimon/energy-venv/bin/python -c " + shlex.quote(REMOTE))
-    result = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+    result = subprocess.run(["ssh", "-o", "BatchMode=no", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
                              "shanonsimon@ssh-shanonsimon.alwaysdata.net", remote],
                             input=json.dumps(sources), text=True)
     return result.returncode

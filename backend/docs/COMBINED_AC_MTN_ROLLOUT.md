@@ -1,3 +1,13 @@
+# Subsequent SANDBOX device-domain changes
+
+This earlier build report is preserved for its APK/signing and rollout evidence.
+Its MTN-device denial describes the earlier build. Follow
+[MTN_AC_LAB_SANDBOX.md](MTN_AC_LAB_SANDBOX.md) for current sources, migration0033,
+V2 firmware, token prerequisites and the expanded upload allowlist. The APK hash
+recorded below predates those source changes.
+
+---
+
 # Combined AC_LAB + MTN testing rollout
 
 This build starts from checkout **5950316**, which contains both implementations,

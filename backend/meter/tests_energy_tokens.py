@@ -29,7 +29,7 @@ from transactions.tests_demo_payments import Fixtures, DEMO
 
 
 @skipUnless(getattr(settings, "DEVICE_BENCH_ISOLATED", False), "Run with --bench-profile on its isolated database")
-@override_settings(**DEMO)
+@override_settings(**{**DEMO, 'ENERGY_TOKEN_ISSUANCE_ENABLED': True})
 class KeypadWorkflowTests(Fixtures, TransactionTestCase):
     def setUp(self):
         super().setUp()

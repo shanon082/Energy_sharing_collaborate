@@ -1,4 +1,5 @@
 export type EnergyToken = {
+  redemption_enabled?: boolean; redemption_protocol?: string | null;
   id: string; allocation_id: number; token: string; meter_number: string;
   energy_wh: string; energy_kwh: string; environment: "CORE" | "SANDBOX" | "UGX_DEMO";
   source: "PURCHASE" | "LOAN"; source_reference: string; state: "ISSUED" | "DELIVERY_PENDING" | "APPLIED";
@@ -17,6 +18,9 @@ export function parseEnergyTokens(value: unknown, allocationId?: number): Energy
         !["CORE", "SANDBOX", "UGX_DEMO"].includes(String(row.environment)) || !["PURCHASE", "LOAN"].includes(String(row.source)) ||
         typeof row.source_reference !== "string" || !["ISSUED", "DELIVERY_PENDING", "APPLIED"].includes(String(row.state)) ||
         (row.state === "APPLIED" && !["SOFTWARE_BENCH", "AC_LAB"].includes(String(row.application_environment)))) throw new Error("Invalid electricity token or loading evidence.");
+    if (row.redemption_enabled !== undefined && (typeof row.redemption_enabled !== "boolean" ||
+      row.redemption_enabled && (row.environment === "CORE" || row.redemption_protocol !== (row.environment === "SANDBOX" ? "GPAWA_PZEM_V2" : "GPAWA_PZEM_V1"))))
+      throw new Error("Invalid device redemption contract.");
     return row as EnergyToken;
   });
 }

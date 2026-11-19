@@ -1,0 +1,181 @@
+--- a/Firmware.cpp
++++ b/Firmware.cpp
+@@ -5,7 +5,6 @@
+ #include <HTTPClient.h>
+ #include <Preferences.h>
+ #include <ArduinoJson.h>
+-// #include <LiquidCrystal_I2C.h>
+ #include <hd44780.h>
+ #include <hd44780ioClass/hd44780_I2Cexp.h>
+ #include <Keypad.h>
+@@ -18,6 +17,7 @@
+ #include "Protocol.h"
+ #include "PzemFrame.h"
+ #include "HardwareConfig.h"
++#include "DeviceDomain.h"
+ #if __has_include("DeviceConfig.h")
+ #include "DeviceConfig.h"
+ #else
+@@ -27,7 +27,6 @@
+ using namespace gpawa;
+ Preferences prefs;
+ State state{};
+-// LiquidCrystal_I2C lcd(hw::LCD_ADDR,16,2);
+ hd44780_I2Cexp lcd;
+ char keypadMap[4][4]={{'1','2','3','A'},{'4','5','6','B'},{'7','8','9','C'},{'*','0','#','D'}};
+ byte rowPins[4]={4,5,6,7}, colPins[4]={10,11,12,13};
+@@ -191,12 +190,12 @@
+   return true;
+ }
+ void identity(JsonDocument& j) {
+-  j["protocol"] = "GPAWA_PZEM_V1";
++  j["protocol"] = deviceProtocol(state);
+   j["device_id"] = cfg::DEVICE_ID;
+   j["meter_number"] = cfg::METER_NUMBER;
+   j["storage_id"] = state.storageId;
+   j["binding_epoch"] = state.bindingEpoch;
+-  j["environment"] = "UGX_DEMO";
++  j["environment"] = accountingEnvironment(state);
+   j["hardware_class"] = "AC_LAB";
+ }
+ bool matching(JsonVariantConst j) {
+@@ -465,7 +464,7 @@
+  else row(1,WiFi.status()==WL_CONNECTED?"A:Meter  D:Pause":"Offline D:Pause");
+ }
+ bool configValid() {
+-  return String(cfg::WIFI_SSID).indexOf("REPLACE") < 0 && strlen(cfg::WIFI_SSID) > 0 && String(cfg::WIFI_PASSWORD).indexOf("REPLACE") < 0 && uuid(cfg::DEVICE_ID) && uuid(cfg::STORAGE_ID) && digits(cfg::METER_NUMBER, 11) && strcmp(cfg::METER_NUMBER, "00000000000") && cfg::BINDING_EPOCH > 0 && strlen(cfg::DEVICE_SECRET) >= 32 && String(cfg::DEVICE_SECRET).indexOf("REPLACE") < 0 && !strncmp(cfg::API_BASE, "https://", 8) && String(cfg::API_BASE).indexOf("REPLACE") < 0 && strlen(cfg::API_BASE) > 15 && String(cfg::API_BASE).endsWith("/api/v1") && !strchr(cfg::API_BASE, '@') && !strchr(cfg::API_BASE, '?') && !strchr(cfg::API_BASE, '#') && String(cfg::ROOT_CA).indexOf("BEGIN CERTIFICATE") >= 0 && String(cfg::ROOT_CA).indexOf("REPLACE") < 0;
++  return (environmentCode(commissioning::ENVIRONMENT) == 1 || environmentCode(commissioning::ENVIRONMENT) == 2) && String(cfg::WIFI_SSID).indexOf("REPLACE") < 0 && strlen(cfg::WIFI_SSID) > 0 && String(cfg::WIFI_PASSWORD).indexOf("REPLACE") < 0 && uuid(cfg::DEVICE_ID) && uuid(cfg::STORAGE_ID) && digits(cfg::METER_NUMBER, 11) && strcmp(cfg::METER_NUMBER, "00000000000") && cfg::BINDING_EPOCH > 0 && strlen(cfg::DEVICE_SECRET) >= 32 && String(cfg::DEVICE_SECRET).indexOf("REPLACE") < 0 && !strncmp(cfg::API_BASE, "https://", 8) && String(cfg::API_BASE).indexOf("REPLACE") < 0 && strlen(cfg::API_BASE) > 15 && String(cfg::API_BASE).endsWith("/api/v1") && !strchr(cfg::API_BASE, '@') && !strchr(cfg::API_BASE, '?') && !strchr(cfg::API_BASE, '#') && String(cfg::ROOT_CA).indexOf("BEGIN CERTIFICATE") >= 0 && String(cfg::ROOT_CA).indexOf("REPLACE") < 0;
+ }
+ }
+ void wifiCheckSetup();
+@@ -492,13 +491,14 @@
+  const char* id=usb?"00000000-0000-4000-8000-000000000002":cfg::STORAGE_ID;
+  const char* met=usb?"00000000001":cfg::METER_NUMBER;
+  unsigned epoch=usb?1:cfg::BINDING_EPOCH;
+- if(!prefs.begin(usb?"gpawa_ex1":"gpawa_ac1",false)){latch("NVS unavailable");return;}
++ const char* domain=usb?"USB_EXERCISE":commissioning::ENVIRONMENT;
++ if(!prefs.begin(usb?"gpawa_ex2":(!strcmp(domain,"SANDBOX")?"gpawa_sbx2":"gpawa_ac1"),false)){latch("NVS unavailable");return;}
+  if(prefs.isKey("state")){
+    if(prefs.getBytesLength("state")!=sizeof state||prefs.getBytes("state",&state,sizeof state)!=sizeof state||!valid(state)){latch("Invalid journal");return;}
+-   if(strcmp(dev,state.deviceId)||strcmp(id,state.storageId)||strcmp(met,state.meterNumber)||epoch!=state.bindingEpoch){latch("Identity changed");return;}
++   if(strcmp(dev,state.deviceId)||strcmp(id,state.storageId)||strcmp(met,state.meterNumber)||epoch!=state.bindingEpoch||strcmp(domain,accountingEnvironment(state))){latch("Identity/domain changed");return;}
+  }else{
+    if(!usb&&!cfg::ALLOW_FIRST_BOOT){latch("Provision first");return;}
+-   state={};state.magic=MAGIC;state.version=VERSION;state.bindingEpoch=epoch;
++   state={};state.magic=MAGIC;state.version=VERSION;state.bindingEpoch=epoch;state.reservedBytes[1]=environmentCode(domain);
+    strcpy(state.deviceId,dev);strcpy(state.storageId,id);strcpy(state.meterNumber,met);
+    if(usb)state.reservedBytes[0]=1;
+    seal(state);
+--- a/Protocol.h
++++ b/Protocol.h
+@@ -3,7 +3,7 @@
+ #include "MeterCore.h"
+ namespace gpawa {
+ inline bool matchingIdentity(JsonVariantConst j, const gpawa::State& state) {
+-  return j["protocol"].is<const char*>() && !strcmp(j["protocol"], "GPAWA_PZEM_V1") && j["device_id"].is<const char*>() && !strcmp(j["device_id"], state.deviceId) && j["meter_number"].is<const char*>() && !strcmp(j["meter_number"], state.meterNumber) && j["storage_id"].is<const char*>() && !strcmp(j["storage_id"], state.storageId) && j["binding_epoch"].is<uint32_t>() && j["binding_epoch"].as<uint32_t>() == state.bindingEpoch && j["environment"].is<const char*>() && !strcmp(j["environment"], "UGX_DEMO") && j["hardware_class"].is<const char*>() && !strcmp(j["hardware_class"], "AC_LAB");
++  return accountingEnvironment(state) && state.reservedBytes[1] != 3 && j["protocol"].is<const char*>() && !strcmp(j["protocol"], deviceProtocol(state)) && j["device_id"].is<const char*>() && !strcmp(j["device_id"], state.deviceId) && j["meter_number"].is<const char*>() && !strcmp(j["meter_number"], state.meterNumber) && j["storage_id"].is<const char*>() && !strcmp(j["storage_id"], state.storageId) && j["binding_epoch"].is<uint32_t>() && j["binding_epoch"].as<uint32_t>() == state.bindingEpoch && j["environment"].is<const char*>() && !strcmp(j["environment"], accountingEnvironment(state)) && j["hardware_class"].is<const char*>() && !strcmp(j["hardware_class"], "AC_LAB");
+ }
+ inline bool parseCreditCommand(JsonVariantConst row, const gpawa::State& state, gpawa::Command& out, void (*sha)(const uint8_t*, size_t, uint8_t*)) {
+   if (!row.is<JsonObjectConst>() || row.size() != 14 || !matchingIdentity(row, state) || !row["type"].is<const char*>() || strcmp(row["type"], "AC_LAB_CREDIT") || !row["command_id"].is<const char*>() || !gpawa::uuid(row["command_id"]) || !row["command_sequence"].is<uint32_t>() || !row["command_sequence"].as<uint32_t>() || !row["credit_wh"].is<uint64_t>() || !row["credit_wh"].as<uint64_t>() || row["credit_wh"].as<uint64_t>() > gpawa::MAX_CREDIT_WH || row["credit_wh"].as<uint64_t>() % 10 || !row["allocation_id"].is<uint64_t>() || !row["delivery_id"].is<uint64_t>() || !row["allocation_id"].as<uint64_t>() || !row["delivery_id"].as<uint64_t>() || row["allocation_id"].as<uint64_t>() > 9007199254740991ULL || row["delivery_id"].as<uint64_t>() > 9007199254740991ULL || !row["payload_digest"].is<const char*>() || strlen(row["payload_digest"]) != 64) return false;
+--- a/MeterCore.h
++++ b/MeterCore.h
+@@ -43,6 +43,22 @@
+   uint8_t hasMeter, hold;
+   uint32_t crc;
+ };
++// Byte 1 was reserved/zero in legacy v2 UGX journals. Preserve its layout/CRC.
++// New journals bind their domain explicitly; old zero remains UGX only.
++inline const char* accountingEnvironment(const State& s) {
++  switch (s.reservedBytes[1]) {
++    case 0: case 1: return "UGX_DEMO";
++    case 2: return "SANDBOX";
++    case 3: return "USB_EXERCISE";
++    default: return nullptr;
++  }
++}
++inline uint8_t environmentCode(const char* name) {
++  return name && !strcmp(name,"UGX_DEMO") ? 1 : name && !strcmp(name,"SANDBOX") ? 2 : name && !strcmp(name,"USB_EXERCISE") ? 3 : 255;
++}
++inline const char* deviceProtocol(const State& s) {
++  return s.reservedBytes[1] == 2 ? "GPAWA_PZEM_V2" : s.reservedBytes[1] <= 1 ? "GPAWA_PZEM_V1" : "USB_EXERCISE_ONLY";
++}
+ inline uint32_t crc32(const void* p, size_t n) {
+   const uint8_t* b = static_cast<const uint8_t*>(p);
+   uint32_t c = 0xffffffffU;
+@@ -78,7 +94,7 @@
+   return s.creditedUWh == s.availableUWh + s.reservedUWh + s.consumedUWh + s.uncertainUWh;
+ }
+ inline bool valid(const State& s) {
+-  if (s.magic != MAGIC || s.version != VERSION || s.crc != crc32(&s, offsetof(State, crc)) || !invariant(s)) return false;
++  if (!accountingEnvironment(s) || s.magic != MAGIC || s.version != VERSION || s.crc != crc32(&s, offsetof(State, crc)) || !invariant(s)) return false;
+   if (!terminated(s.deviceId, sizeof s.deviceId) || !uuid(s.deviceId) || !terminated(s.storageId, sizeof s.storageId) || !uuid(s.storageId) || !terminated(s.meterNumber, sizeof s.meterNumber) || !digits(s.meterNumber, 11) || s.bindingEpoch == 0) return false;
+   if (s.applicationCounter) {
+     if (!terminated(s.lastCommand.id, sizeof s.lastCommand.id) || !uuid(s.lastCommand.id) || !terminated(s.receiptId, sizeof s.receiptId) || !uuid(s.receiptId) || !terminated(s.lastCommand.digest, sizeof s.lastCommand.digest) || strlen(s.lastCommand.digest) != 64 || !terminated(s.lastCommand.canonical, sizeof s.lastCommand.canonical) || !terminated(s.appliedAt, sizeof s.appliedAt) || s.lastCommand.sequence != s.applicationCounter) return false;
+--- a/HardwareConfig.h
++++ b/HardwareConfig.h
+@@ -1,15 +1,19 @@
+ #pragma once
+-// Wi-Fi/keypad/PZEM diagnostics: no device credentials, NVS writes or relay control.
++// Preserve the active sketch's diagnostic default. Set 0 only after commissioning.
++#ifndef GPAWA_WIFI_TEST
+ #define GPAWA_WIFI_TEST 1
+-#if GPAWA_WIFI_TEST
+-// Keep relay supply disconnected during these diagnostics.
+ #endif
+-// 1: USB exercise, never configures or drives the relay GPIO. 0: actual meter.
++// 0: authenticated HTTPS operation (or diagnostic-only if unconfigured).
++// 1: explicit USB exercise, separate journal; never authenticated credit.
++#ifndef GPAWA_USB_EXERCISE
+ #define GPAWA_USB_EXERCISE 0
+-// Set to 1 only AFTER independent electrical inspection and bench checks.
++#endif
++// This credit-only branch requires 0 and rejects every output-enable build.
++#ifndef GPAWA_COMMISSIONED_OUTPUT
+ #define GPAWA_COMMISSIONED_OUTPUT 0
+-#if GPAWA_USB_EXERCISE && GPAWA_COMMISSIONED_OUTPUT
+-#error USB exercise cannot enable physical output
++#endif
++#if GPAWA_COMMISSIONED_OUTPUT
++#error Physical relay output is forbidden in this credit-only integration
+ #endif
+ namespace hw{
+ constexpr int SDA_PIN=8,SCL_PIN=9, RX=16,TX=17,SWITCH_PIN=14,BEEP=18;
+@@ -18,5 +22,5 @@
+ }
+ 
+ #if GPAWA_WIFI_TEST && (GPAWA_USB_EXERCISE || GPAWA_COMMISSIONED_OUTPUT)
+-#error Wi-Fi test must not enable USB credit exercise or physical output
++#error Wi-Fi diagnostics cannot enable exercise credit or physical output
+ #endif
+--- a/WifiCheck.cpp
++++ b/WifiCheck.cpp
+@@ -7,7 +7,11 @@
+ #include <hd44780.h>
+ #include <hd44780ioClass/hd44780_I2Cexp.h>
+ #include <Keypad.h>
++#if __has_include("NetworkConfig.h")
+ #include "NetworkConfig.h"
++#else
++#include "NetworkConfig.example.h"
++#endif
+ #include "PzemFrame.h"
+ 
+ namespace {
+--- /dev/null
++++ b/DeviceDomain.h
+@@ -0,0 +1,6 @@
++#pragma once
++// Public commissioned energy domain, NOT a currency conversion or secret.
++// Must match the server-provisioned identity; diagnostic mode grants no credit.
++namespace commissioning {
++constexpr char ENVIRONMENT[] = "SANDBOX";
++}
+--- /dev/null
++++ b/NetworkConfig.example.h
+@@ -0,0 +1,6 @@
++#pragma once
++// Diagnostic Wi-Fi only. Keep actual NetworkConfig.h private and unchanged.
++namespace nettest {
++constexpr char SSID[] = "REPLACE_WIFI_SSID";
++constexpr char PASSWORD[] = "REPLACE_WIFI_PASSWORD";
++}

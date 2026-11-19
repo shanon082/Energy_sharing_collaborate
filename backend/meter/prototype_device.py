@@ -1,4 +1,4 @@
-"""GPAWA_PZEM_V1 adapter. No payment/provider I/O, GPIO or relay commands."""
+"""Domain-bound GPAWA_PZEM_V1/V2 adapter; no provider I/O or relay commands."""
 import hmac
 import re
 import uuid
@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
+from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -18,16 +19,45 @@ from meter.models import (EnergyAllocation, EnergyKeypadToken, Meter, MeterDeliv
                           PrototypeBoot, PrototypeCommand, PrototypeDevice, PrototypeTelemetry)
 
 PROTOCOL = 'GPAWA_PZEM_V1'
+DOMAIN_PROTOCOLS = {'UGX_DEMO': PROTOCOL, 'SANDBOX': 'GPAWA_PZEM_V2'}
 IDENTITY = {'protocol', 'device_id', 'meter_number', 'storage_id', 'binding_epoch', 'environment', 'hardware_class'}
 MAX_COUNTER = 9_000_000_000_000_000
 UINT32 = 2**32 - 1
+
+
+def mtn_tokens_required():
+    return (getattr(settings, 'CONSUMER_SANDBOX_ENABLED', False) is True
+            and getattr(settings, 'PROTOTYPE_PAYMENT_PROVIDER', '') == 'MTN_SANDBOX')
+
+
+def require_mtn_purchase_tokens(terms=None, *, recovery=False):
+    """All new MTN sandbox energy purchases require one usable source token."""
+    if not recovery and not mtn_tokens_required():
+        return
+    from decimal import Decimal
+    from transactions.payment_settlement import PaymentSettlementError
+    try:
+        if getattr(settings, 'ENERGY_TOKEN_ISSUANCE_ENABLED', False) is not True:
+            raise ImproperlyConfigured('Token issuance disabled')
+        cipher()
+        digest_token('000000000000000')  # Configuration check only; never a token issued.
+        if terms is not None:
+            wh = Decimal(terms['energy_kwh']) * 1000
+            if not wh.is_finite() or not 0 < wh <= 1_000_000 or wh != wh.to_integral_value() or wh % 10:
+                raise ValueError
+    except (ImproperlyConfigured, ValueError, KeyError, TypeError, ArithmeticError):
+        raise PaymentSettlementError('Sandbox token service unavailable or quoted energy exceeds the AC lab command contract.') from None
+
+
+def permitted_environment():
+    return {'LOCAL_DEMO': 'UGX_DEMO', 'MTN_SANDBOX': 'SANDBOX'}.get(getattr(settings, 'PROTOTYPE_PAYMENT_PROVIDER', ''))
 
 
 def enabled():
     return (getattr(settings, 'PROTOTYPE_AC_LAB_ENABLED', False) is True
             and getattr(settings, 'ALWAYSDATA_TESTING', False) is True
             and getattr(settings, 'CONSUMER_SANDBOX_ENABLED', False) is True
-            and getattr(settings, 'PROTOTYPE_PAYMENT_PROVIDER', '') == 'LOCAL_DEMO'
+            and permitted_environment() in DOMAIN_PROTOCOLS
             and getattr(settings, 'PROTOTYPE_RELAY_OUTPUT_ENABLED', True) is False)
 
 
@@ -67,14 +97,14 @@ def timestamp(value):
 
 
 def identity(device):
-    return dict(protocol=PROTOCOL, device_id=str(device.pk), meter_number=device.meter.meter_no,
+    return dict(protocol=DOMAIN_PROTOCOLS[device.environment], device_id=str(device.pk), meter_number=device.meter.meter_no,
                 storage_id=str(device.storage_id), binding_epoch=device.binding_epoch,
-                environment='UGX_DEMO', hardware_class='AC_LAB')
+                environment=device.environment, hardware_class='AC_LAB')
 
 
 def active_binding(device):
     meter = Meter.all_objects.get(pk=device.meter_id)
-    if (not device.active or device.revoked_at or device.output_enabled or device.environment != 'UGX_DEMO'
+    if (not device.active or device.revoked_at or device.output_enabled or device.environment != permitted_environment()
             or device.hardware_class != 'AC_LAB' or meter.user_id != device.owner_id or meter.is_deleted
             or meter.status != 'ACTIVE' or not meter.sandbox_inventory or not re.fullmatch(r'[0-9]{11}', meter.meter_no)
             or meter.meter_no == '0' * 11
@@ -109,16 +139,38 @@ def validate(body, device, fields):
         fail('DEVICE_BINDING_MISMATCH', 'Device binding does not match.', 403)
 
 
-def lab_source(allocation):
+def lab_source(allocation, environment=None):
+    environment = environment or permitted_environment()
+    if environment not in DOMAIN_PROTOCOLS or allocation.accounting_environment != environment:
+        return False
     if not authorized_source(allocation):
         return False
     if allocation.purchase_intent_id:
         intent = allocation.purchase_intent
         receipt = getattr(intent, 'sandbox_settlement', None)
-        return bool(intent.provider == 'LOCAL_DEMO' and receipt and receipt.environment == 'UGX_DEMO'
-                    and receipt.currency == 'UGX' and receipt.received == intent.amount)
+        provider, currency, financial_environment = ('MTN_SANDBOX', 'EUR', 'MTN_SANDBOX') if environment == 'SANDBOX' else ('LOCAL_DEMO', 'UGX', 'UGX_DEMO')
+        try:
+            from decimal import Decimal
+            terms = intent.sandbox_context['terms']
+            source_energy = Decimal(terms['energy_kwh'])
+            quote = intent.sandbox_quote
+            return bool(intent.provider == provider and intent.currency == currency and receipt and receipt.environment == financial_environment
+                        and receipt.currency == currency and receipt.received == intent.amount
+                        and receipt.billed + receipt.residual == receipt.received
+                        and quote and quote.owner_id == allocation.owner_id and quote.meter_id == allocation.meter_id
+                        and quote.currency == currency and quote.environment == financial_environment and quote.terms == terms
+                        and source_energy.is_finite() and source_energy == allocation.amount_kwh)
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return False
     if allocation.sandbox_loan_id:
-        return allocation.sandbox_loan.environment == 'UGX_DEMO' and allocation.sandbox_loan.currency == 'UGX'
+        # Delivering an already-approved source never originates or approves a loan.
+        expected = ('MTN_SANDBOX', 'EUR') if environment == 'SANDBOX' else ('UGX_DEMO', 'UGX')
+        try:
+            from decimal import Decimal
+            return ((allocation.sandbox_loan.environment, allocation.sandbox_loan.currency) == expected
+                    and Decimal(allocation.sandbox_loan.terms['energy_kwh']) == allocation.amount_kwh)
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            return False
     return False
 
 
@@ -210,15 +262,19 @@ def redeem(device, body):
         fail('DEVICE_SESSION_REQUIRED')
     if not isinstance(body['token'], str) or not re.fullmatch(r'[0-9]{15}', body['token']):
         fail('REQUEST_INVALID', 'Use a 15-digit token.', 400)
-    row = EnergyKeypadToken.objects.filter(lookup_digest=digest_token(body['token'])).first()
+    try:
+        lookup = digest_token(body['token'])
+    except ImproperlyConfigured:
+        fail('TOKEN_SERVICE_UNAVAILABLE', 'Private token configuration requires operator review.', 503)
+    row = EnergyKeypadToken.objects.filter(lookup_digest=lookup).first()
     if row is None:
         fail('TOKEN_UNAVAILABLE', 'Token unavailable for this device.', 404)
     allocation = EnergyAllocation.objects.select_for_update().get(pk=row.allocation_id)
     token = EnergyKeypadToken.objects.select_for_update().get(pk=row.pk)
     if (token.owner_id != device.owner_id or allocation.owner_id != device.owner_id or token.meter_id != device.meter_id
             or allocation.meter_id != device.meter_id or token.meter_number != device.meter.meter_no
-            or token.environment != 'UGX_DEMO' or allocation.accounting_environment != 'UGX_DEMO'
-            or allocation.amount_kwh * 1000 != token.amount_wh or not lab_source(allocation)
+            or token.environment != device.environment or allocation.accounting_environment != device.environment
+            or allocation.amount_kwh * 1000 != token.amount_wh or not lab_source(allocation, device.environment)
             or not 0 < token.amount_wh <= 1_000_000 or token.amount_wh % 10):
         fail('TOKEN_UNAVAILABLE', 'Token unavailable for this device.', 404)
     # Check encrypted integrity as well as the lookup HMAC. Never return plaintext.
@@ -241,7 +297,7 @@ def redeem(device, body):
     if token.state != 'ISSUED' or token.delivery_id or allocation.deliveries.exists() or count == UINT32:
         fail('RESERVATION_CONFLICT')
     from meter.allocation_service import reserve_ac_lab_token
-    delivery = reserve_ac_lab_token(token)
+    delivery = reserve_ac_lab_token(token, device=device)
     if max(delivery.pk, allocation.pk) > 2**53 - 1:
         fail('IDENTITY_OUT_OF_RANGE')
     command = {**identity(device), 'allocation_id': allocation.pk, 'delivery_id': delivery.pk,
@@ -276,7 +332,9 @@ def acknowledge(device, body):
     allocation = EnergyAllocation.objects.select_for_update().get(pk=delivery.allocation_id)
     token = EnergyKeypadToken.objects.select_for_update().get(delivery=delivery)
     if (allocation.owner_id != device.owner_id or allocation.meter_id != device.meter_id
-            or allocation.accounting_environment != 'UGX_DEMO' or not lab_source(allocation)):
+            or allocation.accounting_environment != device.environment or token.environment != device.environment
+            or token.owner_id != device.owner_id or token.meter_id != device.meter_id
+            or not lab_source(allocation, device.environment)):
         fail('RECEIPT_BINDING_MISMATCH')
     if command.receipt_id:
         if command.receipt_id != receipt or command.applied_at != at:

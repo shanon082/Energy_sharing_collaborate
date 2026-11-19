@@ -37,11 +37,12 @@ SECRET = 'synthetic-ac-lab-credential-do-not-use-in-firmware'
 
 
 class LabFixtures(Fixtures):
+    environment = "UGX_DEMO"
     def setUp(self):
         super().setUp()
         self.operator = User.objects.create_user(email='lab-operator@example.invalid', password='test-only', user_role=User.OPERATOR, is_staff=True)
         self.operator.profile.email_verified = True; self.operator.profile.save(update_fields=['email_verified'])
-        self.device = PrototypeDevice.objects.create(meter=self.meter, owner=self.owner, provisioned_by=self.operator,
+        self.device = PrototypeDevice.objects.create(meter=self.meter, owner=self.owner, provisioned_by=self.operator, environment=self.environment,
             credential_hash=make_password(SECRET), credential_fingerprint='test-only-unique-fingerprint')
         self.boot = str(uuid.uuid4())
         self.dev = APIClient()
@@ -145,8 +146,10 @@ class PrototypeTests(LabFixtures, TransactionTestCase):
         self.dev.force_authenticate(self.owner)
         self.post('session', self.handshake, 401, **self.headers)
         for overrides in ({'PROTOTYPE_AC_LAB_ENABLED': False}, {'ALWAYSDATA_TESTING': False},
-                          {'PROTOTYPE_PAYMENT_PROVIDER': 'MTN_SANDBOX'}, {'PROTOTYPE_RELAY_OUTPUT_ENABLED': True}):
+                          {'PROTOTYPE_RELAY_OUTPUT_ENABLED': True}):
             with override_settings(**overrides): self.post('session', self.handshake, 503)
+        with override_settings(PROTOTYPE_PAYMENT_PROVIDER='MTN_SANDBOX'):
+            self.post('session', self.handshake, 401)  # Old UGX credential cannot cross domains.
         PrototypeDevice.objects.filter(pk=self.device.pk).update(revoked_at=timezone.now(), active=False)
         self.post('session', self.handshake, 401)
         self.assertFalse(MeterDelivery.objects.exists())
@@ -234,7 +237,7 @@ class PrototypeTests(LabFixtures, TransactionTestCase):
         meter = enroll_sandbox_meter(self.owner, '00000000998')[0]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'private.json'; stdout = StringIO()
-            kwargs = dict(owner_id=self.owner.pk, operator_id=self.operator.pk, private_config=str(path), confirm_output_disabled=True, stdout=stdout)
+            kwargs = dict(environment=self.environment, owner_id=self.owner.pk, operator_id=self.operator.pk, private_config=str(path), confirm_output_disabled=True, stdout=stdout)
             call_command('provision_ac_lab_device', meter.pk, **kwargs)
             data = json.loads(path.read_text()); self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertNotIn(data['device_secret'], stdout.getvalue())

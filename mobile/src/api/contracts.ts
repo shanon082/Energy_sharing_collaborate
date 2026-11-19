@@ -24,6 +24,8 @@ export type AllocationStatus = {
   reported_relay_state?: string | null;
   last_measurement_at?: string | null;
   consumption_reconciliation_required?: boolean;
+  lab_environment?: "SANDBOX" | "UGX_DEMO";
+  lab_protocol?: "GPAWA_PZEM_V1" | "GPAWA_PZEM_V2";
   lab_remaining_credit_uwh?: string | null;
   lab_consumed_uwh?: string | null;
   lab_uncertain_uwh?: string | null;
@@ -117,6 +119,9 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
       !["SIMULATOR", "UNAVAILABLE", "AC_LAB"].includes(String(data.contact_source))) {
     throw new Error("Meter dashboard is unavailable.");
   }
+  if (data.lab_environment !== undefined &&
+      (!["SANDBOX", "UGX_DEMO"].includes(String(data.lab_environment)) || data.lab_protocol !== (data.lab_environment === "SANDBOX" ? "GPAWA_PZEM_V2" : "GPAWA_PZEM_V1")))
+    throw new Error("Meter lab domain is unavailable.");
   const optionalWh = (value: unknown) => value == null ? null :
     typeof value === "string" && /^[0-9]+$/.test(value) ? value : (() => { throw new Error("Invalid meter credit reading."); })();
   return { ...parseAllocation(data), contact_source: data.contact_source as AllocationStatus["contact_source"],
@@ -128,6 +133,7 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
       ? String(data.reported_relay_state) : null,
     last_measurement_at: typeof data.last_measurement_at === "string" ? data.last_measurement_at : null,
     consumption_reconciliation_required: data.consumption_reconciliation_required === true,
+    ...(data.lab_environment === "SANDBOX" || data.lab_environment === "UGX_DEMO" ? {lab_environment: data.lab_environment, lab_protocol: data.lab_protocol as AllocationStatus["lab_protocol"]} : {}),
     lab_remaining_credit_uwh: optionalWh(data.lab_remaining_credit_uwh),
     lab_consumed_uwh: optionalWh(data.lab_consumed_uwh),
     lab_uncertain_uwh: optionalWh(data.lab_uncertain_uwh),

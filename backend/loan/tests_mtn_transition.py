@@ -106,13 +106,13 @@ class MTNTransitionTests(Fixtures, TestCase):
         self.assertFalse(SandboxSettlement.objects.exists())
 
     def test_eur_self_repayment_closes_debt_without_token_or_energy(self):
-        loan = self.loan(); allocations = EnergyAllocation.objects.count()
+        loan = self.loan(); allocations = EnergyAllocation.objects.count(); tokens = EnergyKeypadToken.objects.count()
         intent = self.repayment(loan, "2.10"); self.submitted(intent)
         row, effect = self.reconcile(intent, "SUCCESSFUL")
         self.assertTrue(effect); self.assertIsNone(receipt(row)["allocation_id"])
         loan.refresh_from_db(); self.assertEqual(loan.outstanding, Decimal("0")); self.assertEqual(loan.status, "COMPLETED")
         self.assertEqual(EnergyAllocation.objects.count(), allocations)
-        self.assertFalse(EnergyKeypadToken.objects.exists())
+        self.assertEqual(EnergyKeypadToken.objects.count(), tokens)
 
     def test_missing_credentials_fail_closed_and_pricing_gap_blocks_new_energy(self):
         with override_settings(MTN_SANDBOX_CONFIG={}):

@@ -30,6 +30,19 @@ test('missing recovery after a timeout retains identity and cannot authorize ano
   assert.equal(canClearRecoveredRetry({ status: 'FAILED' }), true);
 });
 
+test('both clients require domain-bound lab capability and disabled physical output', () => {
+  const base = {enabled: true, currency: 'EUR', environment: 'MTN_SANDBOX', provider: 'MTN_SANDBOX', physical_delivery: false,
+    purchases: true, repayments: true, loans: false};
+  const lab = {enabled: true, environment: 'SANDBOX', protocol: 'GPAWA_PZEM_V2', physical_output: false};
+  const valid = sandboxCapabilities({...base, ac_lab: lab});
+  assert.equal(valid.labEnabled, true);
+  assert.equal(valid.labEnvironment, 'SANDBOX');
+  for (const invalid of [{...lab, environment: 'UGX_DEMO'}, {...lab, protocol: 'GPAWA_PZEM_V1'}, {...lab, physical_output: true}, {...lab, enabled: 'true'}]) {
+    assert.equal(sandboxCapabilities({...base, ac_lab: invalid}).labEnabled, false);
+  }
+  assert.equal(sandboxCapabilities(base).labEnabled, undefined);
+});
+
 // Exercise the shared actual TSX presentation for both clients, with no DOM,
 // credentials, network, provider, fake settlement or duplicated payment pipeline.
 const compiled = buildSync({
@@ -106,7 +119,7 @@ test('Next.js and Android present the same pending, settled and failed server re
     assert.doesNotMatch(wait, /Sandbox payment verified|simulating phone authorization|seconds/);
     const done = render({ ...props, surface, pending: false, payments: [{ ...pending, status: 'SETTLED', billed: '2.00', residual: '0', allocated_kwh: '2.00', settled_at: pending.next_check_at }] });
     assert.match(done, /Sandbox payment verified/); assert.match(done, /EUR/);
-    assert.match(done, /UGX_DEMO-only AC lab/);
+    assert.match(done, /SANDBOX\/GPAWA_PZEM_V2/);
     const failed = render({ ...props, surface, pending: false, payments: [{ ...pending, status: 'FAILED' }] });
     assert.match(failed, /Payment failed/); assert.doesNotMatch(failed, /Sandbox payment verified/);
     const repay = render({ ...props, surface, pending: false, payments: [{ ...pending, purpose: 'LOAN_REPAYMENT', status: 'SETTLED', applied: '2.00', excess: '0' }] });

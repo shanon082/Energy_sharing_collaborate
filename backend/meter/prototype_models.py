@@ -32,7 +32,7 @@ class PrototypeDevice(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['meter'], condition=models.Q(active=True), name='one_active_ac_lab_per_meter'),
-            models.CheckConstraint(condition=models.Q(environment='UGX_DEMO', hardware_class='AC_LAB', output_enabled=False), name='ac_lab_output_disabled'),
+            models.CheckConstraint(condition=models.Q(environment__in=['UGX_DEMO', 'SANDBOX'], hardware_class='AC_LAB', output_enabled=False), name='ac_lab_output_disabled'),
         ]
 
 

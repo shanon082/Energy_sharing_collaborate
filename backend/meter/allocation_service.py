@@ -188,7 +188,7 @@ def entitlement_summary(owner, meter=None, environment=None):
 
 
 @transaction.atomic
-def reserve_ac_lab_token(token):
+def reserve_ac_lab_token(token, *, device):
     """Entire source allocation reservation; shares the existing delivery ledger.
 
     Only the authenticated adapter may bind a command to this reservation. No
@@ -196,14 +196,16 @@ def reserve_ac_lab_token(token):
     unable to spend a token-held allocation.
     """
     from meter.models import EnergyKeypadToken
-    from meter.prototype_device import require_lab, lab_source
+    from meter.prototype_device import require_lab, lab_source, locked
     require_lab()
+    device = locked(device)  # Shared-service callers cannot reserve for stale/revoked bindings.
     allocation = EnergyAllocation.objects.select_for_update().get(pk=token.allocation_id)
     token = EnergyKeypadToken.objects.select_for_update().get(pk=token.pk)
     if (token.state != 'ISSUED' or token.delivery_id or allocation.deliveries.exists()
-            or allocation.accounting_environment != 'UGX_DEMO' or token.environment != 'UGX_DEMO'
+            or allocation.accounting_environment != device.environment or token.environment != device.environment
+            or device.environment not in {'SANDBOX', 'UGX_DEMO'} or device.owner_id != token.owner_id or device.meter_id != token.meter_id
             or token.owner_id != allocation.owner_id or token.meter_id != allocation.meter_id
-            or token.amount_wh != allocation.amount_kwh * 1000 or not lab_source(allocation)):
+            or token.amount_wh != allocation.amount_kwh * 1000 or not lab_source(allocation, device.environment)):
         raise AllocationError('Token allocation requires reconciliation.')
     from django.utils import timezone
     delivery = MeterDelivery.objects.create(allocation=allocation, amount_kwh=allocation.amount_kwh,

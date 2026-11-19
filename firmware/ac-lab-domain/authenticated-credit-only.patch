@@ -1,0 +1,222 @@
+--- a/Firmware.cpp
++++ b/Firmware.cpp
+@@ -35,6 +35,7 @@
+ char message[48]="Starting",tokenDigits[16]={},bootId[37]={};
+ uint8_t tokenLength=0, pulses=0, good=0;
+ uint32_t lastSample=0,lastUi=0,lastTelemetry=0,lastWifiAttempt=0,nextNetwork=0,telemetrySequence=0,retryDelay=2000,showAt=0,soundAt=0,alarmAt=0,savedWh=0;
++uint32_t lastSession=0;
+ bool sounding=false,emptySeen=false,diagnostic=false;
+ pz::Reading measured{};
+ enum class JobKind:uint8_t {Session,Redeem,Ack,Telemetry};
+@@ -218,7 +219,7 @@
+   j["credited_uwh"] = state.creditedUWh;
+   j["consumed_uwh"] = state.consumedUWh;
+   j["uncertain_uwh"] = state.uncertainUWh;
+-  enqueue(JobKind::Session, j);
++  if (enqueue(JobKind::Session, j)) lastSession = millis();
+ }
+ void sendAck() {
+   JsonDocument j;
+@@ -241,6 +242,8 @@
+   enqueue(JobKind::Ack, j);
+ }
+ void sendTelemetry() {
++  // There is no PZEM evidence in this mode: never send fabricated zero readings.
++  if (GPAWA_AUTH_CREDIT_ONLY) return;
+   if (telemetrySequence == UINT32_MAX) {
+     latch("Sequence exhausted");
+     return;
+@@ -323,7 +326,7 @@
+     next.reservedBytes[0] = 1;
+     if (!persist(next)) return;
+     sessionReady = true;
+-    say(state.ackPending ? "Recovering receipt" : "Ready: D to arm");
++    say(state.ackPending ? "Recovering receipt" : GPAWA_AUTH_CREDIT_ONLY ? "Credit API ready" : "Ready: D to arm");
+   } else if (r.kind == JobKind::Redeem) {
+     if (!clockValid()) {
+       latch("Clock invalid - service");
+@@ -377,6 +380,7 @@
+ #endif
+ }
+ void meterTick(bool force){
++ if(GPAWA_AUTH_CREDIT_ONLY){sensorOK=false;good=0;return;}
+  uint32_t now=millis();if(!force&&now-lastSample<hw::SAMPLE_MS)return;
+  if(outputOn&&now-lastSample>3000){switchOff();loadRequested=false;say("Sampling gap");}
+  lastSample=now;
+@@ -388,6 +392,7 @@
+  if(good<3)++good;
+  auto next=state; const auto before=state.availableUWh;
+  auto result=observe(next,measured.wh);
++ if(result==Reading::BaselineRequired){switchOff();latch("Baseline review");return;}
+  if(result==Reading::Fault){switchOff();persist(next);latch("Counter reversed");return;}
+  if(!next.availableUWh)switchOff();
+  if(result==Reading::First || (before&&!next.availableUWh) || next.meterWh-savedWh>=32){
+@@ -396,7 +401,7 @@
+  sensorOK=good>=3;
+ }
+ void outputTick(){
+- bool permit=storageOK && sensorOK && !fatal && loadRequested && !state.hold &&
++ bool permit=!GPAWA_AUTH_CREDIT_ONLY && storageOK && sensorOK && !fatal && loadRequested && !state.hold &&
+              state.hasMeter && state.availableUWh && state.reservedBytes[0];
+  if(!permit){switchOff();return;}
+ #if GPAWA_COMMISSIONED_OUTPUT && !GPAWA_USB_EXERCISE
+@@ -418,6 +423,7 @@
+  if(k=='*'){if(tokenLength)tokenDigits[--tokenLength]=0;return;}
+  if(k=='C'){eraseToken();return;}
+  if(k=='D'){
++   if(GPAWA_AUTH_CREDIT_ONLY){loadRequested=false;switchOff();say("Output disabled");return;}
+    if(loadRequested){loadRequested=false;switchOff();say("Paused");}
+    else if(sensorOK && sessionReady && !fatal){loadRequested=true;say("Meter armed");}
+    else say("Check meter/API");
+@@ -428,7 +434,7 @@
+ #endif
+  if(k!='#')return;
+  if(!digits(tokenDigits,15)){say("Need 15 digits");return;}
+- if(!sensorOK){say("Check meter");return;}
++ if(!creditTransportReady(state,GPAWA_AUTH_CREDIT_ONLY,sensorOK)){say("Check meter");return;}
+ #if GPAWA_USB_EXERCISE
+  const bool second=state.applicationCounter==1 && !strcmp(tokenDigits,"222222222222222");
+  if(!second && (state.applicationCounter!=0 || strcmp(tokenDigits,"111111111111111"))){eraseToken();say("Invalid or used");return;}
+@@ -453,6 +459,12 @@
+  if(viewingMeter && millis()-meterShownAt>=5000)viewingMeter=false;
+  if(viewingMeter){row(0,"Meter number");row(1,state.meterNumber);return;}
+  if(tokenLength){row(0,tokenDigits);row(1,"# Send  * Delete");return;}
++ if(GPAWA_AUTH_CREDIT_ONLY){
++   if(millis()-showAt>=2000 && (millis()/3500)%2){row(0,"Consumption");row(1,"unavailable");}
++   else {snprintf(a,sizeof a,"%llu Wh saved",(unsigned long long)(state.availableUWh/UWH_PER_WH));row(0,a);
++     row(1,millis()-showAt<2000 ? message : "Credit-only mode");}
++   return;
++ }
+  if(!state.hasMeter)row(0,"Meter not ready");
+  else {snprintf(a,sizeof a,"%llu Wh %s",(unsigned long long)(state.availableUWh/UWH_PER_WH),outputOn?"ON":"OFF");row(0,a);}
+  if(millis()-showAt<2000)row(1,message);
+@@ -483,6 +495,7 @@
+  // Some LCD libraries re-initialize Wire. Reapply the chosen S3 pins if changing defaults.
+  const bool usb=GPAWA_USB_EXERCISE;
+  configured=usb||configValid();if(!configured){
++   if(GPAWA_AUTH_CREDIT_ONLY){latch("Check DeviceConfig");return;}
+    if(GPAWA_COMMISSIONED_OUTPUT){latch("Set DeviceConfig");return;}
+    diagnostic=true;Serial1.begin(9600,SERIAL_8N1,hw::RX,hw::TX);
+    row(0,"PZEM read only");row(1,"Waiting for data");return;
+@@ -504,6 +517,12 @@
+    seal(state);
+  }
+  if(state.hold){latch("Meter needs check");return;}
++ if(GPAWA_AUTH_CREDIT_ONLY){
++   if(!enterAuthenticatedCreditOnly(state)){latch("Credit mode invalid");return;}
++ }else if(measurementPaused(state)){
++   // No button or compile flag may turn a suspended lifetime reading into usage.
++   latch("Baseline review");return;
++ }
+  if(!bootRecover(state)){latch("Invalid journal");return;}
+  if(!persist(state))return;
+  storageOK=true;
+@@ -521,7 +540,8 @@
+ #else
+  sessionReady=true;
+ #endif
+- say(usb?"USB exercise":"Checking meter");meterTick(true);
++ if(GPAWA_AUTH_CREDIT_ONLY)Serial.println("Authenticated credit-only: consumption unavailable; physical output disabled.");
++ say(usb?"USB exercise":GPAWA_AUTH_CREDIT_ONLY?"Checking credit":"Checking meter");meterTick(true);
+ }
+ void firmwareLoop(){
+ #if GPAWA_WIFI_TEST
+@@ -545,8 +565,9 @@
+  handleReply();if(fatal){draw();return;}
+  if(WiFi.status()!=WL_CONNECTED){
+    sessionReady=false;if(millis()-lastWifiAttempt>=15000){lastWifiAttempt=millis();WiFi.reconnect();}
+- }else if(state.hasMeter&&sensorOK&&clockValid()&&!busy&&(int32_t)(millis()-nextNetwork)>=0){
++ }else if(creditTransportReady(state,GPAWA_AUTH_CREDIT_ONLY,sensorOK)&&clockValid()&&!busy&&(int32_t)(millis()-nextNetwork)>=0){
+    if(!sessionReady)sendSession();else if(state.ackPending)sendAck();
++   else if(GPAWA_AUTH_CREDIT_ONLY){if(millis()-lastSession>=hw::TELEMETRY_MS)sendSession();}
+    else if(millis()-lastTelemetry>=hw::TELEMETRY_MS)sendTelemetry();
+  }
+ #endif
+--- a/MeterCore.h
++++ b/MeterCore.h
+@@ -8,6 +8,9 @@
+ namespace gpawa {
+ constexpr uint32_t MAGIC = 0x47505741;
+ constexpr uint32_t VERSION = 2;
++// Same layout/NVS key; v3 marks authenticated credit without active measurement.
++// A v2-only binary must reject this journal instead of debiting a stale baseline.
++constexpr uint32_t CREDIT_ONLY_VERSION = 3;
+ constexpr uint64_t UWH_PER_WH = 1000000ULL;
+ constexpr uint64_t MAX_CREDIT_WH = 1000000ULL;
+ constexpr uint64_t MAX_TOTAL_UWH = 9000000000000000ULL;  // below JSON's 2^53
+@@ -59,6 +62,15 @@
+ inline const char* deviceProtocol(const State& s) {
+   return s.reservedBytes[1] == 2 ? "GPAWA_PZEM_V2" : s.reservedBytes[1] <= 1 ? "GPAWA_PZEM_V1" : "USB_EXERCISE_ONLY";
+ }
++inline bool measurementPaused(const State& s) {
++  return s.version == CREDIT_ONLY_VERSION && s.reservedBytes[2] == 1;
++}
++inline const char* measurementState(const State& s) {
++  return !s.hasMeter ? "UNINITIALIZED" : measurementPaused(s) ? "SUSPENDED" : "BASELINED";
++}
++inline bool creditTransportReady(const State& s, bool creditOnly, bool sensorReady) {
++  return !s.hold && (creditOnly || (!measurementPaused(s) && s.hasMeter && sensorReady));
++}
+ inline uint32_t crc32(const void* p, size_t n) {
+   const uint8_t* b = static_cast<const uint8_t*>(p);
+   uint32_t c = 0xffffffffU;
+@@ -94,11 +106,20 @@
+   return s.creditedUWh == s.availableUWh + s.reservedUWh + s.consumedUWh + s.uncertainUWh;
+ }
+ inline bool valid(const State& s) {
+-  if (!accountingEnvironment(s) || s.magic != MAGIC || s.version != VERSION || s.crc != crc32(&s, offsetof(State, crc)) || !invariant(s)) return false;
++  const bool versionOK = (s.version == VERSION && s.reservedBytes[2] == 0) || measurementPaused(s);
++  if (!accountingEnvironment(s) || s.magic != MAGIC || !versionOK || s.crc != crc32(&s, offsetof(State, crc)) || !invariant(s)) return false;
+   if (!terminated(s.deviceId, sizeof s.deviceId) || !uuid(s.deviceId) || !terminated(s.storageId, sizeof s.storageId) || !uuid(s.storageId) || !terminated(s.meterNumber, sizeof s.meterNumber) || !digits(s.meterNumber, 11) || s.bindingEpoch == 0) return false;
+   if (s.applicationCounter) {
+     if (!terminated(s.lastCommand.id, sizeof s.lastCommand.id) || !uuid(s.lastCommand.id) || !terminated(s.receiptId, sizeof s.receiptId) || !uuid(s.receiptId) || !terminated(s.lastCommand.digest, sizeof s.lastCommand.digest) || strlen(s.lastCommand.digest) != 64 || !terminated(s.lastCommand.canonical, sizeof s.lastCommand.canonical) || !terminated(s.appliedAt, sizeof s.appliedAt) || s.lastCommand.sequence != s.applicationCounter) return false;
+   } else if (s.ackPending || s.creditedUWh) return false;
++  return true;
++}
++inline bool enterAuthenticatedCreditOnly(State& s) {
++  if (!valid(s) || s.hold || strcmp(accountingEnvironment(s), "SANDBOX")) return false;
++  // Do not change hasMeter, baseline, identity, credit, receipts or counters.
++  s.version = CREDIT_ONLY_VERSION;
++  s.reservedBytes[2] = 1;
++  seal(s);
+   return true;
+ }
+ inline bool bootRecover(State& s) {
+@@ -145,9 +166,10 @@
+ }
+ 
+ // Account for differences, never for the full meter lifetime reading.
+-enum class Reading { Same, Advanced, First, Fault };
++enum class Reading { Same, Advanced, First, Fault, BaselineRequired };
+ inline Reading observe(State &s, uint32_t reading){
+  if(s.hold) return Reading::Fault;
++ if(measurementPaused(s)) return Reading::BaselineRequired;
+  if(!s.hasMeter){
+    if(s.applicationCounter || s.availableUWh || s.consumedUWh){s.hold=1;return Reading::Fault;}
+    s.hasMeter=1;s.meterWh=reading;return Reading::First;
+--- a/HardwareConfig.h
++++ b/HardwareConfig.h
+@@ -1,7 +1,12 @@
+ #pragma once
+-// Preserve the active sketch's diagnostic default. Set 0 only after commissioning.
++// Active sketch is already provisioned; preserve authenticated operation.
+ #ifndef GPAWA_WIFI_TEST
+ #define GPAWA_WIFI_TEST 0
++#endif
++// USB supplies power only. Credit still requires Wi-Fi, TLS and Django auth.
++// Separate from synthetic USB exercise and Wi-Fi-only diagnostics.
++#ifndef GPAWA_AUTH_CREDIT_ONLY
++#define GPAWA_AUTH_CREDIT_ONLY 1
+ #endif
+ // 0: authenticated HTTPS operation (or diagnostic-only if unconfigured).
+ // 1: explicit USB exercise, separate journal; never authenticated credit.
+@@ -15,6 +20,9 @@
+ #if GPAWA_COMMISSIONED_OUTPUT
+ #error Physical relay output is forbidden in this credit-only integration
+ #endif
++#if GPAWA_AUTH_CREDIT_ONLY && (GPAWA_WIFI_TEST || GPAWA_USB_EXERCISE || GPAWA_COMMISSIONED_OUTPUT)
++#error Authenticated credit-only mode cannot enable diagnostics, exercise or output
++#endif
+ namespace hw{
+ constexpr int SDA_PIN=8,SCL_PIN=9, RX=16,TX=17,SWITCH_PIN=14,BEEP=18;
+ constexpr unsigned char LCD_ADDR=0x27, PZEM_ADDR=0xf8;

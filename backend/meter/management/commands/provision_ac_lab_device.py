@@ -9,7 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from accounts.models import User
 from meter.models import BenchDevice, Meter, PrototypeDevice
-from meter.prototype_device import require_lab, identity
+from meter.prototype_device import require_lab, identity, permitted_environment
 from meter.validators import validate_meter_no
 
 
@@ -18,6 +18,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('meter_id', type=int)
+        parser.add_argument('--environment', required=True, choices=['SANDBOX', 'UGX_DEMO'])
         parser.add_argument('--owner-id', type=int, required=True)
         parser.add_argument('--operator-id', type=int, required=True)
         parser.add_argument('--private-config', required=True)
@@ -25,6 +26,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         require_lab()
+        if options['environment'] != permitted_environment():
+            raise CommandError('Device environment must match the configured payment domain; no conversion or rebind is performed.')
         if not options['confirm_output_disabled']:
             raise CommandError('Confirm relay output is disabled in firmware and physically disconnected.')
         operator = User.objects.filter(pk=options['operator_id'], is_active=True, is_staff=True,
@@ -47,7 +50,7 @@ class Command(BaseCommand):
                             or PrototypeDevice.objects.filter(meter=meter).exists() or BenchDevice.objects.filter(meter=meter).exists()):
                         raise CommandError('Need an owned active 11-digit test meter without a previous device binding; reconcile existing bindings first.')
                     secret = secrets.token_urlsafe(48)
-                    device = PrototypeDevice.objects.create(meter=meter, owner_id=meter.user_id, provisioned_by=operator,
+                    device = PrototypeDevice.objects.create(meter=meter, owner_id=meter.user_id, provisioned_by=operator, environment=options['environment'],
                         credential_hash=make_password(secret), credential_fingerprint=hashlib.sha256(secret.encode()).hexdigest())
                     json.dump({**identity(device), 'device_secret': secret, 'output_enabled': False}, output)
                     output.flush(); os.fsync(output.fileno())
