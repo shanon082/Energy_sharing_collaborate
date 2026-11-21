@@ -1,5 +1,7 @@
 # UGX lending, paused new payments, and token diagnostics
 
+Latest capability audit and coordinated rollout: [UGX_CAPABILITY_PARITY_ROLLOUT.md](UGX_CAPABILITY_PARITY_ROLLOUT.md). Its mapping proposal is pending a decision; no UGX MTN conversion is implemented. This earlier document records the prior pause decision; preserve the host’s existing explicit payment setting during deployment.
+
 Implemented locally; no hosted deployment, provider initiation, phone or physical
 board test performed. This supersedes the **new-payment** instructions in
 MTN_AC_LAB_SANDBOX.md. Do not start another purchase to investigate a rejected token.

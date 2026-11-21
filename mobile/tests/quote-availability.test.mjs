@@ -11,3 +11,8 @@ test('eligible demo loan review remains available; blocked Amount states explain
   assert.match(quoteAvailabilityReason({...ready,unresolved:true}),/reconciliation/);
   assert.match(quoteAvailabilityReason({...ready,validAmount:false}),/positive amount/);
 });
+
+test('action-specific server and setup errors are visible even before terms load',()=>{
+  assert.equal(quoteAvailabilityReason({...ready,policy:false,allowed:false,capabilityReason:'Deploy matching UGX contract.'}),'Deploy matching UGX contract.');
+  assert.equal(quoteAvailabilityReason({...ready,policy:false,setupError:'Loan assessment request failed: HTTP 503'}),'Loan assessment request failed: HTTP 503');
+});

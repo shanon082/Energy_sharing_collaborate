@@ -8,7 +8,7 @@ test('explicit UGX lending capability does not change EUR payments or unlock old
   assert.equal(sandboxCapabilities(base).loans,false);
   const caps=sandboxCapabilities({...base,lending});
   assert.equal(caps.loans,true);assert.equal(caps.loanCurrency,'UGX');assert.equal(caps.currency,'EUR');
-  for(const bad of [{...lending,currency:'EUR'},{...lending,energy_environment:'UGX_DEMO'},{...lending,repayment_available:true}])
+  for(const bad of [{...lending,currency:'EUR'},{...lending,energy_environment:'UGX_DEMO'}])
     assert.equal(sandboxCapabilities({...base,lending:bad}).loans,false);
 });
 test('UGX terms and EUR provider receipts cannot be relabelled as each other',()=>{
@@ -24,4 +24,13 @@ test('server pause blocks new EUR actions but preserves loan domain and history 
   const caps=sandboxCapabilities({...base,lending,new_payments_paused:true});
   assert.equal(caps.newPaymentsPaused,true);assert.equal(caps.purchases,false);assert.equal(caps.repayments,false);
   assert.equal(caps.loans,true);assert.equal(caps.loanCurrency,'UGX');assert.equal(caps.currency,'EUR');
+});
+
+test('lending capability is independent of repayment readiness and retains disabled loan history domain',()=>{
+  const servicing=sandboxCapabilities({...base,lending:{...lending,repayment_available:true}});
+  assert.equal(servicing.loans,true);assert.equal(servicing.loanCurrency,'UGX');
+  const disabled=sandboxCapabilities({...base,lending:{...lending,enabled:false}});
+  assert.equal(disabled.loans,false);assert.equal(disabled.loanCurrency,'UGX');
+  assert.match(disabled.loanMessage,/disabled by the server/);
+  assert.match(sandboxCapabilities(base).loanMessage,/not advertised the UGX lending contract/);
 });

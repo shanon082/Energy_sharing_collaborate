@@ -60,7 +60,7 @@ export function ConsumerWorkspace({ screen }: { screen: ConsumerScreen }) {
   return <Workspace key={`${account.value.id}:${flags.value.provider ?? "unavailable"}`} account={account.value} capabilities={flags.value} initialMeters={onboarding.value.meters} enrollment={onboarding.value.enrollment} screen={screen} />;
 }
 
-function Workspace({ account, capabilities, initialMeters, enrollment, screen }: {
+function Workspace({ account, capabilities: initialCapabilities, initialMeters, enrollment, screen }: {
   account: Account; capabilities: ReturnType<typeof flagsData>; initialMeters: TestMeter[]; enrollment: boolean; screen: ConsumerScreen;
 }) {
   const router = useRouter();
@@ -68,6 +68,9 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
   const [selected, select] = useState<string | null>(null);
   const meter = defaultConsumerMeter(meters, selected);
   const [revision, setRevision] = useState(0);
+  const latestCapabilities = useConsumerRead("features/", flagsData, revision, account.id, true);
+  const capabilities = latestCapabilities.value ?? initialCapabilities;
+  const capabilitiesReady = latestCapabilities.value !== null && !latestCapabilities.loading && !latestCapabilities.error;
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   const meterReads = useRef(new ConsumerReadScope());
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
@@ -144,6 +147,7 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
     <div className="consumer-body"><header className="consumer-header"><Link href="/dashboard" className="mobile-brand"><Leaf size={22} />EnergyFlex</Link><span className="desktop-breadcrumb">Your account <ChevronRight size={14} /> <strong>{names[screen]}</strong></span><div className="header-actions"><Link href="/dashboard/transactions" aria-label="Activity"><Activity size={20} /></Link><span className="header-divider" /><button className="account-avatar" aria-label="Open account" onClick={() => go("account")}>{account.first_name.charAt(0) || "U"}</button><span className="header-name">{account.first_name}<small>Consumer account</small></span></div></header>
       <main className="consumer-main"><div className="consumer-heading"><div><p className="consumer-eyebrow">{screen === "home" ? "YOUR ENERGY, SIMPLIFIED" : "YOUR WORKSPACE"}</p><h1>{screen === "home" ? `Hello, ${account.first_name || "there"}` : names[screen]}{screen === "home" && <span className="greeting-dot">.</span>}</h1><p>{({ home: "A clear view of your electricity and credit.", meters: "Your meters, all in one place.", loans: "Your electricity credit and repayments.", apply: "Choose an amount, then review your terms.", purchase: "Buy electricity for your selected meter.", activity: "Your purchases, loans and repayments.", account: "Manage your account and preferences." })[screen]}</p></div><button className="consumer-refresh" onClick={refresh}><RefreshCw size={16} />Refresh</button></div>
         <div className="consumer-selection">{selector}<span><span className="connection-dot" />Hardware readings unavailable until a meter is connected.</span></div>
+        {latestCapabilities.error && <div className="consumer-alert" role="alert">Capabilities request failed: {latestCapabilities.error} <button onClick={refresh}>Retry</button></div>}
         {assignmentError && <div className="consumer-alert" role="alert">{assignmentError} <button onClick={refresh}>Retry</button></div>}
         {!capabilities.enabled && <div className="consumer-alert" role="status">Consumer payments and credit are unavailable in this environment. No financial values have been assumed.</div>}
         {screen === "home" && <>
@@ -159,7 +163,7 @@ function Workspace({ account, capabilities, initialMeters, enrollment, screen }:
         {screen === "loans" && <div className="consumer-loan-overview"><section className="consumer-card"><p>Total outstanding · all your meters</p><strong>{headlineValue}</strong><small>Repayments applied {summary.loading ? "Loading…" : money(summary.value?.applied_repayments)}</small></section><Link className="consumer-primary-link" href={CONSUMER_PATHS.apply}><Plus size={18} />Apply for Loan</Link></div>}
         {screen === "account" && <ConsumerAccount account={account} onLogout={signOut} />}
         <div className="consumer-finance-shell" hidden={!(screen === "loans" || screen === "apply" || screen === "purchase" || screen === "activity")}>
-          {capabilities.enabled && <SandboxConsumer client={consumerClient} owner={account.id} meters={meters} selectedMeter={meter} capabilities={capabilities} surface="web" view={screen === "loans" || screen === "apply" || screen === "purchase" || screen === "activity" ? screen : "hidden"} onSelectMeter={select} onAddMeter={() => go("meters")} onNavigate={destination => go(destination)} onChanged={refresh} refreshVersion={revision} />}
+          {capabilities.enabled && <SandboxConsumer client={consumerClient} owner={account.id} meters={meters} selectedMeter={meter} capabilities={capabilities} surface="web" mutationsAvailable={capabilitiesReady && !assignmentError} view={screen === "loans" || screen === "apply" || screen === "purchase" || screen === "activity" ? screen : "hidden"} onSelectMeter={select} onAddMeter={() => go("meters")} onNavigate={destination => go(destination)} onChanged={refresh} refreshVersion={revision} />}
         </div>
         <footer className="consumer-footer"><Leaf size={15} />EnergyFlex <span>Electricity, within reach.</span><span>Cloud records · hardware connection pending</span></footer>
       </main>

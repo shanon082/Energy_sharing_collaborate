@@ -76,8 +76,30 @@ class FeatureAvailabilityView(APIView):
             tokens_ready = False
         from loan.prototype_lending import enabled as ugx_loans_enabled
         ugx_loans = ugx_loans_enabled()
+        purchase_reason = (
+            "Consumer sandbox is disabled." if not sandbox_enabled else
+            "New MTN payments are paused. UGX purchase authorization has no approved sandbox mapping; existing EUR receipts remain readable." if payments_paused else
+            "Sandbox payments unavailable: MTN Sandbox credentials are not configured." if not test_payments else
+            "EUR test pricing unavailable: configure the versioned EUR purchase policy." if not energy_pricing else
+            "Sandbox token service unavailable: review the token service configuration." if not tokens_ready else ""
+        )
+        loan_reason = (
+            "Sandbox token service unavailable: review the token service configuration." if ugx_loans and not tokens_ready else
+            "" if ugx_loans or sandbox_enabled and energy_pricing and loan_policy else
+            "UGX loan applications are disabled in this hosting profile. Legacy EUR loan origination remains disabled."
+        )
+        repayment_reason = (
+            "Consumer sandbox is disabled." if not sandbox_enabled else
+            "New MTN payments are paused. EUR receipts cannot repay UGX debt without an approved sandbox authorization mapping." if payments_paused else
+            "Sandbox payments unavailable: MTN Sandbox credentials are not configured." if not test_payments else ""
+        )
         response = Response({
             "sandbox": {"enabled": sandbox_enabled, "currency": currency, "environment": environment, "label": "UGX DEMO / NO REAL MONEY" if provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
+                        "capability_version": "GPAWA-CONSUMER-v2",
+                        "action_reasons": {"loan": loan_reason, "purchase": purchase_reason, "repayment": repayment_reason},
+                        "ugx_payments": {"enabled": provider == LOCAL_DEMO and test_payments,
+                                         "code": "TEST_AUTHORIZATION_MAPPING_REQUIRED" if provider != LOCAL_DEMO else "LOCAL_DEMO",
+                                         "message": "UGX business payments with MTN EUR test authorization require a separately approved mapping. No conversion is implemented." if provider != LOCAL_DEMO else "Local demo only; no real money."},
                         "loans": sandbox_enabled and energy_pricing and loan_policy, "purchases": test_payments and energy_pricing and tokens_ready, "repayments": test_payments,
                         'lending': {'enabled': ugx_loans and tokens_ready, 'currency': 'UGX', 'environment': 'UGX_DEMO', 'energy_environment': 'SANDBOX',
                                     'policy': 'DEMO-UGX-ACLAB-v1', 'repayment_available': False},

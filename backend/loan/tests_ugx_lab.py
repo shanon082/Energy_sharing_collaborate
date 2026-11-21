@@ -26,6 +26,43 @@ UGX = {**LAB, 'SANDBOX_UGX_LOANS_ENABLED': True}
 
 @override_settings(**UGX)
 class UGXLabTests(MTNFixture, TransactionTestCase):
+    def test_capabilities_separate_lending_payments_and_unapproved_ugx_mapping(self):
+        flags = self.client.get('/api/v1/features/', **self.headers).data['sandbox']
+        self.assertEqual(flags['capability_version'], 'GPAWA-CONSUMER-v2')
+        self.assertFalse(flags['loans'])  # Historical EUR origination stays off.
+        self.assertTrue(flags['lending']['enabled'])
+        self.assertTrue(flags['purchases']); self.assertTrue(flags['repayments'])
+        self.assertEqual(flags['currency'], 'EUR')
+        self.assertEqual(flags['action_reasons'], {'loan': '', 'purchase': '', 'repayment': ''})
+        self.assertFalse(flags['ugx_payments']['enabled'])
+        self.assertEqual(flags['ugx_payments']['code'], 'TEST_AUTHORIZATION_MAPPING_REQUIRED')
+        with override_settings(MTN_SANDBOX_CONFIG={}):
+            unavailable = self.client.get('/api/v1/features/', **self.headers).data['sandbox']
+            self.assertTrue(unavailable['lending']['enabled'])
+            self.assertFalse(unavailable['purchases']); self.assertFalse(unavailable['repayments'])
+            self.assertIn('credentials', unavailable['action_reasons']['purchase'])
+        with override_settings(SANDBOX_NEW_PAYMENTS_ENABLED=False):
+            paused = self.client.get('/api/v1/features/', **self.headers).data['sandbox']
+            self.assertTrue(paused['lending']['enabled'])
+            self.assertIn('paused', paused['action_reasons']['purchase'])
+            self.assertIn('EUR receipts cannot repay UGX debt', paused['action_reasons']['repayment'])
+        with override_settings(ENERGY_TOKEN_ISSUANCE_ENABLED=False):
+            unavailable = self.client.get('/api/v1/features/', **self.headers).data['sandbox']
+            self.assertFalse(unavailable['lending']['enabled']); self.assertFalse(unavailable['purchases'])
+            self.assertIn('token service', unavailable['action_reasons']['loan'])
+
+    def test_high_score_does_not_override_current_limit_or_owned_meter(self):
+        self.assertEqual(assessment(self.owner, meter_id=self.meter.pk)['score'], 85)
+        limit = Decimal(assessment(self.owner, meter_id=self.meter.pk)['maximum'])
+        with self.assertRaises(ValidationError):
+            create_quote(self.owner, self.meter.pk, str(limit + 1), 'LOAN')
+        from meter.sandbox_enrollment import enroll_sandbox_meter
+        other_meter = enroll_sandbox_meter(self.other, '00000000888')[0]
+        result = self.client.post('/api/v1/sandbox/quotes/', {'meter_id': other_meter.pk,
+            'amount': '10000', 'purpose': 'LOAN', 'loan_contract': CONTRACT}, format='json', **self.headers)
+        self.assertIn(result.status_code, (403, 404))
+        self.assertFalse(SandboxLoan.objects.exists()); self.assertFalse(EnergyAllocation.objects.exists())
+
     def loan(self, key=None):
         quote = create_quote(self.owner, self.meter.pk, '10000', 'LOAN')
         return apply_loan(self.owner, quote.pk, quote.terms_hash, key or uuid.uuid4())[0]

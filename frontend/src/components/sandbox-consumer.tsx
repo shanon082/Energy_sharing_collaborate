@@ -5,6 +5,7 @@ import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, me
 
 import { EnergyTokenCard } from "./energy-token-card";
 import { TariffDetails } from "./tariff-details";
+import { readFinanceSetup } from "../lib/finance-setup";
 import { assessmentContextKey, loanProgressionReason } from "../lib/meter-credit";
 import SandboxMobileView, { type ConsumerFinanceView, type FinanceDestination } from "./sandbox-mobile-view";
 
@@ -31,6 +32,8 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   const [clock, setClock] = useState(Date.now);
   const formVersion = useRef(0);
   const nextAttempt = useRef(new Map<string, number>());
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [assessment, setAssessment] = useState<Assessment | null>(null);
   const pricingContext = useRef("");
   const readMeter = useRef<number | undefined>(undefined);
@@ -83,8 +86,9 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     reading.current = true; setRefreshing(true);
     const run = ++token.current; const identity = epoch.current;
     try {
-      const [a, l, p] = await Promise.all([
-        client.get<{ assessment: Assessment; policy: TestPolicy; pricing?: PricingStatus; purchase_policy?: TestPolicy; purchase_pricing?: PricingStatus }>(`sandbox/assessment/?${meterId === undefined ? "" : `meter_id=${meterId}&`}${capabilities.loanCurrency === "UGX" && !demo ? "lending=ugx" : ""}`),
+      const [setup, l, p] = await Promise.all([
+        readFinanceSetup(client, meterId, capabilities.loanCurrency === "UGX" && !demo,
+          {currency: paymentCurrency, environment: paymentEnvironment}, {currency: loanCurrency, environment: loanEnvironment}),
         client.get<{ loans: unknown[] }>("sandbox/loans/"),
         client.get<{ payments: unknown[]; pending: unknown[] }>("sandbox/payments/"),
       ]);
@@ -117,13 +121,24 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       unknown = (["UGX_DEMO", "MTN_SANDBOX"] as const).some(recoveryEnvironment => ["LOAN", "PURCHASE", "LOAN_REPAYMENT"].some(kind => !!readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", recoveryEnvironment) &&
         ![...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", recoveryEnvironment))));
       if (!current(identity) || token.current !== run || destination.current !== meterId) return;
-      const parsed = loanCurrency === "UGX" ? parseStoredDemoAssessment(a.assessment, { owner, meterId: meterId ?? null }) : a.assessment;
-      const status = a.pricing ?? { available: false, message: "Pricing unavailable. Update the backend before using this app." };
-      const context = assessmentContextKey(parsed, a.policy, status) + JSON.stringify([a.purchase_policy, a.purchase_pricing]);
+      let parsed: Assessment | null = null;
+      let loanFailure: string | null = null;
+      if (setup.lending.status === 'fulfilled') {
+        try {
+          parsed = loanCurrency === "UGX" ? parseStoredDemoAssessment(setup.lending.value.assessment, {owner, meterId: meterId ?? null}) : setup.lending.value.assessment;
+        } catch (cause) { loanFailure = `Loan assessment unavailable: ${describe(cause)}`; }
+      } else loanFailure = `Loan assessment request failed: ${describe(setup.lending.reason)}`;
+      const a = setup.lending.status === 'fulfilled' && !loanFailure ? setup.lending.value : null;
+      const purchase = setup.purchase.status === 'fulfilled' ? setup.purchase.value : null;
+      const purchaseFailure = setup.purchase.status === 'rejected' ? `Purchase terms request failed: ${describe(setup.purchase.reason)}` : null;
+      const context = (parsed && a ? assessmentContextKey(parsed, a.policy, a.pricing) : loanFailure) + JSON.stringify(purchase);
       if (pricingContext.current !== context) {
         formVersion.current++; setQuote(null); setAccepted(false); pricingContext.current = context;
       }
-      setAssessment(parsed); setLoanPolicy(a.policy); setPurchasePolicy(a.purchase_policy ?? a.policy); setLoanPricing(status); setPurchasePricing(a.purchase_pricing ?? status);
+      setAssessment(parsed); setAssessmentError(loanFailure); setPurchaseError(purchaseFailure);
+      setLoanPolicy(a?.policy ?? null); setPurchasePolicy(purchase?.policy ?? null);
+      setLoanPricing(a?.pricing ?? {available: false, message: loanFailure ?? 'Loan assessment unavailable.'});
+      setPurchasePricing(purchase?.pricing ?? {available: false, message: purchaseFailure ?? 'Purchase terms unavailable.'});
       setLoans([...new Map([...l.loans.map(parseTestLoan), ...recoveredLoans].map(row => [row.id, row])).values()]);
       setPayments([...new Map([...mergePayments(p.payments, p.pending), ...recoveredPayments].map(row => [row.reference, row])).values()]);
       setUnresolved(unknown); setOffline(false); setFetched(new Date().toISOString()); setError(null);
@@ -135,7 +150,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
         reading.current = false; setRefreshing(false);
       }
     }
-  }, [client, owner, demo, loanCurrency, capabilities.loanCurrency, onError, selectedMeter?.id]);
+  }, [client, owner, demo, loanCurrency, capabilities.loanCurrency, paymentCurrency, paymentEnvironment, loanEnvironment, onError, selectedMeter?.id]);
   useEffect(() => { if (!busy) void refresh(); }, [refresh, selectedMeter?.id, refreshVersion, busy]);
   useEffect(() => {
     const changed = () => { formVersion.current++; setQuote(null); setAccepted(false); setAssessment(null); };
@@ -154,6 +169,10 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     if (next && next !== purpose) { formVersion.current++; setPurpose(next); setAmount((next === "LOAN" ? loanCurrency : paymentCurrency) === "UGX" ? "1000" : "2.00"); setQuote(null); setAccepted(false); }
   }, [view, purpose, loanCurrency, paymentCurrency]);
   useEffect(() => {
+    // Capability/domain updates invalidate old quotes and consent, not recovery handles.
+    formVersion.current++; setQuote(null); setAccepted(false); setRepayAccepted(false);
+  }, [loanCurrency, loanEnvironment, paymentCurrency, paymentEnvironment, capabilities.loans, capabilities.purchases, capabilities.repayments]);
+  useEffect(() => {
     if (!quote) return;
     setClock(Date.now());
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
@@ -171,6 +190,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   };
   const getQuote = (event: FormEvent) => {
     event.preventDefault();
+    if (!(purpose === "LOAN" ? capabilities.loans : capabilities.purchases)) { setError((purpose === "LOAN" ? capabilities.loanMessage : capabilities.purchaseMessage) || capabilities.paymentMessage || "This operation is disabled by the server."); return; }
     if (!pricingStatus.available || (purpose === "LOAN" && loanReason)) { setError(purpose === "LOAN" && loanReason ? loanReason : pricingStatus.message); return; }
     if (!selectedMeter?.sandbox_inventory || !validAmount(amount)) { setError("Add or select a linked prototype meter and enter a positive matching test amount."); return; }
     const meterId = selectedMeter.id; const identity = epoch.current; const revision = formVersion.current; const intent = purpose;
@@ -181,7 +201,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     }, false, false);
   };
   const submit = () => {
-    if (!quote || !accepted || quote.terms.purpose !== purpose || quote.terms.meter_id !== destination.current || Date.parse(quote.expires_at) <= Date.now() ||
+    if (!(purpose === "LOAN" ? capabilities.loans : capabilities.purchases) || !quote || !accepted || quote.terms.purpose !== purpose || quote.terms.meter_id !== destination.current || Date.parse(quote.expires_at) <= Date.now() ||
       (purpose === "PURCHASE" && !demo && !testPhone(phone))) return;
     const meterId = quote.terms.meter_id;
     if (typeof meterId !== "number") return;
@@ -211,8 +231,9 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   };
   const repay = (event: FormEvent) => {
     event.preventDefault();
+    if (!capabilities.repayments) { setError(capabilities.repaymentMessage || capabilities.paymentMessage || "Repayments are disabled by the server."); return; }
     if (!loanId || !validPaymentAmount(repayment) || (!demo && !testPhone(phone)) || !repayAccepted) { setError("Choose your test loan, a positive matching test amount; accept the terms."); return; }
-    const loan = loans.find(row => row.id === loanId && row.environment === paymentEnvironment && row.status === "DISBURSED");
+    const loan = loans.find(row => row.id === loanId && row.environment === paymentEnvironment && row.currency === paymentCurrency && row.repayment_available !== false && row.status === "DISBURSED");
     if (!loan) { setError("Choose an active loan in the current test currency."); return; }
     const identity = epoch.current;
     void perform(async () => {
@@ -261,13 +282,13 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   }, [client, demo, environment, offline, owner, payments, pending, refresh, onChanged, onError]);
   const blocked = busy || refreshing || offline || unresolved || pending || !mutationsAvailable;
   const meterAssessment = loanCurrency !== "UGX" || assessment?.meter_id === (selectedMeter?.id ?? null) ? assessment : null;
-  const loanReason = loanProgressionReason(meterAssessment, selectedMeter?.id ?? null, amount);
+  const loanReason = assessmentError || loanProgressionReason(meterAssessment, selectedMeter?.id ?? null, amount);
   const selectedLoan = loans.find(row => row.id === loanId && row.environment === paymentEnvironment && row.status === "DISBURSED");
   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
   const stale = !!error || offline;
   if (view !== "all") return <SandboxMobileView
     client={client} owner={owner} view={view} surface={surface} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment} loanCurrency={loanCurrency} loanEnvironment={loanEnvironment} paymentCurrency={paymentCurrency} paymentEnvironment={paymentEnvironment} validPaymentAmount={validPaymentAmount}
-    capabilities={capabilities} assessment={meterAssessment} assessmentPolicy={loanPolicy} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
+    capabilities={capabilities} setupError={purpose === "LOAN" ? assessmentError : purchaseError} assessment={meterAssessment} assessmentPolicy={loanPolicy} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
     meters={meters} selectedMeter={selectedMeter} setSelectedMeter={onSelectMeter ?? (() => {})} onAddMeter={onAddMeter} purpose={purpose} amount={amount}
     setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
     quote={quote} clearQuote={() => { formVersion.current++; setQuote(null); setAccepted(false); }}

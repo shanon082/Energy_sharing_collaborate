@@ -107,6 +107,7 @@ export default function App() {
   const [selectedMeter, setSelectedMeter] = useState<string | null>(null);
   const [allocation, setAllocation] = useState<Resource<AllocationStatus>>(empty);
   const [consumption, setConsumption] = useState<Resource<ConsumptionHistory>>(empty);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [capabilitiesReady, setCapabilitiesReady] = useState(false);
   const [sandbox, setSandbox] = useState<SandboxCapabilities>(NO_SANDBOX);
   const [mobileActions, setMobileActions] = useState<MobileActions>(DISABLED_MOBILE_ACTIONS);
@@ -124,7 +125,7 @@ export default function App() {
     setConsumption(empty()); setSelectedMeter(null); selectedRef.current = null;
     meterReads.current.invalidate(); selectedReads.current.invalidate(); setMeterNotice(null);
     setChangingPassword(false); setShowProfile(false); setShowAddMeter(false); setSandbox(NO_SANDBOX);
-    setTab("dashboard"); setCapabilitiesReady(false); setMobileActions(DISABLED_MOBILE_ACTIONS);
+    setTab("dashboard"); setCapabilityError(null); setCapabilitiesReady(false); setMobileActions(DISABLED_MOBILE_ACTIONS);
     capabilityReads.current.invalidate(); financeBack.current = null;
   }, []);
 
@@ -139,12 +140,12 @@ export default function App() {
       if (owner !== session.identity || !capabilityReads.current.current(ticket)) return;
       setOffline(false);
       setMobileActions(parseMobileActions(data.mobile_actions));
-      setSandbox(sandboxCapabilities(data.sandbox)); setCapabilitiesReady(true);
+      setSandbox(sandboxCapabilities(data.sandbox)); setCapabilityError(null); setCapabilitiesReady(true);
     } catch (error) {
       if (owner !== session.identity || !capabilityReads.current.current(ticket)) return;
       if (error instanceof TransportError) setOffline(true);
       // Keep the known controller mounted for pending recovery; disable new mutations.
-      setMobileActions(DISABLED_MOBILE_ACTIONS); setCapabilitiesReady(false);
+      setMobileActions(DISABLED_MOBILE_ACTIONS); setCapabilitiesReady(false); setCapabilityError(`Capabilities request failed: ${message(error)}`);
     }
   }, []);
 
@@ -364,6 +365,7 @@ export default function App() {
   const financeView: ConsumerFinanceView = tab === "dashboard" ? "home" : (tab === "loans" || tab === "apply" || tab === "purchase" || tab === "activity") ? tab : "hidden";
   const navigateFinance = (next: FinanceDestination) => navigate(next);
   return <div className="app-shell consumer-redesign">
+    {capabilityError && <p className="error" role="alert">{capabilityError} Refresh to retry. New financial actions are unavailable.</p>}
     <header className="topbar"><div className="topbar-identity"><Brand /><span className="topbar-page">{title}</span></div><div className="header-actions">
       <button className="icon-button" aria-label="Refresh account" onClick={refresh}><Icon name="refresh" /></button>
       <button className="icon-button" aria-label="Activity and notifications" onClick={() => navigate("activity")}><Icon name="bell" /></button>

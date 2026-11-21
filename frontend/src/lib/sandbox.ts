@@ -1,7 +1,7 @@
 /** Currency-isolated test contract, shared by Next.js and Capacitor. */
 export type TestCurrency = "EUR" | "UGX";
 export type TestEnvironment = "MTN_SANDBOX" | "UGX_DEMO";
-export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; newPaymentsPaused?: boolean; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO"; loanCurrency?: TestCurrency; loanEnvironment?: TestEnvironment };
+export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; loanMessage?: string; purchaseMessage?: string; repaymentMessage?: string; newPaymentsPaused?: boolean; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO"; loanCurrency?: TestCurrency; loanEnvironment?: TestEnvironment };
 export const NO_SANDBOX: SandboxCapabilities = { enabled: false, loans: false, purchases: false, repayments: false };
 export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   if (!raw || typeof raw !== "object") return { ...NO_SANDBOX };
@@ -13,9 +13,18 @@ export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   const labEnvironment = demo ? "UGX_DEMO" : "SANDBOX";
   const labValid = lab?.environment === labEnvironment && lab?.protocol === (demo ? "GPAWA_PZEM_V1" : "GPAWA_PZEM_V2") && lab?.physical_output === false;
   const lending = row.lending && typeof row.lending === 'object' ? row.lending as Record<string, unknown> : null;
-  const ugxLoans = mtn && lending?.enabled === true && lending.currency === 'UGX' && lending.environment === 'UGX_DEMO' && lending.energy_environment === 'SANDBOX' && lending.policy === 'DEMO-UGX-ACLAB-v1' && lending.repayment_available === false;
+  // Origination and repayment are separate capabilities. Keep the known loan
+  // domain even when origination is disabled, so its history stays in UGX.
+  const ugxContract = mtn && lending?.currency === 'UGX' && lending.environment === 'UGX_DEMO' && lending.energy_environment === 'SANDBOX' && lending.policy === 'DEMO-UGX-ACLAB-v1';
+  const ugxLoans = ugxContract && lending?.enabled === true;
+  const reasons = row.action_reasons && typeof row.action_reasons === 'object' ? row.action_reasons as Record<string, unknown> : {};
+  const message = (value: unknown) => typeof value === 'string' && value.trim() ? value : undefined;
   const newPaymentsPaused = row.new_payments_paused === true;
-  return { enabled: true, ...(newPaymentsPaused ? {newPaymentsPaused: true} : {}), ...(ugxLoans ? {loanCurrency: 'UGX', loanEnvironment: 'UGX_DEMO'} as const : {}), ...(lab ? {labEnabled: labValid && lab.enabled === true, labEnvironment} : {}), loans: ugxLoans || row.loans === true && (lending?.enabled !== true || ugxLoans), purchases: !newPaymentsPaused && row.purchases === true, repayments: !newPaymentsPaused && row.repayments === true,
+  const loanMessage = message(reasons.loan) ?? (mtn && row.loans !== true && !ugxLoans
+    ? ugxContract ? 'UGX loan applications are disabled by the server. Existing loans remain readable.' : 'This backend has not advertised the UGX lending contract. Deploy the matching backend; legacy EUR loans are disabled.' : undefined);
+  const purchaseMessage = message(reasons.purchase);
+  const repaymentMessage = message(reasons.repayment);
+  return { enabled: true, ...(loanMessage ? {loanMessage} : {}), ...(purchaseMessage ? {purchaseMessage} : {}), ...(repaymentMessage ? {repaymentMessage} : {}), ...(newPaymentsPaused ? {newPaymentsPaused: true} : {}), ...(ugxContract ? {loanCurrency: 'UGX', loanEnvironment: 'UGX_DEMO'} as const : {}), ...(lab ? {labEnabled: labValid && lab.enabled === true, labEnvironment} : {}), loans: lending ? ugxLoans : row.loans === true, purchases: !newPaymentsPaused && row.purchases === true, repayments: !newPaymentsPaused && row.repayments === true,
     ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : { currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" } as const),
     ...(typeof row.payment_message === "string" && row.payment_message ? { paymentMessage: row.payment_message } : {}) };
 }

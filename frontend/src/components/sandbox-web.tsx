@@ -80,7 +80,7 @@ export default function SandboxWeb({ view = "purchase" }: { view?: ConsumerFinan
       <button type="button" className="secondary" disabled={enrolling} onClick={() => setAddingMeter(false)}>Cancel</button>
     </form>}
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    <SandboxConsumer key={`${owner}:${capabilities.provider ?? "MTN_SANDBOX"}:${view}`} client={client} owner={owner} meters={meters}
+    <SandboxConsumer key={`${owner}:${capabilities.provider ?? "MTN_SANDBOX"}`} client={client} owner={owner} meters={meters}
       selectedMeter={selectedMeter} capabilities={capabilities} view={view} surface="web" onSelectMeter={setSelected}
       onAddMeter={() => enrollmentAvailable ? setAddingMeter(true) : setError("Meter enrollment is unavailable. Contact support to link an assigned meter.")} />
   </div>;

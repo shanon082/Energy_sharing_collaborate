@@ -1,5 +1,7 @@
 # EnergyFlex consumer Android app
 
+Latest build: [capability parity, verified APK and deployment handoff](CAPABILITY_PARITY_BUILD.md). This supersedes the older build summaries below. MTN remains configured; explicit UGX lending is separate from EUR test payments. The proposed UGX payment authorization mapping is not yet approved or implemented.
+
 Current combined AC_LAB/MTN debug APK: [build identity, tests and installation](COMBINED_BUILD.md). **4,635,116 bytes**, SHA-256 `cd8bfafdeb60331e5f05d008531081ba738b9695e963e0ee9f3dff6761024476`; same original certificate and HTTPS alwaysdata API. [Combined backend rollout](../backend/docs/COMBINED_AC_MTN_ROLLOUT.md) is prepared; hosted SSH authentication is blocked and the public backend still reports LOCAL_DEMO. New EUR loan origination remains unavailable pending its automatic assessment policy.
 
 

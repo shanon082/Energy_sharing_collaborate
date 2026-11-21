@@ -16,17 +16,22 @@ export const consumerClient: SandboxClient = {
 export async function patchAccount<T>(body: unknown): Promise<T> { return unwrap<T>(await patch<T>("auth/mobile-account-details/", body)); }
 
 /** Scope changes mask old data immediately, even before effect cleanup runs. */
-export function useConsumerRead<T>(path: string | null, parse: (raw: unknown) => T, revision: number, owner: number) {
+export function useConsumerRead<T>(path: string | null, parse: (raw: unknown) => T, revision: number, owner: number, retainOnRefresh = false) {
   const key = JSON.stringify([owner, path, revision]);
-  const [result, setResult] = useState<{ key: string; value: T | null; error: string | null } | null>(null);
+  const scope = JSON.stringify([owner, path]);
+  const [result, setResult] = useState<{ key: string; scope: string; value: T | null; error: string | null } | null>(null);
   useEffect(() => {
     if (path === null) return;
     let current = true;
     void consumerClient.get<unknown>(path).then(raw => {
       const value = parse(raw);
-      if (current) setResult({ key, value, error: null });
-    }).catch(cause => { if (current) setResult({ key, value: null, error: cause instanceof Error ? cause.message : "Data unavailable." }); });
+      if (current) setResult({ key, scope, value, error: null });
+    }).catch(cause => { if (current) setResult(previous => ({ key, scope,
+      value: retainOnRefresh && previous?.scope === scope ? previous.value : null,
+      error: cause instanceof Error ? cause.message : "Data unavailable." })); });
     return () => { current = false; };
-  }, [path, parse, key]);
-  return result?.key === key ? { ...result, loading: false } : { value: null, error: null, loading: path !== null };
+  }, [path, parse, key, scope, retainOnRefresh]);
+  // Only capability metadata opts in; financial reads mask stale scopes by default.
+  return result?.key === key ? { ...result, loading: false } : {
+    value: retainOnRefresh && result?.scope === scope ? result.value : null, error: null, loading: path !== null };
 }

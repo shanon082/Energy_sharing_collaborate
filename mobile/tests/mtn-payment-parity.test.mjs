@@ -158,3 +158,41 @@ test('paused new payments hide EUR entry on both surfaces while retaining receip
     assert.match(html,/UGX purchases unavailable/);assert.doesNotMatch(html,/Amount \(EUR TEST\)/);assert.match(html,/EUR/);
   }
 });
+
+// Exact public hosted response shape observed on 2026-11-21. mobile_actions are
+// intentionally not an input to sandboxCapabilities on either surface.
+test('hosted purchases=true is not overridden by legacy EUR loans=false or mobile_actions=false',()=>{
+  const caps=sandboxCapabilities({enabled:true,currency:'EUR',environment:'MTN_SANDBOX',provider:'MTN_SANDBOX',physical_delivery:false,
+    purchases:true,repayments:true,loans:false});
+  assert.equal(caps.purchases,true);assert.equal(caps.repayments,true);assert.equal(caps.loans,false);
+  for(const surface of ['web','mobile']){
+    const ready={...props,surface,capabilities:caps,pending:false,selectedMeter:{...props.selectedMeter,sandbox_inventory:true},
+      policy:{id:'SANDBOX-TEST-v1',minimum:'1.00',maximum:'20.00'}};
+    assert.match(render({...ready,view:'purchase'}),/<button(?:(?!disabled)[^>])*>Review terms/);
+    assert.match(render({...ready,view:'apply',purpose:'LOAN'}),/backend has not advertised the UGX lending contract/);
+  }
+});
+test('both surfaces explain pricing, assessment, recovery and server action failures',()=>{
+  const ready={...props,pending:false,selectedMeter:{...props.selectedMeter,sandbox_inventory:true},
+    policy:{id:'SANDBOX-TEST-v1',minimum:'1.00',maximum:'20.00'}};
+  for(const surface of ['web','mobile']){
+    for(const [change,reason] of [
+      [{setupError:'Purchase terms request failed: HTTP 503',policy:null},/Purchase terms request failed: HTTP 503/],
+      [{capabilities:{...props.capabilities,purchases:false,purchaseMessage:'Missing versioned EUR pricing'}},/Missing versioned EUR pricing/],
+      [{unresolved:true,blocked:true},/previous request needs reconciliation/],
+      [{refreshing:true,blocked:true},/Refreshing your account and pricing/],
+    ]){
+      const html=render({...ready,surface,view:'purchase',...change});
+      assert.match(html,reason);assert.match(html,/<button[^>]*disabled[^>]*>Review terms/);
+    }
+    const lending=sandboxCapabilities({enabled:true,provider:'MTN_SANDBOX',currency:'EUR',environment:'MTN_SANDBOX',physical_delivery:false,
+      purchases:true,repayments:true,loans:false,lending:{enabled:true,currency:'UGX',environment:'UGX_DEMO',energy_environment:'SANDBOX',policy:'DEMO-UGX-ACLAB-v1',repayment_available:false}});
+    const html=render({...ready,surface,capabilities:lending,view:'apply',purpose:'LOAN',currency:'UGX',amount:'10000',
+      assessment:{score:85,eligible:true,assessment_status:'READY',maximum:'37500'},loanReason:null});
+    assert.match(html,/<button(?:(?!disabled)[^>])*>Review terms/);
+    assert.doesNotMatch(html,/Loan applications unavailable/);
+    const unavailable=render({...ready,surface,capabilities:lending,view:'apply',purpose:'LOAN',currency:'UGX',
+      loanReason:'Loan assessment request failed: HTTP 503',setupError:'Loan assessment request failed: HTTP 503'});
+    assert.match(unavailable,/Loan assessment request failed: HTTP 503/);
+  }
+});
