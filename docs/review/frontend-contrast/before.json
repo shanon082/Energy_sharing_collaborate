@@ -1,0 +1,38 @@
+[
+  {
+    "selector": ".form-panel label",
+    "text": "MeterChoose a meter000123456780001234567890",
+    "color": "rgb(244, 247, 250)",
+    "background": "rgb(255, 255, 255)",
+    "ratio": 1.08,
+    "opacity": 1,
+    "colorScheme": "dark"
+  },
+  {
+    "selector": ".form-panel label",
+    "text": "Amount (UGX)",
+    "color": "rgb(244, 247, 250)",
+    "background": "rgb(255, 255, 255)",
+    "ratio": 1.08,
+    "opacity": 1,
+    "colorScheme": "dark"
+  },
+  {
+    "selector": ".form-panel input",
+    "text": "input",
+    "color": "rgb(244, 247, 250)",
+    "background": "rgb(251, 252, 251)",
+    "ratio": 1.05,
+    "opacity": 1,
+    "colorScheme": "dark"
+  },
+  {
+    "selector": ".form-panel select",
+    "text": "Choose a meter000123456780001234567890",
+    "color": "rgb(244, 247, 250)",
+    "background": "rgb(251, 252, 251)",
+    "ratio": 1.05,
+    "opacity": 1,
+    "colorScheme": "dark"
+  }
+]

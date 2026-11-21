@@ -21,3 +21,156 @@
 .consumer-app .mobile-finance .reference{overflow-wrap:anywhere}
 .consumer-app .mobile-finance .loan-card>.muted,.consumer-app .mobile-finance .transaction-card>.muted{margin-bottom:12px}
 @media(max-width:420px){.consumer-app .mobile-finance .credit-summary-grid{gap:12px}.consumer-app .mobile-finance .credit-limit{font-size:20px}}
+
+/* The consumer workspace is a light surface even when a saved site preference
+   puts .dark on <html>. Keep shared finance tokens local to that surface. */
+.consumer-app {
+  color-scheme: light;
+  --c-ink: #163c3a;
+  --c-muted: #526863;
+  --c-accent: #087568;
+  --c-border: #cbd8d3;
+  --c-bg: #f0f4f2;
+  --background: 150 15.4% 94.9%;
+  --foreground: 176.8 46.3% 16.1%;
+  --card: 0 0% 100%;
+  --card-foreground: 176.8 46.3% 16.1%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 176.8 46.3% 16.1%;
+  --primary: 172.8 87.2% 24.5%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 150 22.2% 92.9%;
+  --secondary-foreground: 176.8 46.3% 16.1%;
+  --muted: 150 22.2% 92.9%;
+  --muted-foreground: 166.4 11.8% 36.5%;
+  --accent: 150 22.2% 92.9%;
+  --accent-foreground: 172.8 87.2% 24.5%;
+  --destructive: 2 53% 36%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 156.9 14.3% 82.2%;
+  --input: 159.1 9.7% 53.5%;
+  --ring: 172.8 87.2% 24.5%;
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+}
+
+.consumer-app .mobile-finance .panel,
+.consumer-app .mobile-finance label,
+.consumer-app .mobile-finance .payment-amount,
+.consumer-app .mobile-finance .loan-balance,
+.consumer-app .mobile-finance .credit-score,
+.consumer-app .mobile-finance .credit-limit {
+  color: var(--c-ink);
+}
+
+.consumer-app .mobile-finance input:not([type=checkbox]),
+.consumer-app .mobile-finance select,
+.consumer-app .consumer-form input,
+.consumer-app .consumer-form select {
+  color: var(--c-ink);
+  background: #f9fbfa;
+  border-color: #7d948c;
+  font-size: 14px;
+  opacity: 1;
+}
+
+.consumer-app input::placeholder,
+.consumer-app textarea::placeholder {
+  color: var(--c-muted);
+  opacity: 1;
+}
+
+.consumer-app .mobile-finance input:disabled,
+.consumer-app .mobile-finance select:disabled,
+.consumer-app .consumer-form input:disabled,
+.consumer-app .consumer-form select:disabled {
+  color: var(--c-muted);
+  -webkit-text-fill-color: var(--c-muted);
+  background: #e9f1ed;
+}
+
+.consumer-app .mobile-finance input[readonly] {
+  color: var(--c-ink);
+  background: #e9f1ed;
+}
+
+.consumer-app .mobile-finance .energy-token-value {
+  font-size: clamp(1.05rem, 4vw, 1.35rem);
+}
+
+.consumer-app button:disabled,
+.consumer-app .mobile-finance button:disabled {
+  color: #435d54;
+  background: #dce7e1;
+  border: 1px solid #7d948c;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.consumer-app :focus-visible {
+  outline-color: var(--c-accent);
+}
+
+.consumer-app .consumer-sidebar :focus-visible {
+  outline-color: #9cddbb;
+}
+
+.consumer-app .consumer-energy :focus-visible {
+  outline-color: #e2fff2;
+}
+
+.consumer-app .evidence-label,
+.consumer-app .credit-numbers strong small,
+.consumer-app .consumer-stats small,
+.consumer-app .consumer-footer,
+.consumer-app .consumer-bottom-nav a,
+.consumer-app .mobile-finance .review-row span,
+.consumer-app .mobile-finance .finance-summary span,
+.consumer-app .mobile-finance .loan-stepper li,
+.consumer-app .mobile-finance .segmented-control button {
+  color: var(--c-muted);
+}
+
+.consumer-app .consumer-bottom-nav a[aria-current=page],
+.consumer-app .mobile-finance .loan-stepper .current,
+.consumer-app .mobile-finance .segmented-control button[aria-pressed=true] {
+  color: var(--c-accent);
+}
+
+.consumer-app .mobile-finance .pending-summary {
+  color: #6b4715;
+  background: #fff5e6;
+  border: 1px solid #b58b4b;
+  border-radius: 12px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+
+.consumer-app .mobile-finance .pending {
+  color: #765007;
+}
+
+.consumer-app .mobile-finance .error {
+  color: #8c2e2b;
+  background: #fff0ef;
+  border: 1px solid #d39b97;
+  border-radius: 10px;
+  padding: 12px;
+}

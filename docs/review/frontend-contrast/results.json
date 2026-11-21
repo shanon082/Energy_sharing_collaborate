@@ -1,0 +1,91 @@
+{
+  "environment": "LOCAL Next.js routes + synthetic API; no hosted/provider/device testing",
+  "injectedStyles": false,
+  "results": [
+    {
+      "theme": "dark",
+      "page": "buy-units",
+      "samples": 5,
+      "minimumRatio": 5.65
+    },
+    {
+      "theme": "dark",
+      "page": "request-loan",
+      "samples": 12,
+      "minimumRatio": 5.38
+    },
+    {
+      "theme": "dark",
+      "page": "loans",
+      "samples": 24,
+      "minimumRatio": 5.38
+    },
+    {
+      "theme": "dark",
+      "page": "dashboard",
+      "samples": 2,
+      "minimumRatio": 5.97
+    },
+    {
+      "theme": "dark",
+      "page": "meters",
+      "samples": 2,
+      "minimumRatio": 11.6
+    },
+    {
+      "theme": "dark",
+      "page": "account",
+      "samples": 10,
+      "minimumRatio": 11.6
+    },
+    {
+      "theme": "dark",
+      "page": "activity",
+      "samples": 12,
+      "minimumRatio": 5.38
+    },
+    {
+      "theme": "light",
+      "page": "buy-units",
+      "samples": 18,
+      "minimumRatio": 5.65
+    },
+    {
+      "theme": "light",
+      "page": "request-loan",
+      "samples": 12,
+      "minimumRatio": 5.38
+    },
+    {
+      "theme": "light",
+      "page": "loans",
+      "samples": 24,
+      "minimumRatio": 5.38
+    },
+    {
+      "theme": "light",
+      "page": "dashboard",
+      "samples": 2,
+      "minimumRatio": 5.97
+    },
+    {
+      "theme": "light",
+      "page": "meters",
+      "samples": 2,
+      "minimumRatio": 11.6
+    },
+    {
+      "theme": "light",
+      "page": "account",
+      "samples": 10,
+      "minimumRatio": 11.6
+    },
+    {
+      "theme": "light",
+      "page": "activity",
+      "samples": 12,
+      "minimumRatio": 5.38
+    }
+  ],
+  "errors": []
+}
