@@ -1,5 +1,7 @@
 # alwaysdata Free testing deployment
 
+> Current approved UGX workflow: [UGX_MTN_TEST_AUTHORIZATION.md](UGX_MTN_TEST_AUTHORIZATION.md). The fixed EUR1 sandbox authorization is now approved and implemented locally. Earlier pending-policy/new-payment-pause instructions below describe the previous release; use the new explicit activation settings and reviewed allowlist. No hosted deployment is claimed.
+
 > MTN resumption update (2026-11-17): [MTN_SANDBOX_RESUMPTION.md](MTN_SANDBOX_RESUMPTION.md) governs NEW payments and original-provider recovery. LOCAL_DEMO default/pause instructions below are historical. New EUR loans remain unavailable pending an automatic assessment policy. No hosted change has been made.
 
 

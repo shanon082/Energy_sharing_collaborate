@@ -154,6 +154,9 @@ def lab_source(allocation, environment=None):
         return False
     if allocation.purchase_intent_id:
         intent = allocation.purchase_intent
+        if (intent.sandbox_context or {}).get('authorization_policy'):
+            from transactions.ugx_authorization import purchase_source_valid
+            return environment == 'SANDBOX' and purchase_source_valid(intent, allocation)
         receipt = getattr(intent, 'sandbox_settlement', None)
         provider, currency, financial_environment = ('MTN_SANDBOX', 'EUR', 'MTN_SANDBOX') if environment == 'SANDBOX' else ('LOCAL_DEMO', 'UGX', 'UGX_DEMO')
         try:

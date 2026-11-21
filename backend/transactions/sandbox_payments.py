@@ -21,6 +21,9 @@ from transactions.payment_settlement import PaymentSettlementError, settle_from_
 def create_payment(owner, data):
     require_sandbox()
     currency, environment, provider = test_domain()
+    from backend.ugx_authorization import enabled as authorization_enabled, PROVIDER_AMOUNT, POLICY
+    from transactions.ugx_authorization import instruction_for, create_instruction, AUTHORIZATION, digest
+    mapped = authorization_enabled()
     demo = provider == LOCAL_DEMO
     if demo:
         require_demo()
@@ -46,7 +49,7 @@ def create_payment(owner, data):
             recorded_binding = str(prior.sandbox_quote_id) if purpose == "PURCHASE" else str(prior.sandbox_loan_id)
             if (prior.owner_id != owner.pk or prior.provider != provider or prior.purpose != purpose
                     or expected_binding != recorded_binding or prior.sandbox_context.get("msisdn") != msisdn
-                    or (purpose == "LOAN_REPAYMENT" and money(data.get("amount")) != prior.amount)
+                    or (purpose == "LOAN_REPAYMENT" and money(data.get("amount"), "UGX" if instruction_for(prior) else prior.currency) != (instruction_for(prior).amount if instruction_for(prior) else prior.amount))
                     or (purpose == "PURCHASE" and data.get("terms_hash") != prior.sandbox_quote.terms_hash)):
                 raise ValidationError({"code": "REQUEST_ID_CONFLICT"})
             return prior, False
@@ -82,20 +85,26 @@ def create_payment(owner, data):
             from hashlib import sha256
             terms = {"policy": loan.terms["policy"], "purpose": purpose, "loan_id": str(loan.pk),
                      "amount": str(amount), "currency": currency, "environment": environment, "excess_policy": "Preserved for reconciliation; no automatic refund or energy."}
+            if mapped:
+                terms.update(authorization=AUTHORIZATION, loan_terms_hash=digest(loan.terms))
             import json
             quote = SandboxQuote.objects.create(owner=owner, meter=loan.meter, purpose=purpose, amount=amount, currency=currency, environment=environment, terms=terms,
-                terms_hash=sha256(json.dumps(terms, sort_keys=True).encode()).hexdigest(), expires_at=timezone.now()+timedelta(minutes=15))
+                terms_hash=sha256(json.dumps(terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest(), expires_at=timezone.now()+timedelta(minutes=15))
             if data.get("accept_test_terms") is not True:
                 raise ValidationError({"accept_test_terms": "Accept the test repayment/excess terms."})
         reference = uuid.uuid4()
         now = timezone.now()
         eligible = now + timedelta(seconds=5) if demo else None
-        return PaymentIntent.objects.create(owner=owner, purpose=purpose, amount=amount, currency=currency, provider=provider,
+        instruction_id = uuid.uuid4() if mapped else None
+        intent = PaymentIntent.objects.create(owner=owner, purpose=purpose, amount=PROVIDER_AMOUNT if mapped else amount, currency='EUR' if mapped else currency, provider=provider,
             initiated_at=now, demo_eligible_at=eligible, reconcile_after=eligible or now,
             provider_reference=reference, provider_external_id=f"sandbox-{purpose.lower()}-{reference}",
             client_request_id=key, sandbox_quote=quote, meter=quote.meter if purpose == "PURCHASE" else None,
-            sandbox_loan=loan, sandbox_context={"version": 2 if demo else 1, "currency": currency, "environment": environment, "purpose": purpose, "owner_id": owner.pk,
-                "meter_id": quote.meter_id, "terms": quote.terms, "msisdn": msisdn}, submission_state="DEMO_PENDING" if demo else "NEW"), True
+            sandbox_loan=loan, sandbox_context={"version": 3 if mapped else 2 if demo else 1, **({"authorization_policy": POLICY, "instruction_id": str(instruction_id)} if mapped else {}), "currency": "EUR" if mapped else currency, "environment": "MTN_SANDBOX" if mapped else environment, "purpose": purpose, "owner_id": owner.pk,
+                "meter_id": quote.meter_id, "terms": quote.terms, "msisdn": msisdn}, submission_state="DEMO_PENDING" if demo else "NEW")
+        if mapped:
+            create_instruction(intent, quote, amount, instruction_id)
+        return intent, True
 
 
 def validate_sandbox_evidence(intent, evidence):
@@ -122,6 +131,10 @@ def validate_sandbox_evidence(intent, evidence):
     if (not intent.sandbox_quote_id or (intent.purpose == "PURCHASE" and (not intent.meter_id or intent.sandbox_loan_id))
             or (intent.purpose == "LOAN_REPAYMENT" and (not intent.sandbox_loan_id or intent.meter_id))):
         raise PaymentSettlementError("Sandbox source binding is invalid.")
+    from transactions.ugx_authorization import instruction_for, validate_instruction
+    if instruction_for(intent) is not None or ctx.get('authorization_policy') is not None:
+        validate_instruction(intent)
+        return
     quote = intent.sandbox_quote
     if (quote.owner_id != intent.owner_id or quote.purpose != intent.purpose or quote.amount != intent.amount
             or quote.currency != "EUR" or quote.environment != "MTN_SANDBOX"
@@ -144,6 +157,9 @@ def validate_sandbox_evidence(intent, evidence):
 
 
 def apply_sandbox_settlement(intent):
+    from transactions.ugx_authorization import instruction_for, apply_business_settlement
+    if instruction_for(intent) is not None or (intent.sandbox_context or {}).get('authorization_policy') is not None:
+        return apply_business_settlement(intent)
     currency = "UGX" if intent.provider == LOCAL_DEMO else "EUR"
     environment = "UGX_DEMO" if intent.provider == LOCAL_DEMO else "MTN_SANDBOX"
     if intent.currency != currency:
@@ -229,7 +245,7 @@ def reconcile_sandbox_payment(intent_id):
 def receipt(intent):
     ledger = getattr(intent, "sandbox_settlement", None)
     allocation = getattr(intent, "energy_allocation", None)
-    return {"id": intent.pk, "reference": str(intent.provider_reference), "client_request_id": str(intent.client_request_id),
+    result = {"id": intent.pk, "reference": str(intent.provider_reference), "client_request_id": str(intent.client_request_id),
         "purpose": intent.purpose, "status": intent.status, "currency": intent.currency, "environment": "UGX_DEMO" if intent.provider == LOCAL_DEMO else "MTN_SANDBOX",
         "provider": intent.provider, "label": "UGX DEMO / NO REAL MONEY" if intent.provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
         "demo_eligible_at": intent.demo_eligible_at.isoformat() if intent.demo_eligible_at else None, "server_time": timezone.now().isoformat(),
@@ -242,3 +258,6 @@ def receipt(intent):
         "initiated_at": intent.initiated_at.isoformat(), "settled_at": intent.settled_at.isoformat() if intent.settled_at else None,
         "submission_state": intent.submission_state, "reconciliation_error": intent.reconciliation_error,
         "next_check_at": intent.reconcile_after.isoformat(), "pricing": (intent.sandbox_context or {}).get("terms", {}).get("pricing")}
+
+    from transactions.ugx_authorization import business_receipt
+    return business_receipt(intent, result)

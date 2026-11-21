@@ -140,7 +140,10 @@ export default function App() {
       if (owner !== session.identity || !capabilityReads.current.current(ticket)) return;
       setOffline(false);
       setMobileActions(parseMobileActions(data.mobile_actions));
-      setSandbox(sandboxCapabilities(data.sandbox)); setCapabilityError(null); setCapabilitiesReady(true);
+      const capabilities = sandboxCapabilities(data.sandbox);
+      if (data.sandbox && typeof data.sandbox === 'object' && 'enabled' in data.sandbox && data.sandbox.enabled === true && !capabilities.enabled)
+        throw new Error('Unsupported sandbox capability contract. The app and backend need matching versions.');
+      setSandbox(capabilities); setCapabilityError(null); setCapabilitiesReady(true);
     } catch (error) {
       if (owner !== session.identity || !capabilityReads.current.current(ticket)) return;
       if (error instanceof TransportError) setOffline(true);
@@ -201,7 +204,7 @@ export default function App() {
     setConsumption((old) => ({ ...old, loading: true, error: null }));
     const path = encodeURIComponent(meterNo);
     const [allocationResult, consumptionResult] = await Promise.allSettled([
-      session.get<unknown>(`meter/mobile-meters/${selected.id}/?environment=${sandbox.enabled ? meterReadEnvironment(sandbox.environment ?? "MTN_SANDBOX") : "CORE"}`).then((data) => parseMeterDashboard(data, selected)),
+      session.get<unknown>(`meter/mobile-meters/${selected.id}/?environment=${sandbox.enabled ? meterReadEnvironment(sandbox.environment ?? "MTN_SANDBOX", sandbox.energyEnvironment) : "CORE"}`).then((data) => parseMeterDashboard(data, selected)),
       session.get<unknown>(`meter/mobile-consumption/?meter_id=${selected.id}&meter_no=${path}`)
         .then((data) => parseConsumption(data, selected)),
     ]);
@@ -231,7 +234,7 @@ export default function App() {
       setConsumption((old) => ({ ...old, loading: false, error: message(consumptionResult.reason) }));
     }
     return allocationResult.status === "fulfilled" && consumptionResult.status === "fulfilled";
-  }, [expire, sandbox.enabled, sandbox.environment]);
+  }, [expire, sandbox.enabled, sandbox.environment, sandbox.energyEnvironment]);
 
   const chooseMeter = (selected: MeterInfo) => {
     selectedRef.current = selected; setSelectedMeter(selected.meter_number); setMeterNotice(null);

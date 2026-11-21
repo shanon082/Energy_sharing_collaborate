@@ -6,4 +6,6 @@ class TransactionsConfig(AppConfig):
     name = 'transactions'
 
     def ready(self):
-        import transactions.signals
+        import transactions.signals  # noqa: F401
+        from backend.ugx_authorization import validate_configuration
+        validate_configuration()

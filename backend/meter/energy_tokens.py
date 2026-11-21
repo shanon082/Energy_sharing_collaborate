@@ -43,6 +43,9 @@ def authorized_source(allocation):
     """Source status, meter/owner and exact source identity must still match."""
     if allocation.purchase_intent_id:
         intent = allocation.purchase_intent
+        if (intent.sandbox_context or {}).get('authorization_policy'):
+            from transactions.ugx_authorization import purchase_source_valid
+            return purchase_source_valid(intent, allocation)
         expected = "UGX_DEMO" if intent.provider == "LOCAL_DEMO" else "SANDBOX" if intent.provider == "MTN_SANDBOX" else "CORE"
         return (intent.status == "SETTLED" and intent.purpose == "PURCHASE"
                 and intent.currency == ("EUR" if intent.provider == "MTN_SANDBOX" else "UGX")

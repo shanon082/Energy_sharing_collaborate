@@ -1,5 +1,7 @@
 # Consumer capability parity and UGX workflow handoff — 21 November 2026
 
+> Current approved UGX workflow: [UGX_MTN_TEST_AUTHORIZATION.md](UGX_MTN_TEST_AUTHORIZATION.md). The fixed EUR1 sandbox authorization is now approved and implemented locally. Earlier pending-policy/new-payment-pause instructions below describe the previous release; use the new explicit activation settings and reviewed allowlist. No hosted deployment is claimed.
+
 Local implementation and mocked tests only. No upload, hosted migration, payment
 initiation, device operation or phone test was performed. This document supersedes
 older capability/rollout descriptions, not the current device diagnostics.

@@ -35,6 +35,13 @@ def verified_consumer(owner):
 
 
 def policy():
+    from backend.ugx_authorization import business_domain as ugx_authorization_enabled
+    if ugx_authorization_enabled():
+        from copy import deepcopy
+        from transactions.ugx_authorization import AUTHORIZATION
+        cfg = deepcopy(getattr(settings, "DEMO_POLICY", None) or demo_configuration({})[1])
+        cfg.update(id='DEMO-UGX-MTN-AUTH-v1', authorization=AUTHORIZATION, energy_environment='SANDBOX')
+        return cfg
     if provider_mode() == LOCAL_DEMO:
         return getattr(settings, "DEMO_POLICY", None) or demo_configuration({})[1]
     return getattr(settings, "SANDBOX_POLICY", None) or sandbox_configuration({})[0]
@@ -161,6 +168,9 @@ def create_quote(owner, meter_id, raw_amount, purpose):
     meter = owned_test_meter(owner, meter_id)
     from loan.prototype_lending import lending_policy, lending_domain, enabled as ugx_enabled, require_lab_tokens
     currency, environment = lending_domain() if purpose == 'LOAN' else test_domain()[:2]
+    from backend.ugx_authorization import business_domain as authorization_enabled
+    if purpose == 'LOAN' and authorization_enabled() and not ugx_enabled():
+        raise PermissionDenied({'code': 'UGX_LOANS_DISABLED', 'message': 'UGX loan applications are disabled by server configuration.'})
     amount = money(raw_amount, currency)
     cfg = lending_policy() if purpose == 'LOAN' else policy()
     if purpose == 'LOAN' and ugx_enabled():
@@ -188,6 +198,10 @@ def create_quote(owner, meter_id, raw_amount, purpose):
         "interest": str(interest if purpose == "LOAN" else Decimal("0.00")), "fee": cfg["fee"] if purpose == "LOAN" else "0.00",
         "total_due": str(amount + interest + Decimal(cfg["fee"])) if purpose == "LOAN" else "0.00",
         "assessment": result, **({"pricing": pricing} if pricing else {})}
+    from backend.ugx_authorization import business_domain as authorization_enabled
+    if purpose == 'PURCHASE' and authorization_enabled():
+        terms['energy_environment'] = 'SANDBOX'
+        require_lab_tokens(terms)
     if purpose == "LOAN":
         terms["due_at"] = (timezone.now() + timedelta(days=cfg["due_days"])).isoformat()
         if ugx_enabled():
@@ -239,6 +253,10 @@ def apply_loan(owner, quote_id, terms_hash, client_request_id):
             if (prior.currency, prior.environment) != lending_domain():
                 raise ValidationError({"code": "TEST_CURRENCY_MISMATCH"})
             return prior, False
+        from backend.ugx_authorization import business_domain as authorization_enabled
+        from loan.prototype_lending import enabled as ugx_enabled
+        if authorization_enabled() and not ugx_enabled():
+            raise PermissionDenied({'code': 'UGX_LOANS_DISABLED', 'message': 'UGX loan applications are disabled by server configuration.'})
         quote = accepted_quote(owner, quote_id, terms_hash, "LOAN")
         if quote.currency == "EUR" and getattr(settings, "SANDBOX_EUR_LOANS_ENABLED", False) is not True:
             raise ValidationError({"code": "EUR_LOAN_POLICY_UNAVAILABLE", "message": "New EUR loans need a reviewed automatic assessment policy. Existing debt and decisions are unchanged."})
@@ -272,7 +290,9 @@ def loan_record(loan):
     allocation = getattr(loan, "energy_allocation", None)
     from loan.prototype_lending import REPAYMENT_MESSAGE
     from backend.demo_config import new_mtn_payments_paused
-    repayment_available = (loan.currency, loan.environment) == test_domain()[:2] and not (test_domain()[2] == 'MTN_SANDBOX' and new_mtn_payments_paused())
+    matching = (loan.currency, loan.environment) == test_domain()[:2]
+    from backend.ugx_authorization import missing_required_authorization
+    repayment_available = matching and not missing_required_authorization() and not (test_domain()[2] == 'MTN_SANDBOX' and new_mtn_payments_paused())
     return {"id": str(loan.pk), "client_request_id": str(loan.client_request_id), "meter_id": loan.meter_id,
         "status": loan.status, "reason": loan.decision_reason, "currency": loan.currency, "environment": loan.environment,
         "principal": str(loan.principal), "total_due": str(loan.total_due), "outstanding": str(loan.outstanding),
@@ -282,6 +302,6 @@ def loan_record(loan):
         "allocation_id": allocation.pk if allocation else None,
         'energy_environment': allocation.accounting_environment if allocation else None,
         'repayment_available': repayment_available,
-        'repayment_message': '' if repayment_available else REPAYMENT_MESSAGE if loan.currency == 'UGX' else 'Matching EUR payment servicing unavailable in this mode.',
+        'repayment_message': '' if repayment_available else 'UGX test repayment authorization is disabled by server configuration.' if missing_required_authorization() else REPAYMENT_MESSAGE if loan.currency == 'UGX' else 'Matching EUR payment servicing unavailable in this mode.',
         "allocated_kwh": str(allocation.amount_kwh) if allocation else None,
         "meter_application_confirmed": False}

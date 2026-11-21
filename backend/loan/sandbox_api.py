@@ -41,7 +41,16 @@ class SandboxAssessmentView(SandboxConsumerView):
         from loan.prototype_lending import lending_policy, enabled as ugx_enabled
         lending = lending or request.query_params.get('lending') == 'ugx'
         cfg = lending_policy() if lending else policy()
-        result = assessment(request.user, None if lending and ugx_enabled() else cfg, meter_id=meter_id or request.query_params.get("meter_id"))
+        if request.query_params.get('purpose') == 'PURCHASE':
+            from loan.sandbox_service import verified_consumer, owned_test_meter
+            verified_consumer(request.user)
+            selected = meter_id or request.query_params.get('meter_id')
+            if selected is not None:
+                owned_test_meter(request.user, selected)
+            # Pricing a purchase requires no loan assessment or questionnaire.
+            result = None
+        else:
+            result = assessment(request.user, None if lending and ugx_enabled() else cfg, meter_id=meter_id or request.query_params.get("meter_id"))
         pricing = {"available": True, "message": ""}
         if cfg.get("currency") == "EUR":
             from loan.sandbox_service import eur_pricing_available

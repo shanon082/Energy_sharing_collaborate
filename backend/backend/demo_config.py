@@ -13,6 +13,9 @@ def provider_mode():
 
 
 def test_domain():
+    from backend.ugx_authorization import business_domain
+    if business_domain():
+        return ('UGX', DEMO_ENVIRONMENT, 'MTN_SANDBOX')
     return ("UGX", DEMO_ENVIRONMENT, LOCAL_DEMO) if provider_mode() == LOCAL_DEMO else ("EUR", "MTN_SANDBOX", "MTN_SANDBOX")
 
 
@@ -26,7 +29,13 @@ def new_mtn_payments_paused():
 
 
 def require_new_mtn_payments():
+    from backend.ugx_authorization import missing_required_authorization
+    if missing_required_authorization():
+        raise PermissionDenied({'code': 'UGX_AUTHORIZATION_DISABLED', 'message': 'Sandbox payments unavailable: enable SANDBOX_UGX_AUTHORIZATION_ENABLED for the approved UGX test policy. Legacy EUR charging is not a fallback.'})
     if new_mtn_payments_paused():
+        from backend.ugx_authorization import enabled
+        if enabled():
+            raise PermissionDenied({'code': 'NEW_PAYMENTS_PAUSED', 'message': 'New UGX test payment instructions are paused by server configuration. Existing submitted references remain recoverable.'})
         raise PermissionDenied({"code": "NEW_PAYMENTS_PAUSED", "message": "New payments are paused. MTN Sandbox accepts EUR only; UGX payment support requires a separately approved provider. Existing receipts and pending-payment recovery remain available."})
 
 

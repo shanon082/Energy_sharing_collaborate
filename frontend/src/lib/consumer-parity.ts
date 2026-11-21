@@ -1,8 +1,9 @@
 import type { TestEnvironment, TestMeter } from "./sandbox";
 
 export type ConsumerScreen = "home" | "meters" | "loans" | "apply" | "purchase" | "activity" | "account";
-export const CONSUMER_PATHS: Record<ConsumerScreen, string> = { home: "/dashboard", meters: "/dashboard/my-meters", loans: "/dashboard/loans", apply: "/dashboard/loans?tab=apply", purchase: "/dashboard/buy-units", activity: "/dashboard/transactions", account: "/dashboard/myaccount" };
+export const CONSUMER_PATHS: Record<ConsumerScreen, string> = { home: "/dashboard", meters: "/dashboard/my-meters", loans: "/dashboard/loans", apply: "/dashboard/request-loan", purchase: "/dashboard/buy-units", activity: "/dashboard/transactions", account: "/dashboard/myaccount" };
 export function consumerScreen(path: string, tab?: string | null): ConsumerScreen | null {
+  if (path === "/dashboard/request-loan") return "apply";
   if (path === "/dashboard/loans" && tab === "apply") return "apply";
   if (path === "/dashboard/wallet") return "home";
   return (Object.keys(CONSUMER_PATHS) as ConsumerScreen[]).find(key => CONSUMER_PATHS[key] === path) ?? null;

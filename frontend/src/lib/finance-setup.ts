@@ -1,6 +1,6 @@
 import type { Assessment, PricingStatus, SandboxClient, TestCurrency, TestEnvironment, TestPolicy } from './sandbox';
 
-type Setup = { assessment: Assessment; policy: TestPolicy; pricing?: PricingStatus; purchase_policy?: TestPolicy; purchase_pricing?: PricingStatus };
+type Setup = { assessment: Assessment | null; policy: TestPolicy; pricing?: PricingStatus; purchase_policy?: TestPolicy; purchase_pricing?: PricingStatus };
 type Domain = { currency: TestCurrency; environment: TestEnvironment };
 
 function matchingPolicy(policy: TestPolicy, domain: Domain): TestPolicy {
@@ -16,11 +16,15 @@ function matchingPolicy(policy: TestPolicy, domain: Domain): TestPolicy {
 export async function readFinanceSetup(client: SandboxClient, meterId: number | undefined, ugxLending: boolean,
   payment: Domain, loan: Domain) {
   const base = `sandbox/assessment/?${meterId === undefined ? '' : `meter_id=${meterId}`}`;
-  const paymentRead = client.get<Setup>(base);
-  const loanRead = ugxLending ? client.get<Setup>(`${base}${meterId === undefined ? '' : '&'}lending=ugx`) : paymentRead;
+  const separator = meterId === undefined ? '' : '&';
+  const paymentRead = client.get<Setup>(`${base}${separator}purpose=PURCHASE`);
+  const loanRead = client.get<Setup>(ugxLending ? `${base}${separator}lending=ugx` : base);
   const [lending, purchase] = await Promise.allSettled([
-    loanRead.then(row => ({assessment: row.assessment, policy: matchingPolicy(row.policy, loan),
-      pricing: row.pricing ?? {available: false, message: 'Loan pricing is missing from the server response.'}})),
+    loanRead.then(row => {
+      if (!row.assessment) throw new Error('Stored loan assessment is missing from the server response.');
+      return {assessment: row.assessment, policy: matchingPolicy(row.policy, loan),
+        pricing: row.pricing ?? {available: false, message: 'Loan pricing is missing from the server response.'}};
+    }),
     paymentRead.then(row => ({policy: matchingPolicy(row.purchase_policy ?? row.policy, payment),
       pricing: row.purchase_pricing ?? row.pricing ?? {available: false, message: 'Purchase pricing is missing from the server response.'}})),
   ]);

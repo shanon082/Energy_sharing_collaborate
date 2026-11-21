@@ -1,6 +1,7 @@
 import type { TestCurrency, TestEnvironment } from "./sandbox";
 
-export function meterReadEnvironment(environment: TestEnvironment | "CORE"): "CORE" | "UGX_DEMO" | "SANDBOX" {
+export function meterReadEnvironment(environment: TestEnvironment | "CORE", energyEnvironment?: "SANDBOX"): "CORE" | "UGX_DEMO" | "SANDBOX" {
+  if (energyEnvironment === "SANDBOX") return energyEnvironment;
   return environment === "MTN_SANDBOX" ? "SANDBOX" : environment;
 }
 

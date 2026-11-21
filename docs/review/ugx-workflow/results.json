@@ -1,0 +1,18 @@
+{
+  "environment": "LOCAL NEXT.JS + SYNTHETIC HTTPS API ONLY",
+  "hosted": false,
+  "provider_tested": false,
+  "board_tested": false,
+  "results": [
+    "Dashboard/home use UGX and exclude legacy EUR activity without relabelling its history",
+    "Owned meter, UGX amount, tariff quote and consent confirmation on actual Buy Units route",
+    "Purchase form remains usable while loan assessment returns HTTP503",
+    "Canonical Request Loan route shows85%, UGX limit/amount/terms and server approval",
+    "UGX4000 partial repayment → UGX6500; pending survives reload, five seconds does not settle",
+    "Purchase duplicate-click/reload recovery, server-confirmed receipt and one synthetic token; no device application claim",
+    "62% score and80% eligibility reason remain visible beside disabled review",
+    "Pending/missing assessment and HTTP503 show explicit loan reasons without invented zero",
+    "Loading, purchase HTTP503, phone width and no browser runtime errors"
+  ],
+  "errors": []
+}

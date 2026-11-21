@@ -54,10 +54,13 @@ def pricing_inputs(owner):
         seen_orders.add(block.block_order)
     if previous_max is not None:
         unavailable("Tariff unavailable: a final open-ended purchase band is required.")
-    purchased = EnergyAllocation.objects.filter(owner=owner, accounting_environment="UGX_DEMO",
-        purchase_intent__owner=owner, purchase_intent__provider="LOCAL_DEMO", purchase_intent__currency="UGX",
-        purchase_intent__purpose="PURCHASE", purchase_intent__status="SETTLED",
-        created_at__year=today.year, created_at__month=today.month).aggregate(total=Sum("amount_kwh"))["total"] or Decimal(0)
+    # Stable allocation source identity: delivery records and loans are never purchases.
+    old = Q(accounting_environment='UGX_DEMO', purchase_intent__provider='LOCAL_DEMO', purchase_intent__currency='UGX')
+    authorized = Q(accounting_environment='SANDBOX', purchase_intent__provider='MTN_SANDBOX', purchase_intent__currency='EUR',
+        purchase_intent__ugx_instruction__currency='UGX', purchase_intent__ugx_instruction__business_settlement__isnull=False)
+    purchased = EnergyAllocation.objects.filter(old | authorized, owner=owner,
+        purchase_intent__owner=owner, purchase_intent__purpose='PURCHASE', purchase_intent__status='SETTLED',
+        created_at__year=today.year, created_at__month=today.month).aggregate(total=Sum('amount_kwh'))['total'] or Decimal(0)
     if not purchased.is_finite() or purchased < 0:
         unavailable("Tariff unavailable: purchase totals require reconciliation.")
     try:

@@ -8,9 +8,12 @@ from meter.allocation_service import entitlement_summary
 
 
 def loans_with_applied(rows):
-    paid = SandboxSettlement.objects.filter(intent__sandbox_loan_id=OuterRef("pk")).values(
+    paid = SandboxSettlement.objects.filter(intent__sandbox_loan_id=OuterRef("pk"), currency=OuterRef("currency"), environment=OuterRef("environment")).values(
         "intent__sandbox_loan_id").annotate(total=Sum("applied")).values("total")
-    return rows.annotate(_applied_repayments=Coalesce(Subquery(paid), Value(Decimal("0")),
+    from transactions.sandbox_models import SandboxUGXSettlement
+    authorized = SandboxUGXSettlement.objects.filter(instruction__loan_id=OuterRef('pk')).values('instruction__loan_id').annotate(total=Sum('applied')).values('total')
+    return rows.annotate(_applied_repayments=Coalesce(Subquery(paid), Value(Decimal('0')),
+        output_field=DecimalField(max_digits=24, decimal_places=6)) + Coalesce(Subquery(authorized), Value(Decimal('0')),
         output_field=DecimalField(max_digits=24, decimal_places=6)))
 
 
@@ -28,7 +31,9 @@ def consumer_summary(owner, environment, meter=None):
         active += loan.status == "DISBURSED"
         for key in totals:
             totals[key] += getattr(loan, key)
-    energy = entitlement_summary(owner, meter, "UGX_DEMO" if environment == "UGX_DEMO" else "SANDBOX")
+    # Financial UGX and device SANDBOX are intentionally distinct domains.
+    from backend.ugx_authorization import business_domain as authorization_enabled
+    energy = entitlement_summary(owner, meter, 'SANDBOX' if authorization_enabled() or environment == 'MTN_SANDBOX' else 'UGX_DEMO')
     return {"owner_id": owner.pk, "environment": environment, "currency": currency,
         "scope": "METER" if meter else "OWNER", "meter_id": meter.pk if meter else None,
         "loan_count": count, "active_loan_count": active,

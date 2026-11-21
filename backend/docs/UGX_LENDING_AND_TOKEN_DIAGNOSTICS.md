@@ -1,5 +1,7 @@
 # UGX lending, paused new payments, and token diagnostics
 
+> Current approved UGX workflow: [UGX_MTN_TEST_AUTHORIZATION.md](UGX_MTN_TEST_AUTHORIZATION.md). The fixed EUR1 sandbox authorization is now approved and implemented locally. Earlier pending-policy/new-payment-pause instructions below describe the previous release; use the new explicit activation settings and reviewed allowlist. No hosted deployment is claimed.
+
 Latest capability audit and coordinated rollout: [UGX_CAPABILITY_PARITY_ROLLOUT.md](UGX_CAPABILITY_PARITY_ROLLOUT.md). Its mapping proposal is pending a decision; no UGX MTN conversion is implemented. This earlier document records the prior pause decision; preserve the host’s existing explicit payment setting during deployment.
 
 Implemented locally; no hosted deployment, provider initiation, phone or physical

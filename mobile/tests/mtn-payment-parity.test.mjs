@@ -196,3 +196,54 @@ test('both surfaces explain pricing, assessment, recovery and server action fail
     assert.match(unavailable,/Loan assessment request failed: HTTP 503/);
   }
 });
+
+test('approved UGX instructions keep provider EUR1 evidence separate on web and Android',()=>{
+  const authorization={policy:'UGX-MTN-TEST-AUTH-v1',provider:'MTN_SANDBOX',currency:'EUR',amount:'1.00',no_real_money:true,energy_environment:'SANDBOX'};
+  const caps=sandboxCapabilities({enabled:true,currency:'UGX',environment:'UGX_DEMO',provider:'MTN_SANDBOX',physical_delivery:false,
+    purchases:true,repayments:true,loans:false,authorization,lending:{enabled:true,currency:'UGX',environment:'UGX_DEMO',energy_environment:'SANDBOX',policy:'DEMO-UGX-ACLAB-v1',repayment_available:true}});
+  assert.equal(caps.currency,'UGX');assert.equal(caps.loans,true);assert.equal(caps.energyEnvironment,'SANDBOX');
+  const receipt={...pending,currency:'UGX',environment:'UGX_DEMO',amount:'10000',authorization_policy:authorization.policy,instruction_id:pending.client_request_id,
+    provider_receipt:{reference:pending.reference,external_id:'test-only-reference',transaction_id:null,amount:'1.00',currency:'EUR',environment:'MTN_SANDBOX',status:'PENDING',purpose:'TEST_AUTHORIZATION',no_real_money:true}};
+  const record=parseTestPayment(receipt);
+  assert.equal(demoCountdown(record),null);assert.equal(paymentStatusMethod(record,Date.parse(pending.next_check_at)),'POST');
+  assert.throws(()=>parseTestPayment({...receipt,provider_receipt:{...receipt.provider_receipt,currency:'UGX'}}));
+  assert.throws(()=>parseTestPayment({...receipt,authorization_policy:'unapproved'}));
+  for(const surface of ['web','mobile']){
+    const ready={...props,surface,capabilities:caps,currency:'UGX',environment:'UGX_DEMO',paymentCurrency:'UGX',paymentEnvironment:'UGX_DEMO',
+      amount:'10000',pending:false,payments:[],view:'purchase',selectedMeter:{...props.selectedMeter,sandbox_inventory:true},
+      policy:{id:'DEMO-UGX-MTN-AUTH-v1',currency:'UGX',environment:'UGX_DEMO',minimum:'1000',maximum:'50000'}};
+    const html=render(ready);
+    assert.match(html,/Amount \(UGX\)/);assert.doesNotMatch(html,/Amount \(EUR/);
+    assert.match(html,/<button(?:(?!disabled)[^>])*>Review terms/);
+    const pendingHtml=render({...ready,pending:true,payments:[receipt]});
+    assert.match(pendingHtml,/Waiting for MTN sandbox confirmation/);assert.doesNotMatch(pendingHtml,/seconds|simulating phone authorization/);
+    const settled={...receipt,status:'SETTLED',billed:'9999',residual:'1',allocated_kwh:'8.00',allocation_id:22,
+      provider_receipt:{...receipt.provider_receipt,status:'SETTLED',transaction_id:'synthetic-provider-id'}};
+    assert.equal(parseTestPayment(settled).currency,'UGX');
+    const receiptHtml=render({...ready,payments:[settled]});
+    assert.match(receiptHtml,/MTN test authorization \(not a conversion\)/);assert.match(receiptHtml,/EUR 1\.00/);
+    const repay=render({...ready,view:'home',payments:[{...settled,purpose:'LOAN_REPAYMENT',loan_id:'synthetic-loan',allocation_id:null,allocated_kwh:null,applied:'4000',excess:'0'}]});
+    assert.match(repay,/Loan repayment/);assert.doesNotMatch(repay,/Electricity tokens/);
+  }
+});
+
+test('UGX home overview excludes legacy EUR activity while accurate history remains accessible',()=>{
+ for(const surface of ['web','mobile']){
+  const current={...props,surface,view:'home',currency:'UGX',environment:'UGX_DEMO',paymentCurrency:'UGX',paymentEnvironment:'UGX_DEMO',
+    pending:false,payments:[{...pending,status:'SETTLED',amount:'2.00',currency:'EUR',environment:'MTN_SANDBOX'}]};
+  const home=render(current);
+  assert.doesNotMatch(home,/EUR/);assert.match(home,/Recent activity/);
+  const history=render({...current,view:'activity'});
+  assert.match(history,/EUR/);assert.match(history,/2(?:\.00)?/);
+ }
+});
+
+test('missing provider capability explains UGX repayment denial without a false same-currency mismatch',()=>{
+ for(const surface of ['web','mobile']){
+  const html=render({...props,surface,view:'home',currency:'UGX',environment:'UGX_DEMO',paymentCurrency:'UGX',paymentEnvironment:'UGX_DEMO',
+   pending:false,payments:[],capabilities:{...props.capabilities,repayments:false,repaymentMessage:'Sandbox payments unavailable: MTN credentials missing.'},
+   loans:[{id:'synthetic-ugx-loan',meter_id:7,currency:'UGX',environment:'UGX_DEMO',status:'DISBURSED',principal:'10000',total_due:'10500',outstanding:'6500',
+    repayment_available:true,repayment_message:'',terms:{policy:{id:'DEMO-UGX-ACLAB-v1'}},reason:'Approved test loan',due_at:pending.initiated_at,closed_at:null,allocation_id:null,allocated_kwh:null}]});
+  assert.match(html,/MTN credentials missing/);assert.doesNotMatch(html,/UGX debt cannot be repaid with UGX/);assert.doesNotMatch(html,/EUR/);
+ }
+});

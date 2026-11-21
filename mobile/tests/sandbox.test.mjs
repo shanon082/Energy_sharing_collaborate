@@ -63,7 +63,7 @@ test('demo countdown cannot settle and validates server deadlines despite clock 
   assert.throws(() => parseTestPayment({ ...raw, amount: '1003.50' }));
   assert.throws(() => parseTestPayment({ ...raw, demo_eligible_at: '2026-01-01T00:00:04Z' }));
   assert.throws(() => parseTestPayment({ ...raw, initiated_at: 'invalid' }));
-  assert.equal(testMoney('1003', 'UGX'), 'UGX DEMO 1003');
+  assert.equal(testMoney('1003', 'UGX'), 'UGX 1003');
   assert.equal(testMoney('2.10', 'EUR'), 'EUR TEST 2.10');
   assert.equal(testDemoAmount('1000'), true);
   for (const value of ['1.5', '1.00', '1e3', 'NaN', '0', '1000001']) assert.equal(testDemoAmount(value), false);

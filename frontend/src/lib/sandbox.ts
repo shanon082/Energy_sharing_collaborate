@@ -1,31 +1,35 @@
 /** Currency-isolated test contract, shared by Next.js and Capacitor. */
 export type TestCurrency = "EUR" | "UGX";
 export type TestEnvironment = "MTN_SANDBOX" | "UGX_DEMO";
-export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; loanMessage?: string; purchaseMessage?: string; repaymentMessage?: string; newPaymentsPaused?: boolean; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO"; loanCurrency?: TestCurrency; loanEnvironment?: TestEnvironment };
+export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; loanMessage?: string; purchaseMessage?: string; repaymentMessage?: string; newPaymentsPaused?: boolean; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO"; loanCurrency?: TestCurrency; loanEnvironment?: TestEnvironment; authorizationPolicy?: "UGX-MTN-TEST-AUTH-v1"; energyEnvironment?: "SANDBOX" };
 export const NO_SANDBOX: SandboxCapabilities = { enabled: false, loans: false, purchases: false, repayments: false };
 export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   if (!raw || typeof raw !== "object") return { ...NO_SANDBOX };
   const row = raw as Record<string, unknown>;
   const demo = row.currency === "UGX" && row.environment === "UGX_DEMO" && row.provider === "LOCAL_DEMO";
+  const authorization = row.authorization && typeof row.authorization === 'object' ? row.authorization as Record<string, unknown> : null;
+  const mapped = row.currency === 'UGX' && row.environment === 'UGX_DEMO' && row.provider === 'MTN_SANDBOX'
+    && authorization?.policy === 'UGX-MTN-TEST-AUTH-v1' && authorization.provider === 'MTN_SANDBOX'
+    && authorization.currency === 'EUR' && authorization.amount === '1.00' && authorization.no_real_money === true && authorization.energy_environment === 'SANDBOX';
   const mtn = row.currency === "EUR" && row.provider === "MTN_SANDBOX" && (row.environment === undefined || row.environment === "MTN_SANDBOX");
-  if (row.enabled !== true || (!demo && !mtn) || row.physical_delivery !== false) return { ...NO_SANDBOX };
+  if (row.enabled !== true || (!demo && !mtn && !mapped) || row.physical_delivery !== false) return { ...NO_SANDBOX };
   const lab = row.ac_lab && typeof row.ac_lab === "object" ? row.ac_lab as Record<string, unknown> : null;
   const labEnvironment = demo ? "UGX_DEMO" : "SANDBOX";
   const labValid = lab?.environment === labEnvironment && lab?.protocol === (demo ? "GPAWA_PZEM_V1" : "GPAWA_PZEM_V2") && lab?.physical_output === false;
   const lending = row.lending && typeof row.lending === 'object' ? row.lending as Record<string, unknown> : null;
   // Origination and repayment are separate capabilities. Keep the known loan
   // domain even when origination is disabled, so its history stays in UGX.
-  const ugxContract = mtn && lending?.currency === 'UGX' && lending.environment === 'UGX_DEMO' && lending.energy_environment === 'SANDBOX' && lending.policy === 'DEMO-UGX-ACLAB-v1';
+  const ugxContract = (mtn || mapped) && lending?.currency === 'UGX' && lending.environment === 'UGX_DEMO' && lending.energy_environment === 'SANDBOX' && lending.policy === 'DEMO-UGX-ACLAB-v1';
   const ugxLoans = ugxContract && lending?.enabled === true;
   const reasons = row.action_reasons && typeof row.action_reasons === 'object' ? row.action_reasons as Record<string, unknown> : {};
   const message = (value: unknown) => typeof value === 'string' && value.trim() ? value : undefined;
   const newPaymentsPaused = row.new_payments_paused === true;
-  const loanMessage = message(reasons.loan) ?? (mtn && row.loans !== true && !ugxLoans
+  const loanMessage = message(reasons.loan) ?? ((mtn || mapped) && row.loans !== true && !ugxLoans
     ? ugxContract ? 'UGX loan applications are disabled by the server. Existing loans remain readable.' : 'This backend has not advertised the UGX lending contract. Deploy the matching backend; legacy EUR loans are disabled.' : undefined);
   const purchaseMessage = message(reasons.purchase);
   const repaymentMessage = message(reasons.repayment);
   return { enabled: true, ...(loanMessage ? {loanMessage} : {}), ...(purchaseMessage ? {purchaseMessage} : {}), ...(repaymentMessage ? {repaymentMessage} : {}), ...(newPaymentsPaused ? {newPaymentsPaused: true} : {}), ...(ugxContract ? {loanCurrency: 'UGX', loanEnvironment: 'UGX_DEMO'} as const : {}), ...(lab ? {labEnabled: labValid && lab.enabled === true, labEnvironment} : {}), loans: lending ? ugxLoans : row.loans === true, purchases: !newPaymentsPaused && row.purchases === true, repayments: !newPaymentsPaused && row.repayments === true,
-    ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : { currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" } as const),
+    ...(mapped ? {currency: "UGX", environment: "UGX_DEMO", provider: "MTN_SANDBOX", authorizationPolicy: "UGX-MTN-TEST-AUTH-v1", energyEnvironment: "SANDBOX"} as const : demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : { currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" } as const),
     ...(typeof row.payment_message === "string" && row.payment_message ? { paymentMessage: row.payment_message } : {}) };
 }
 export interface SandboxClient { get<T>(path: string): Promise<T>; post<T>(path: string, body: unknown): Promise<T> }
@@ -33,7 +37,8 @@ export type TestMeter = { label?: string; status?: string; id: number; meter_num
 export type Assessment = { owner_id?: number; meter_id?: number | null; minimum_score?: number; assessment_id?: number | null; evidence_updated_at?: string | null; eligible: boolean; reason: string; starter: boolean; score: number | null; profile_score: number | null;
   factors: Record<string, number> | null; purchase_points: number | null; qualifying_billed_eur?: string; qualifying_billed_test?: string | null; maximum: string | null; policy_id: string;
   assessment_status?: "PENDING" | "READY" | "UNAVAILABLE"; label?: string; provider?: string; assessed_at?: string | null; scoring_policy_version?: string; categories?: Record<string, string> | null };
-export type TestPolicy = { repayment_message?: string; energy_environment?: string; id: string; currency?: TestCurrency; environment?: TestEnvironment; minimum: string; maximum: string; starter_limit: string; interest_percent: string; fee: string;
+export type TestAuthorization = {policy: "UGX-MTN-TEST-AUTH-v1"; provider: "MTN_SANDBOX"; currency: "EUR"; amount: "1.00"; no_real_money: true};
+export type TestPolicy = { authorization?: TestAuthorization; repayment_message?: string; energy_environment?: string; id: string; currency?: TestCurrency; environment?: TestEnvironment; minimum: string; maximum: string; starter_limit: string; interest_percent: string; fee: string;
   rate_per_kwh: string | null; pricing_source?: string; due_days: number; penalty_percent: string; rounding: string; purchase_per_point: string; purchase_score_cap: number; score_threshold: number };
 export type PricingStatus = { available: boolean; message: string; revision?: string; tariff_code?: string };
 export type TariffPricing = { inputs_hash: string; inputs: { version: string; month: string; scope: string; vat_rate: string;
@@ -45,7 +50,8 @@ export type TestQuote = { id: string; terms_hash: string; expires_at: string; te
 export type TestLoan = { repayment_available?: boolean; repayment_message?: string; energy_environment?: string | null; currency: TestCurrency; environment: TestEnvironment; id: string; client_request_id: string; meter_id: number; status: "DISBURSED" | "COMPLETED" | "REJECTED";
   reason: string; principal: string; total_due: string; outstanding: string; due_at: string; created_at?: string; closed_at: string | null;
   applied_repayments?: string; allocation_id: number | null; allocated_kwh: string | null; terms: TestTerms; assessment: Assessment };
-export type TestPayment = { pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
+export type ProviderReceipt = {reference: string; external_id: string; transaction_id: string | null; amount: string; currency: "EUR"; environment: "MTN_SANDBOX"; status: "PENDING" | "FAILED" | "SETTLED"; purpose: "TEST_AUTHORIZATION"; no_real_money: true};
+export type TestPayment = { authorization_policy?: "UGX-MTN-TEST-AUTH-v1"; instruction_id?: string; provider_receipt?: ProviderReceipt; pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
   demo_eligible_at?: string | null; server_time?: string; observed_at?: number; reference: string; client_request_id: string; purpose: string; status: "PENDING" | "SETTLED" | "FAILED";
   amount: string; meter_id: number; loan_id: string | null; billed: string | null; residual: string | null; applied: string | null; excess: string | null;
   allocation_id?: number | null; allocated_kwh: string | null; initiated_at: string; settled_at: string | null; submission_state: string; reconciliation_error: string; next_check_at: string };
@@ -78,7 +84,7 @@ export function parseStoredDemoAssessment(value: unknown, expected?: { owner: nu
 export function testAmount(value: string): boolean { return /^\d{1,5}(?:\.\d{1,2})?$/.test(value) && Number(value) > 0 && Number(value) <= 10000; }
 export function testDemoAmount(value: string): boolean { return /^[0-9]{1,7}$/.test(value) && Number(value) > 0 && Number(value) <= 1000000; }
 export function testMoney(value: string | null | undefined, currency: TestCurrency = "EUR"): string {
-  return value === null || value === undefined ? "Unavailable" : `${currency === "UGX" ? "UGX DEMO" : "EUR TEST"} ${value}`;
+  return value === null || value === undefined ? "Unavailable" : `${currency === "UGX" ? "UGX" : "EUR TEST"} ${value}`;
 }
 function validDomain(row: Record<string, unknown>): boolean {
   return (row.currency === "EUR" && row.environment === "MTN_SANDBOX") ||
@@ -86,13 +92,13 @@ function validDomain(row: Record<string, unknown>): boolean {
 }
 /** Countdown is presentation only. Completion must return a server SETTLED receipt. */
 export function demoCountdown(row: TestPayment, now = Date.now()): number | null {
-  if (row.environment !== "UGX_DEMO" || row.status !== "PENDING" || !row.server_time || !row.demo_eligible_at || row.observed_at === undefined) return null;
+  if (row.provider !== "LOCAL_DEMO" || row.environment !== "UGX_DEMO" || row.status !== "PENDING" || !row.server_time || !row.demo_eligible_at || row.observed_at === undefined) return null;
   return Math.max(0, Math.ceil((Date.parse(row.demo_eligible_at) - Date.parse(row.server_time) - Math.max(0, now - row.observed_at)) / 1000));
 }
 /** Both clients poll Django. Elapsed time never constitutes a successful payment. */
 export function paymentStatusMethod(row: TestPayment, now = Date.now()): "GET" | "POST" {
   if (row.status !== "PENDING") return "GET";
-  if (row.environment === "UGX_DEMO") return demoCountdown(row, now) === 0 ? "POST" : "GET";
+  if (row.provider === "LOCAL_DEMO" && row.environment === "UGX_DEMO") return demoCountdown(row, now) === 0 ? "POST" : "GET";
   const next = Date.parse(row.next_check_at);
   return Number.isFinite(next) && next <= now ? "POST" : "GET";
 }
@@ -108,7 +114,15 @@ export function parseTestPayment(value: unknown): TestPayment {
   if (!validDomain(row) || !["PENDING", "SETTLED", "FAILED"].includes(String(row.status)) ||
     !["PURCHASE", "LOAN_REPAYMENT"].includes(String(row.purpose)) || typeof row.reference !== "string" || !/^[0-9a-f-]{36}$/i.test(row.reference) ||
     typeof row.amount !== "string" || !/^\d+(?:\.\d+)?$/.test(row.amount) || !Number.isSafeInteger(row.meter_id)) throw new Error("Invalid sandbox receipt; no UGX conversion is available.");
-  if (row.environment === "UGX_DEMO" && (row.provider !== "LOCAL_DEMO" ||
+  if (row.environment === 'UGX_DEMO' && row.provider === 'MTN_SANDBOX') {
+    const provider = obj(row.provider_receipt);
+    if (row.authorization_policy !== 'UGX-MTN-TEST-AUTH-v1' || typeof row.instruction_id !== 'string' || !/^[0-9a-f-]{36}$/i.test(row.instruction_id)
+        || !/^[0-9]+(?:\.0+)?$/.test(String(row.amount)) || Number(row.amount) > 1000000 || Number(row.amount) <= 0
+        || provider.currency !== 'EUR' || provider.environment !== 'MTN_SANDBOX' || !['1', '1.0', '1.00'].includes(String(provider.amount))
+        || provider.reference !== row.reference || provider.status !== row.status || provider.purpose !== 'TEST_AUTHORIZATION' || provider.no_real_money !== true
+        || (row.status === 'SETTLED' && (typeof provider.transaction_id !== 'string' || !provider.transaction_id)))
+      throw new Error('UGX test authorization does not match its separate EUR provider receipt.');
+  } else if (row.environment === "UGX_DEMO" && (row.provider !== "LOCAL_DEMO" ||
     !/^[0-9]+(?:\.0+)?$/.test(row.amount as string) || Number(row.amount) > 1000000 || Number(row.amount) <= 0 || typeof row.server_time !== "string" || !Number.isFinite(Date.parse(row.server_time)) ||
     typeof row.demo_eligible_at !== "string" || !Number.isFinite(Date.parse(row.demo_eligible_at)) ||
     typeof row.initiated_at !== "string" || !Number.isFinite(Date.parse(row.initiated_at)) || Date.parse(row.demo_eligible_at) - Date.parse(row.initiated_at) < 5000))

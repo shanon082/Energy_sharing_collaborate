@@ -9,7 +9,7 @@ test('legacy hosted contract loads EUR purchase terms despite unavailable loan a
   const calls=[];
   const client={get:async path=>{calls.push(path);return context(payment);}};
   const result=await readFinanceSetup(client,3,false,payment,payment);
-  assert.deepEqual(calls,['sandbox/assessment/?meter_id=3']);
+  assert.deepEqual(calls,['sandbox/assessment/?meter_id=3&purpose=PURCHASE','sandbox/assessment/?meter_id=3']);
   assert.equal(result.purchase.status,'fulfilled');
   assert.equal(result.purchase.value.policy.currency,'EUR');
 });

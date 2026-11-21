@@ -33,3 +33,11 @@ SANDBOX_UGX_LOANS_ENABLED = parse_feature_bool(os.environ.get('SANDBOX_UGX_LOANS
 
 # UGX-only consumer prototype: keep MTN credentials/history; pause NEW EUR charges.
 SANDBOX_NEW_PAYMENTS_ENABLED = parse_feature_bool(os.environ.get('SANDBOX_NEW_PAYMENTS_ENABLED', 'false'), name='SANDBOX_NEW_PAYMENTS_ENABLED')
+
+# Explicit opt-in approved noncash instruction → fixed EUR1 sandbox challenge.
+SANDBOX_UGX_AUTHORIZATION_ENABLED = parse_feature_bool(os.environ.get('SANDBOX_UGX_AUTHORIZATION_ENABLED', 'false'), name='SANDBOX_UGX_AUTHORIZATION_ENABLED')
+SANDBOX_UGX_AUTHORIZATION_POLICY = os.environ.get('SANDBOX_UGX_AUTHORIZATION_POLICY', 'UGX-MTN-TEST-AUTH-v1')
+
+# New consumer instructions in this profile may never fall back to EUR charging.
+# Historical EUR/LOCAL_DEMO references remain recoverable under frozen policy.
+SANDBOX_UGX_AUTHORIZATION_REQUIRED = True

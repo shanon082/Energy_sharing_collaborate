@@ -54,8 +54,14 @@ def _purchase_totals(row):
         intent__score_exclusion__isnull=True)
     evidence = sources.aggregate(total=Sum("billed"), count=Count("pk"))
     total = evidence["total"] or Decimal(0)
+    from transactions.sandbox_models import SandboxUGXSettlement
+    extra = SandboxUGXSettlement.objects.filter(instruction__owner=row.owner, instruction__meter_id=row.meter_id,
+        instruction__purpose='PURCHASE', instruction__intent__status='SETTLED', instruction__intent__provider='MTN_SANDBOX',
+        instruction__intent__energy_allocation__owner=row.owner, instruction__intent__energy_allocation__meter_id=row.meter_id,
+        instruction__intent__energy_allocation__accounting_environment='SANDBOX', instruction__intent__score_exclusion__isnull=True).aggregate(total=Sum('billed'), count=Count('pk'))
+    total += extra['total'] or Decimal(0)
     points = min(row.bonus_policy["purchase_score_cap"], int(total // Decimal(row.bonus_policy["purchase_per_point"])))
-    return total, points, evidence["count"]
+    return total, points, evidence["count"] + extra["count"]
 
 
 def _update_purchases(row):

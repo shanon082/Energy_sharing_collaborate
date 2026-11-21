@@ -61,12 +61,15 @@ class FeatureAvailabilityView(APIView):
             pass
         from mtn_momo.sandbox import configured
         from backend.demo_config import test_domain, LOCAL_DEMO, new_mtn_payments_paused
+        from backend.ugx_authorization import business_domain as authorization_enabled, enabled as authorization_active, missing_required_authorization
+        from transactions.ugx_authorization import AUTHORIZATION
+        mapped = authorization_enabled()
         currency, environment, provider = test_domain()
         sandbox_enabled = getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
-        payments_paused = provider == "MTN_SANDBOX" and new_mtn_payments_paused()
+        payments_paused = provider == "MTN_SANDBOX" and (new_mtn_payments_paused() or missing_required_authorization())
         test_payments = sandbox_enabled and not payments_paused and (provider == LOCAL_DEMO or configured())
         from loan.sandbox_service import policy, eur_pricing_available
-        energy_pricing = provider == LOCAL_DEMO or eur_pricing_available(policy())
+        energy_pricing = mapped or provider == LOCAL_DEMO or eur_pricing_available(policy())
         loan_policy = provider == LOCAL_DEMO or getattr(settings, "SANDBOX_EUR_LOANS_ENABLED", False) is True
         from meter.prototype_device import enabled as lab_enabled, permitted_environment, DOMAIN_PROTOCOLS, require_mtn_purchase_tokens
         tokens_ready = True
@@ -78,7 +81,8 @@ class FeatureAvailabilityView(APIView):
         ugx_loans = ugx_loans_enabled()
         purchase_reason = (
             "Consumer sandbox is disabled." if not sandbox_enabled else
-            "New MTN payments are paused. UGX purchase authorization has no approved sandbox mapping; existing EUR receipts remain readable." if payments_paused else
+            "Sandbox payments unavailable: activate SANDBOX_UGX_AUTHORIZATION_ENABLED; legacy EUR charging is not a fallback." if missing_required_authorization() else
+            "New MTN payment instructions are paused by server configuration; existing receipts and submitted references remain recoverable." if payments_paused else
             "Sandbox payments unavailable: MTN Sandbox credentials are not configured." if not test_payments else
             "EUR test pricing unavailable: configure the versioned EUR purchase policy." if not energy_pricing else
             "Sandbox token service unavailable: review the token service configuration." if not tokens_ready else ""
@@ -90,21 +94,23 @@ class FeatureAvailabilityView(APIView):
         )
         repayment_reason = (
             "Consumer sandbox is disabled." if not sandbox_enabled else
-            "New MTN payments are paused. EUR receipts cannot repay UGX debt without an approved sandbox authorization mapping." if payments_paused else
+            "Sandbox payments unavailable: activate SANDBOX_UGX_AUTHORIZATION_ENABLED; legacy EUR charging is not a fallback." if missing_required_authorization() else
+            "New MTN payment instructions are paused. EUR receipts cannot repay UGX debt except through the separately bound test-authorization instruction." if payments_paused else
             "Sandbox payments unavailable: MTN Sandbox credentials are not configured." if not test_payments else ""
         )
         response = Response({
-            "sandbox": {"enabled": sandbox_enabled, "currency": currency, "environment": environment, "label": "UGX DEMO / NO REAL MONEY" if provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
+            "sandbox": {"enabled": sandbox_enabled, "currency": currency, "environment": environment, "label": "UGX TEST / NO REAL MONEY" if mapped else "UGX DEMO / NO REAL MONEY" if provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
+                        **({"authorization": {**AUTHORIZATION, "enabled": authorization_active(), "energy_environment": "SANDBOX"}} if mapped else {}),
                         "capability_version": "GPAWA-CONSUMER-v2",
                         "action_reasons": {"loan": loan_reason, "purchase": purchase_reason, "repayment": repayment_reason},
-                        "ugx_payments": {"enabled": provider == LOCAL_DEMO and test_payments,
-                                         "code": "TEST_AUTHORIZATION_MAPPING_REQUIRED" if provider != LOCAL_DEMO else "LOCAL_DEMO",
-                                         "message": "UGX business payments with MTN EUR test authorization require a separately approved mapping. No conversion is implemented." if provider != LOCAL_DEMO else "Local demo only; no real money."},
-                        "loans": sandbox_enabled and energy_pricing and loan_policy, "purchases": test_payments and energy_pricing and tokens_ready, "repayments": test_payments,
+                        "ugx_payments": {"enabled": (mapped or provider == LOCAL_DEMO) and test_payments,
+                                         "code": "UGX-MTN-TEST-AUTH-v1" if mapped else "TEST_AUTHORIZATION_MAPPING_REQUIRED" if provider != LOCAL_DEMO else "LOCAL_DEMO",
+                                         "message": "Approved noncash test authorization; provider EUR evidence stays separate from UGX instructions." if mapped else "UGX business payments with MTN EUR test authorization require a separately approved mapping. No conversion is implemented." if provider != LOCAL_DEMO else "Local demo only; no real money."},
+                        "loans": sandbox_enabled and energy_pricing and loan_policy and not mapped, "purchases": test_payments and energy_pricing and tokens_ready, "repayments": test_payments,
                         'lending': {'enabled': ugx_loans and tokens_ready, 'currency': 'UGX', 'environment': 'UGX_DEMO', 'energy_environment': 'SANDBOX',
-                                    'policy': 'DEMO-UGX-ACLAB-v1', 'repayment_available': False},
+                                    'policy': 'DEMO-UGX-ACLAB-v1', 'repayment_available': mapped and test_payments},
                         "new_payments_paused": payments_paused,
-                        "payment_message": "New payments paused: MTN Sandbox accepts EUR only. UGX loans remain available; no EUR payment can repay UGX debt. Existing receipts and pending recovery remain available." if payments_paused else "Sandbox payments unavailable" if not test_payments else "Sandbox token service unavailable" if not tokens_ready else "",
+                        "payment_message": "New UGX test payment instructions are paused; existing receipts and submitted references remain recoverable." if mapped and payments_paused else "New payments paused: MTN Sandbox accepts EUR only. UGX loans remain available; no EUR payment can repay UGX debt. Existing receipts and pending recovery remain available." if payments_paused else "Sandbox payments unavailable" if not test_payments else "Sandbox token service unavailable" if not tokens_ready else "",
                         "ac_lab": {"enabled": lab_enabled(), "environment": permitted_environment(),
                                    "protocol": DOMAIN_PROTOCOLS.get(permitted_environment()), "physical_output": False},
                         "provider": provider, "physical_delivery": False,

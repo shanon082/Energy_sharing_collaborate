@@ -1,5 +1,7 @@
 # Subsequent AC_LAB domain support
 
+> Current approved UGX workflow: [UGX_MTN_TEST_AUTHORIZATION.md](UGX_MTN_TEST_AUTHORIZATION.md). The fixed EUR1 sandbox authorization is now approved and implemented locally. Earlier pending-policy/new-payment-pause instructions below describe the previous release; use the new explicit activation settings and reviewed allowlist. No hosted deployment is claimed.
+
 See [MTN_AC_LAB_SANDBOX.md](MTN_AC_LAB_SANDBOX.md) for the current opt-in
 SANDBOX/GPAWA_PZEM_V2 integration and required token configuration. Earlier
 UGX-only device limitations below are historical. New EUR loans remain blocked.

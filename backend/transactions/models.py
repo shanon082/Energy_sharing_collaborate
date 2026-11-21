@@ -165,4 +165,4 @@ class PaymentIntent(models.Model):
         ]
 
 
-from transactions.sandbox_models import SandboxSettlement  # noqa: F401
+from transactions.sandbox_models import SandboxSettlement, SandboxUGXInstruction, SandboxUGXSettlement  # noqa: F401

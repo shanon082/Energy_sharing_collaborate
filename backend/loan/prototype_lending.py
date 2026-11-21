@@ -32,6 +32,12 @@ def lending_policy():
                lending_contract=CONTRACT, energy_environment='SANDBOX',
                label='UGX PROTOTYPE LOAN / SIMULATED ASSESSMENT',
                repayment_mapping='UNAVAILABLE', repayment_message=REPAYMENT_MESSAGE)
+    from backend.ugx_authorization import enabled as authorization_enabled, POLICY
+    if authorization_enabled():
+        cfg.update(repayment_mapping=POLICY, repayment_message='Test repayment—no real money. A fixed EUR1 MTN sandbox authorization is recorded separately; it is not an exchange rate.')
+    from backend.ugx_authorization import missing_required_authorization
+    if missing_required_authorization():
+        cfg['repayment_message'] = 'UGX test repayment authorization is disabled by server configuration.'
     return cfg
 
 
@@ -83,7 +89,8 @@ def ugx_assessment(owner, meter_id=None):
     from loan.sandbox_service import owned_test_meter
     from loan.demo_assessment import stored_demo_eligibility
     meter = owned_test_meter(owner, meter_id) if meter_id is not None else None
+    from backend.ugx_authorization import enabled as authorization_enabled
     result = stored_demo_eligibility(owner, assessment_policy(), meter)
     return {**result, 'policy_id': lending_policy()['id'], 'assessment_policy_id': result['policy_id'],
             'energy_environment': 'SANDBOX', 'lending_contract': CONTRACT,
-            'repayment_available': False, 'repayment_message': REPAYMENT_MESSAGE}
+            'repayment_available': authorization_enabled(), 'repayment_message': lending_policy()['repayment_message']}

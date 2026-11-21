@@ -43,7 +43,7 @@ function TokenDetails({ client, owner, allocationId, meterId, compact }: {
     {error && <p className="error" role="alert">{error}</p>}
     {tokens?.length === 0 && <p className="muted small">No token is available for this allocation.</p>}
     {tokens?.map(row => <div key={row.id} className="token-detail">
-      <p><strong>{row.environment === "SANDBOX" ? "EUR test purchase confirmed — token issued." : row.source === "PURCHASE" ? "Payment confirmed — token issued." : "Loan disbursed — token issued."}</strong></p>
+      <p><strong>{row.source === "PURCHASE" ? "Payment confirmed — token issued." : "Loan disbursed — token issued."}</strong></p>
       <label>15-digit electricity token<input className="energy-token-value" readOnly type="text" inputMode="numeric" value={row.token} aria-label="15-digit electricity token" /></label>
       <p className="small">Meter {row.meter_number} · {row.energy_kwh} kWh</p>
       <p className="reference small">{row.source === "PURCHASE" ? "Purchase" : "Loan"} reference: {row.source_reference}</p>

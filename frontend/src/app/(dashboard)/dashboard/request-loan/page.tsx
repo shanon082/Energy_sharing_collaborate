@@ -1,5 +1,2 @@
-import { redirect } from "next/navigation";
-
-export default function RequestLoanRedirect() {
-  redirect("/dashboard/loans?tab=apply");
-}
+/** The authenticated ConsumerRouter renders the canonical loan application. */
+export default function ConsumerLoanPage() { return null; }

@@ -51,8 +51,11 @@ class SandboxLoan(models.Model):
         from transactions.sandbox_models import SandboxSettlement
         if hasattr(self, "_applied_repayments"):
             return self._applied_repayments
-        return SandboxSettlement.objects.filter(intent__sandbox_loan=self).aggregate(
+        legacy = SandboxSettlement.objects.filter(intent__sandbox_loan=self, currency=self.currency, environment=self.environment).aggregate(
             total=models.Sum("applied"))["total"] or Decimal("0.00")
+        from transactions.sandbox_models import SandboxUGXSettlement
+        authorized = SandboxUGXSettlement.objects.filter(instruction__loan=self).aggregate(total=models.Sum('applied'))['total'] or Decimal('0')
+        return legacy + authorized
 
     @property
     def outstanding(self):

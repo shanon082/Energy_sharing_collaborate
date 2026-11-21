@@ -24,11 +24,11 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   mutationsAvailable?: boolean; onError?: (error: unknown) => void; registerBackHandler?: (handler: (() => boolean) | null) => void;
 }) {
   const demo = capabilities.provider === "LOCAL_DEMO";
-  const paymentEnvironment = demo ? "UGX_DEMO" : "MTN_SANDBOX";
-  const paymentCurrency = demo ? "UGX" : "EUR";
+  const paymentEnvironment = capabilities.environment ?? (demo ? "UGX_DEMO" : "MTN_SANDBOX");
+  const paymentCurrency = capabilities.currency ?? (demo ? "UGX" : "EUR");
   const loanEnvironment = capabilities.loanEnvironment ?? paymentEnvironment;
   const loanCurrency = capabilities.loanCurrency ?? paymentCurrency;
-  const validPaymentAmount = demo ? testDemoAmount : testAmount;
+  const validPaymentAmount = paymentCurrency === "UGX" ? testDemoAmount : testAmount;
   const [clock, setClock] = useState(Date.now);
   const formVersion = useRef(0);
   const nextAttempt = useRef(new Map<string, number>());
@@ -305,8 +305,8 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   />;
 
   return <section className="sandbox-consumer panel">
-    <h2>{demo ? "UGX DEMO / NO REAL MONEY" : "EUR TEST / MTN SANDBOX"}</h2>
-    <p>{demo ? "Local simulator. No real money or actual phone authorization. You may apply for one UGX demo loan alongside an existing EUR loan, without converting or closing it." : capabilities.loanCurrency === "UGX" ? "UGX prototype loans and EUR MTN payments are separate. No repayment conversion is approved." : "EUR test currency only."} Core UGX debt, wallets and real scores remain separate. Cloud allocation is not confirmed meter delivery.</p>
+    <h2>{paymentCurrency === "UGX" ? "UGX TEST / NO REAL MONEY" : "EUR TEST / MTN SANDBOX"}</h2>
+    <p>{capabilities.authorizationPolicy ? "UGX prototype testing. No real money is collected. Provider authorization details remain in receipts." : demo ? "Local simulator. No real money or actual phone authorization. You may apply for one UGX demo loan alongside an existing EUR loan, without converting or closing it." : capabilities.loanCurrency === "UGX" ? "UGX prototype loans and EUR MTN payments are separate. No repayment conversion is approved." : "EUR test currency only."} Core UGX debt, wallets and real scores remain separate. Cloud allocation is not confirmed meter delivery.</p>
     <button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Refresh & recover stored requests</button>
     {fetched && <p className={stale ? "stale" : "muted"}>{stale ? "Stale — " : "Fetched "}{when(fetched)}</p>}
     {offline && <p role="status">Offline — no financial requests will be initiated.</p>}
@@ -330,7 +330,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       <label>Activity<select value={purpose} onChange={event => { formVersion.current++; setPurpose(event.target.value === "PURCHASE" ? "PURCHASE" : "LOAN"); setQuote(null); setAccepted(false); }}>
         <option value="LOAN">Test electricity loan</option><option value="PURCHASE" disabled={capabilities.newPaymentsPaused}>{demo ? "Demo purchase" : "MTN sandbox purchase"}</option>
       </select></label>
-      <label>Principal / payment ({currency === "UGX" ? "whole UGX DEMO" : "EUR TEST"})<input inputMode={currency === "UGX" ? "numeric" : "decimal"} value={amount} onChange={event => { formVersion.current++; setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
+      <label>Principal / payment ({currency === "UGX" ? "whole UGX" : "EUR TEST"})<input inputMode={currency === "UGX" ? "numeric" : "decimal"} value={amount} onChange={event => { formVersion.current++; setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
       <p>Quote range {money(policy?.minimum ?? null)} – {money(policy?.maximum ?? null)}. Approval uses your limit and existing obligations at submission.</p>
       {(purpose === "LOAN" && loanReason) && <p role="status">{loanReason}</p>}
       {!pricingStatus.available && <p role="status">{pricingStatus.message}</p>}
@@ -362,18 +362,19 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
         {loans.filter(row => row.status === "DISBURSED" && row.environment === paymentEnvironment).map(row => <option key={row.id} value={row.id}>{row.id} · {testMoney(row.outstanding, row.currency)}</option>)}
       </select></label>
       {selectedLoan && <p>Policy {selectedLoan.terms.policy.id}; outstanding {testMoney(selectedLoan.outstanding, paymentCurrency)}. Repayment reduces only this loan; it creates no energy.</p>}
-      <label>Amount ({demo ? "whole UGX DEMO" : "EUR TEST cents"})<input inputMode={demo ? "numeric" : "decimal"} value={repayment} onChange={event => setRepayment(event.target.value)} required /></label>
+      <label>Amount ({paymentCurrency === "UGX" ? "whole UGX" : "EUR TEST cents"})<input inputMode={paymentCurrency === "UGX" ? "numeric" : "decimal"} value={repayment} onChange={event => setRepayment(event.target.value)} required /></label>
       <label><input type="checkbox" checked={repayAccepted} onChange={event => setRepayAccepted(event.target.checked)} /> I accept test repayment terms: any late excess is preserved for reconciliation; no automatic refund or credit.</label>
       <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !validPaymentAmount(repayment) || (!demo && !testPhone(phone))}>{demo ? "Start demo self-repayment" : "Initiate sandbox self-repayment"}</button>
     </form>
     <section><h3>Sandbox receipts & pending recovery</h3>{!fetched ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
       <strong>{row.purpose} · {row.status} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
-      <p>Environment: {row.environment}. Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} {row.environment === "UGX_DEMO" ? "No external provider or phone prompt." : `Next provider check ${when(row.next_check_at)}.`}</p>
+      <p>Environment: {row.environment}. Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} {row.provider === "LOCAL_DEMO" ? "No external provider or phone prompt." : `Next provider check ${when(row.next_check_at)}.`}</p>
       {row.status === "SETTLED" && row.purpose === "PURCHASE" && <EnergyTokenCard client={client} owner={owner} allocationId={row.allocation_id} />}
-      {row.status === "SETTLED" && <p>{row.environment === "UGX_DEMO" ? DEMO_SUCCESS : "Provider verified."} {when(row.settled_at)}. Billed {testMoney(row.billed, row.currency)}; remainder {testMoney(row.residual, row.currency)}; debt applied {testMoney(row.applied, row.currency)}; excess {testMoney(row.excess, row.currency)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
-      {row.status === "PENDING" && row.environment === "UGX_DEMO" && <p role="status">{DEMO_PENDING} Processing: {demoCountdown(row, clock) ?? "Unavailable"} seconds. {demoCountdown(row, clock) === 0 && "Awaiting server confirmation — not yet successful."}</p>}
+      {row.status === "SETTLED" && <p>{row.provider === "LOCAL_DEMO" ? DEMO_SUCCESS : "Provider verified."} {when(row.settled_at)}. Billed {testMoney(row.billed, row.currency)}; remainder {testMoney(row.residual, row.currency)}; debt applied {testMoney(row.applied, row.currency)}; excess {testMoney(row.excess, row.currency)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
+      {row.status === "PENDING" && row.provider === "LOCAL_DEMO" && <p role="status">{DEMO_PENDING} Processing: {demoCountdown(row, clock) ?? "Unavailable"} seconds. {demoCountdown(row, clock) === 0 && "Awaiting server confirmation — not yet successful."}</p>}
+      {row.provider_receipt && <details><summary>Provider test authorization</summary><p>EUR {row.provider_receipt.amount} · {row.authorization_policy}. Test evidence only, not a currency conversion or real UGX collection.</p></details>}
       {row.status === "PENDING" && row.environment !== environment && <p>This earlier request retains its original provider and currency. Scheduled reconciliation continues; it is not converted.</p>}
-      {row.status === "PENDING" && <button type="button" className="secondary" disabled={busy || offline || (row.environment === "UGX_DEMO" && demoCountdown(row, clock) !== 0)} onClick={() => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); })}>{demo ? "Request server demo completion" : "Check with MTN (server backoff applies)"}</button>}
+      {row.status === "PENDING" && <button type="button" className="secondary" disabled={busy || offline || (row.provider === "LOCAL_DEMO" && demoCountdown(row, clock) !== 0)} onClick={() => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); })}>{demo ? "Request server demo completion" : "Check with MTN (server backoff applies)"}</button>}
     </article>)}</section>
   </section>;
 }
