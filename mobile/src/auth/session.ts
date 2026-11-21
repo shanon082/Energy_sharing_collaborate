@@ -1,3 +1,4 @@
+import { withRequestDeadline, RequestTimeout } from "../../../frontend/src/lib/request-deadline.ts";
 import type { SessionStore } from "./secure-store.ts";
 import { clearOwnerRequestIds } from "../api/request-id.ts";
 
@@ -72,6 +73,17 @@ export class SessionManager {
   get lastRequest(): Readonly<RequestDiagnostic> | null { return this.diagnostic; }
 
   private async call(path: string, options: RequestInit = {}, token?: string): Promise<{ status: number; body: unknown }> {
+    try { return await withRequestDeadline(signal => this.callResponse(path, {...options, signal}, token)); }
+    catch (error) {
+      if (error instanceof RequestTimeout) {
+        if (this.diagnostic) { this.diagnostic.outcome = "transport failure"; this.diagnostic.failure = "AbortError"; }
+        throw error;
+      }
+      throw error;
+    }
+  }
+
+  private async callResponse(path: string, options: RequestInit = {}, token?: string): Promise<{ status: number; body: unknown }> {
     const url = `${this.baseUrl}/${path.replace(/^\/+/, "")}`;
     const diagnostic: RequestDiagnostic = {
       method: options.method || "GET", path: new URL(url).pathname,
@@ -149,7 +161,7 @@ export class SessionManager {
         method: "POST", body: JSON.stringify({ refresh: session.refresh }),
       });
     } catch (error) {
-      if (error instanceof TransportError || error instanceof ResponseFormatError) throw error;
+      if (error instanceof TransportError || error instanceof ResponseFormatError || error instanceof RequestTimeout) throw error;
       await this.clear(); return false;
     }
     if (response.status !== 200) { await this.clear(); return false; }

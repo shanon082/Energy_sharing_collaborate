@@ -59,7 +59,7 @@ class FreeTestingMiddleware:
                 "/api/v1/sandbox/quotes/", "/api/v1/sandbox/loans/", "/api/v1/sandbox/payments/",
                 "/api/v1/sandbox/assessment/",
                 "/api/v1/meter/sandbox-meter-enrollment/"
-            } or re.fullmatch(r"/api/v1/sandbox/payments/[0-9a-fA-F-]{36}/", path)))
+            } or re.fullmatch(r"/api/v1/sandbox/payments/[0-9a-fA-F-]{36}/(?:retry/)?", path)))
         local_metadata = path in {
             "/api/v1/meter/register/", "/api/v1/meter/mobile-meter-requests/",
             # These previews perform no reconciliation, settlement or dispatch.

@@ -51,7 +51,9 @@ export type TestLoan = { repayment_available?: boolean; repayment_message?: stri
   reason: string; principal: string; total_due: string; outstanding: string; due_at: string; created_at?: string; closed_at: string | null;
   applied_repayments?: string; allocation_id: number | null; allocated_kwh: string | null; terms: TestTerms; assessment: Assessment };
 export type ProviderReceipt = {reference: string; external_id: string; transaction_id: string | null; amount: string; currency: "EUR"; environment: "MTN_SANDBOX"; status: "PENDING" | "FAILED" | "SETTLED"; purpose: "TEST_AUTHORIZATION"; no_real_money: true};
-export type TestPayment = { authorization_policy?: "UGX-MTN-TEST-AUTH-v1"; instruction_id?: string; provider_receipt?: ProviderReceipt; pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
+export type TestCheckout = { expires_at: string; expired: boolean; state: "OPEN" | "EXPIRED" | "LOCAL_INITIATION_CANCELLED"; classification: string; provider_cancelled: false;
+  operation_reference: string; replaces_reference: string | null; fulfilled_reference: string | null; business_effect: "NONE" | "FULFILLED" | "ADDITIONAL_AUTHORIZATION_REVIEW"; retry_available: boolean; message: string };
+export type TestPayment = { checkout?: TestCheckout; authorization_policy?: "UGX-MTN-TEST-AUTH-v1"; instruction_id?: string; provider_receipt?: ProviderReceipt; pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
   demo_eligible_at?: string | null; server_time?: string; observed_at?: number; reference: string; client_request_id: string; purpose: string; status: "PENDING" | "SETTLED" | "FAILED";
   amount: string; meter_id: number; loan_id: string | null; billed: string | null; residual: string | null; applied: string | null; excess: string | null;
   allocation_id?: number | null; allocated_kwh: string | null; initiated_at: string; settled_at: string | null; submission_state: string; reconciliation_error: string; next_check_at: string };
@@ -98,13 +100,15 @@ export function demoCountdown(row: TestPayment, now = Date.now()): number | null
 /** Both clients poll Django. Elapsed time never constitutes a successful payment. */
 export function paymentStatusMethod(row: TestPayment, now = Date.now()): "GET" | "POST" {
   if (row.status !== "PENDING") return "GET";
+  if (row.checkout?.state === 'LOCAL_INITIATION_CANCELLED') return 'GET';
   if (row.provider === "LOCAL_DEMO" && row.environment === "UGX_DEMO") return demoCountdown(row, now) === 0 ? "POST" : "GET";
   const next = Date.parse(row.next_check_at);
   return Number.isFinite(next) && next <= now ? "POST" : "GET";
 }
 /** A missing recovery row may race an in-flight POST; it is not proof of failure. */
-export function canClearRecoveredRetry(row: { status: string } | null): boolean {
-  return row !== null && ["SETTLED", "FAILED", "DISBURSED", "COMPLETED", "REJECTED"].includes(row.status);
+export function canClearRecoveredRetry(row: { status: string; checkout?: TestCheckout } | null): boolean {
+  return row !== null && (["SETTLED", "FAILED", "DISBURSED", "COMPLETED", "REJECTED"].includes(row.status)
+    || row.status === 'PENDING' && row.checkout?.state === 'LOCAL_INITIATION_CANCELLED');
 }
 export function testPhone(value: string): boolean { return /^\d{10,15}$/.test(value); }
 export function parseTestPayment(value: unknown): TestPayment {
@@ -127,7 +131,39 @@ export function parseTestPayment(value: unknown): TestPayment {
     typeof row.demo_eligible_at !== "string" || !Number.isFinite(Date.parse(row.demo_eligible_at)) ||
     typeof row.initiated_at !== "string" || !Number.isFinite(Date.parse(row.initiated_at)) || Date.parse(row.demo_eligible_at) - Date.parse(row.initiated_at) < 5000))
     throw new Error("Invalid demo receipt or authorization deadline.");
+  if (row.checkout !== undefined) {
+    const checkout = obj(row.checkout);
+    if (typeof checkout.expires_at !== 'string' || !Number.isFinite(Date.parse(checkout.expires_at)) || typeof checkout.expired !== 'boolean'
+        || !['OPEN', 'EXPIRED', 'LOCAL_INITIATION_CANCELLED'].includes(String(checkout.state)) || checkout.provider_cancelled !== false
+        || typeof checkout.operation_reference !== 'string' || typeof checkout.retry_available !== 'boolean' || typeof checkout.message !== 'string'
+        || !['NONE', 'FULFILLED', 'ADDITIONAL_AUTHORIZATION_REVIEW'].includes(String(checkout.business_effect)))
+      throw new Error('Checkout status is unreadable. Refresh its authoritative server record.');
+  }
   return { ...row, observed_at: Date.now() } as TestPayment;
+}
+
+/** Server expiry alone unblocks checkout conflicts. Client clocks cannot enable retries. */
+export function paymentConflictReason(payments: TestPayment[], purpose: 'PURCHASE' | 'LOAN_REPAYMENT', meterId?: number, loanId?: string): string | null {
+  const rows = payments.filter(row => row.status === 'PENDING' && row.purpose === purpose &&
+    (purpose === 'PURCHASE' ? row.meter_id === meterId : row.loan_id === loanId));
+  if (rows.some(row => !row.checkout?.expired && row.checkout?.state !== 'LOCAL_INITIATION_CANCELLED' && !row.checkout?.fulfilled_reference)) return 'This operation has an open payment checkout. Check its status below; another charge is not started automatically.';
+  if (rows.some(row => row.authorization_policy && !row.checkout?.fulfilled_reference)) return 'This checkout timed out. Use “Start a new sandbox attempt” below to retry the same operation; the earlier payment remains under review.';
+  return null;
+}
+
+export function checkoutCountdown(row: TestPayment, now = Date.now()): number | null {
+  if (!row.checkout || row.status !== 'PENDING' || !row.server_time || row.observed_at === undefined) return null;
+  return Math.max(0, Math.ceil((Date.parse(row.checkout.expires_at) - Date.parse(row.server_time) - Math.max(0, now-row.observed_at))/1000));
+}
+
+export function checkoutRetryId(owner: number, reference: string): string {
+  const key = `gpawa:request:${owner}:sandbox:RETRY:${reference}`;
+  let id: string | null = null;
+  try { id = localStorage.getItem(key); } catch { /* memoryless clients still use the primary recovery handle */ }
+  if (id && /^[0-9a-f-]{36}$/i.test(id)) return id;
+  id = crypto.randomUUID();
+  try { localStorage.setItem(key, id); } catch { /* POST remains idempotent by its primary request ID */ }
+  return id;
 }
 function canonicalMoney(value: string): string {
   const [whole, fraction = ""] = value.split(".");

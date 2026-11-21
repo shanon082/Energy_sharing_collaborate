@@ -23,7 +23,7 @@ class Command(BaseCommand):
         if not 1 <= options["limit"] <= 100 or not 1 <= options["max_seconds"] <= 55:
             raise CommandError("Use limit 1–100 and max-seconds 1–55.")
         ids = list(PaymentIntent.objects.filter(provider=LOCAL_DEMO, currency="UGX", status="PENDING",
-            demo_eligible_at__lte=timezone.now()).order_by("demo_eligible_at").values_list("pk", flat=True)[:options["limit"]])
+            demo_eligible_at__lte=timezone.now()).exclude(checkout__initiation_cancelled_at__isnull=False).order_by("demo_eligible_at").values_list("pk", flat=True)[:options["limit"]])
         if not options["run"]:
             self.stdout.write(f"DRY_RUN eligible_intent_ids={ids}; no settlement")
             return

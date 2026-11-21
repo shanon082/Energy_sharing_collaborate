@@ -3,6 +3,7 @@
 import { ApiResponse, toApiError } from "./api-response";
 import { normalizeApiPath } from "./api-url";
 import { clearPrivateBrowserState } from "./session-storage";
+import { withRequestDeadline, RequestTimeout } from "./request-deadline";
 
 /** Same-origin proxy — forwards requests with the httpOnly auth cookie server-side. */
 const CLIENT_API_BASE = "/api/proxy";
@@ -71,17 +72,18 @@ const request = async <T>(
   allowRefresh = true
 ): Promise<ApiResponse<T>> => {
   try {
-    let res = await fetch(proxyUrl(path), options);
+    return await withRequestDeadline(async signal => {
+    let res = await fetch(proxyUrl(path), {...options, signal});
     let parsedBody = await parseResponseBody(res);
 
     if (res.status === 401 && allowRefresh) {
       const refreshRes = await fetch("/api/auth/refresh", {
         method: "POST",
         credentials: "include",
-        cache: "no-store",
+        cache: "no-store", signal,
       });
       if (refreshRes.ok) {
-        res = await fetch(proxyUrl(path), options);
+        res = await fetch(proxyUrl(path), {...options, signal});
         parsedBody = await parseResponseBody(res);
       }
       if (res.status === 401 && typeof window !== "undefined") {
@@ -96,9 +98,10 @@ const request = async <T>(
     }
 
     return buildSuccessResponse<T>(parsedBody, res.status);
-  } catch {
+    });
+  } catch (cause) {
     return {
-      error: { message: "Network error occurred" },
+      error: { message: cause instanceof RequestTimeout ? cause.message : "Network error occurred" },
       status: 0,
     };
   }

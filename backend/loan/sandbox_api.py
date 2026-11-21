@@ -173,6 +173,18 @@ class SandboxPaymentRecoveryView(SandboxConsumerView):
         return Response({"payment": receipt(row) if row else None})
 
 
+class SandboxCheckoutRetryView(SandboxConsumerView):
+    def post(self, request, reference):
+        from transactions.checkouts import retry_checkout
+        try:
+            row, created = retry_checkout(request.user, reference, request.data)
+            if created:
+                row, _ = reconcile_sandbox_payment(row.pk)
+        except PaymentSettlementError:
+            return Response({'code': 'MTN_SANDBOX_UNAVAILABLE', 'message': 'The new checkout is recoverable by its request ID. No confirmed outcome is available yet.'}, status=503)
+        return Response({'payment': receipt(row), 'reused': not created}, status=202 if created else 200)
+
+
 class SandboxStaffDecisionView(APIView):
     permission_classes = [IsAuthenticated]
 

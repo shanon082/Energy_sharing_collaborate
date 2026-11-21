@@ -1,3 +1,5 @@
+Latest checkout recovery build: [CHECKOUT_BUILD.md](CHECKOUT_BUILD.md). Earlier build reports remain historical.
+
 # EnergyFlex consumer Android app
 
 Latest testing release: [UGX purchases, loans, repayments and UGX Home](UGX_MTN_BUILD.md). The approved fixed EUR1 MTN test authorization is implemented; customer amounts remain UGX and actual EUR receipts/history remain separate. Deploy Django/configuration and the Vercel build separately before phone acceptance. Older build summaries below are historical.

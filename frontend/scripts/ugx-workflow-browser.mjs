@@ -60,11 +60,11 @@ try{
  await page.getByLabel('MTN sandbox number').fill('46733123454');
  await page.getByRole('checkbox').check();await control({hold:true});
  await page.getByRole('button',{name:'Confirm repayment',exact:true}).click();
- await page.getByText('Payment pending',{exact:true}).first().waitFor();
+ await page.getByRole('complementary',{name:'Pending payment status'}).waitFor();
  await page.waitForTimeout(5500);
  let state=await control({});assert.equal(state.stats.completions,0,'Timer incorrectly settled an MTN instruction');
  await page.reload();await select(11);
- await page.getByText('Payment pending',{exact:true}).first().waitFor();
+ await page.getByRole('complementary',{name:'Pending payment status'}).waitFor();
  await control({hold:false,confirmPayments:true});
  await wait(()=>document.querySelector('.loan-balance')?.textContent.includes('6,500'));
  await shot('partial-repayment-receipt');results.push('UGX4000 partial repayment → UGX6500; pending survives reload, five seconds does not settle');
@@ -73,9 +73,9 @@ try{
  await page.getByRole('heading',{name:'Review your purchase',exact:true}).waitFor();
  await page.getByLabel('MTN sandbox number').fill('46733123454');await page.getByRole('checkbox').check();
  await page.getByRole('button',{name:'Confirm purchase',exact:true}).dblclick();
- await page.getByText('Payment pending',{exact:true}).first().waitFor();
+ await page.getByRole('complementary',{name:'Pending payment status'}).waitFor();
  state=await control({});assert.equal(state.stats.initiations,2,'Duplicate purchase click created another initiation');
- await page.reload();await select(11);await page.getByText('Payment pending',{exact:true}).first().waitFor();
+ await page.reload();await select(11);await page.getByRole('complementary',{name:'Pending payment status'}).waitFor();
  await control({hold:false,confirmPayments:true});
  await page.getByText('Payment confirmed — token issued.',{exact:true}).first().waitFor();
  assert.equal(await page.getByRole('textbox',{name:'15-digit electricity token'}).count(),1);

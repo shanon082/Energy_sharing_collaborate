@@ -18,11 +18,11 @@ const pricing = amount => ({ inputs_hash: 'f'.repeat(64), inputs: { version: 'BR
 const loanId = '11111111-1111-4111-8111-111111111111';
 const dueAt = () => new Date(Date.now()+7*86400000).toISOString();
 const terms = (amount='5000', meter=11, purpose='LOAN') => ({ owner_id: owner, meter_id: meter, policy:purpose==='LOAN'?loanPolicy():policy, ...(mapped?{energy_environment:'SANDBOX'}:{}), purpose, amount, energy_kwh: `${BigInt(amount)/1000n}.${String(BigInt(amount)%1000n/10n).padStart(2,'0')}`, billed: amount, residual: '0', interest: purpose === 'LOAN' ? String(BigInt(amount)*5n/100n) : '0', fee: '0', total_due: purpose === 'LOAN' ? String(BigInt(amount)*105n/100n) : '0', due_at: dueAt(), pricing: pricing(amount), assessment: null });
-let loans, payments, mode, stats, quotes, meters, profile;
+let loans, payments, mode, stats, quotes, meters, profile, fulfillments;
 const sum = (rows,key) => rows.reduce((total,row)=> total + BigInt(String(row[key]).split('.')[0]),0n).toString();
 function reset() {
  mode = { unavailable:false, delay:false, hold:false, empty:false, pendingAssessment:false, rejectSubmit:false, noMeters:false, assessmentError:false, purchaseError:false, featuresDelay:0, confirmPayments:false };
- stats = { requests:[], initiations:0, applications:0, completions:0, profileUpdates:[] };
+ stats = { requests:[], initiations:0, applications:0, completions:0, providerConfirmations:0, profileUpdates:[] }; fulfillments=new Map();
  quotes = new Map(); meters=initialMeters.map(row=>({...row}));
  profile = { account_number:'DEMO-007', address:'Prototype address', energy_preference:'HISTORICAL_CHOICE', payment_method:null };
  loans = [{ id:loanId, client_request_id:randomUUID(), meter_id:11, currency:'UGX', environment:'UGX_DEMO', status:'DISBURSED', principal:'5000.00', total_due:'5250.00', applied_repayments:'2500.00', outstanding:'2750.00', created_at:ago(120), due_at:dueAt(), closed_at:null, allocation_id:101, allocated_kwh:'5.00', reason:'Approved using your stored assessment.', terms:terms(), assessment:{} }];
@@ -37,19 +37,46 @@ function assessment(id) {
 function result(res,status,data) { res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data)); }
 function finish(payment) {
  if ((mapped&&!mode.confirmPayments)||mode.hold||Date.now()<Date.parse(payment.demo_eligible_at)||payment.status!=='PENDING') return;
- stats.completions++;payment.status='SETTLED';if(payment.provider_receipt){payment.provider_receipt.status='SETTLED';payment.provider_receipt.transaction_id='synthetic-provider-'+payment.reference;}payment.settled_at=now();
+ payment.status='SETTLED';stats.providerConfirmations++;const root=payment.operation_reference||payment.reference;const winner=fulfillments.get(root);if(!winner)fulfillments.set(root,payment.reference);if(!winner)stats.completions++;if(payment.provider_receipt){payment.provider_receipt.status='SETTLED';payment.provider_receipt.transaction_id='synthetic-provider-'+payment.reference;}payment.settled_at=now();
+ if(winner)return;
  if(payment.purpose==='PURCHASE'){payment.billed=payment.amount;payment.allocation_id=303;payment.allocated_kwh=terms(payment.amount).energy_kwh;return;}
  const loan=loans.find(row=>row.id===payment.loan_id), debt=BigInt(loan.outstanding.split('.')[0]), received=BigInt(payment.amount);
  const applied=debt<received?debt:received;payment.applied=String(applied);payment.excess=String(received-applied);
  loan.applied_repayments=String(BigInt(loan.applied_repayments.split('.')[0])+applied);loan.outstanding=String(debt-applied);
  if(loan.outstanding==='0'){loan.status='COMPLETED';loan.closed_at=now();}
 }
+
+function checkout(payment) {
+ const root=payment.operation_reference||payment.reference, winner=fulfillments.get(root)||null;
+ const expires=new Date(Date.parse(payment.initiated_at)+300000).toISOString(), expired=payment.status==='PENDING'&&Date.now()>=Date.parse(expires);
+ const additional=payment.status==='SETTLED'&&winner&&winner!==payment.reference;
+ return {expires_at:expires,expired,state:expired?'EXPIRED':'OPEN',classification:payment.status==='PENDING'?'SUBMITTED':'TERMINAL_PROVIDER_OUTCOME',provider_cancelled:false,
+  operation_reference:root,replaces_reference:payment.replaces_reference||null,fulfilled_reference:winner,
+  business_effect:additional?'ADDITIONAL_AUTHORIZATION_REVIEW':payment.status==='SETTLED'?'FULFILLED':'NONE',
+  retry_available:mapped&&expired&&!winner&&!payments.some(row=>row.replaces_reference===payment.reference),
+  message:additional?'Additional successful test authorization retained for review; this operation was already fulfilled. No second financial effect.':expired?'Request timed out; payment confirmation is still being checked.':'Waiting for the confirmed payment outcome.'};
+}
+const serialize=payment=>({...payment,server_time:now(),checkout:checkout(payment)});
+function newPayment(body,q,original=null) {
+ const started=now();const payment={reference:randomUUID(),client_request_id:body.client_request_id,purpose:body.purpose,
+  provider:'LOCAL_DEMO',currency:'UGX',environment:'UGX_DEMO',status:'PENDING',amount:body.amount||q.terms.amount,
+  meter_id:q?.terms.meter_id||loans.find(row=>row.id===body.loan_id).meter_id,loan_id:body.loan_id||null,
+  billed:'0',residual:'0',applied:'0',excess:'0',allocated_kwh:null,allocation_id:null,initiated_at:started,settled_at:null,
+  demo_eligible_at:new Date(Date.parse(started)+5000).toISOString(),server_time:started,submission_state:'ACCEPTED',reconciliation_error:'',next_check_at:started};
+ if(mapped){payment.provider='MTN_SANDBOX';payment.instruction_id=randomUUID();payment.authorization_policy=authorization.policy;payment.demo_eligible_at=null;
+  payment.provider_receipt={reference:payment.reference,external_id:'fixture-'+payment.reference,transaction_id:null,amount:'1.00',currency:'EUR',environment:'MTN_SANDBOX',status:'PENDING',purpose:'TEST_AUTHORIZATION',no_real_money:true};}
+ if(original){payment.operation_reference=original.operation_reference||original.reference;payment.replaces_reference=original.reference;}
+ payments.unshift(payment);return payment;
+}
+
 const handler=async(req,res)=>{
  const url=new URL(req.url,'http://127.0.0.1');let text='';for await(const chunk of req)text+=chunk;
  const body=text?JSON.parse(text):{};
  if(url.pathname==='/__fixture__'){
   if(body.reset)reset();Object.assign(mode,body);
   if(body.empty){loans=[];payments=[];}
+  if(body.seedPendingPurchase)newPayment({purpose:'PURCHASE',client_request_id:randomUUID()},{terms:terms('10000',11,'PURCHASE')});
+  if(body.expirePending)for(const payment of payments.filter(row=>row.status==='PENDING'))payment.initiated_at=ago(301);
   if(body.historyEur){payments.push({reference:randomUUID(),client_request_id:randomUUID(),meter_id:11,loan_id:null,provider:'MTN_SANDBOX',currency:'EUR',environment:'MTN_SANDBOX',purpose:'PURCHASE',amount:'2.00',billed:'2.00',residual:'0',applied:'0',excess:'0',allocated_kwh:'2.00',allocation_id:null,status:'SETTLED',initiated_at:ago(50),settled_at:ago(40),demo_eligible_at:null,server_time:now(),submission_state:'ACCEPTED',reconciliation_error:'',next_check_at:now()});}
 
   return result(res,200,{mode,stats});
@@ -69,6 +96,7 @@ const handler=async(req,res)=>{
   mode.noMeters=false;return result(res,201,{success:true,status:'SELF_DECLARED',meter,created:true,message:'Meter linked for prototype testing. Ownership and live readings are not verified with the electricity provider.'});
  }
  if(path==='sandbox/summary/'){
+  if(mode.summaryHang)await new Promise(()=>{});
   if(mode.unavailable)return result(res,503,{message:'Summary temporarily unavailable.'});
   const relevant=loans.filter(row=>row.status!=='REJECTED');return result(res,200,{owner_id:owner,scope:'OWNER',meter_id:null,currency:'UGX',environment:'UGX_DEMO',loan_count:loans.length,active_loan_count:relevant.filter(row=>row.status==='DISBURSED').length,...Object.fromEntries(['principal','total_due','applied_repayments','outstanding'].map(key=>[key,sum(relevant,key)])),energy:{}});
  }
@@ -83,7 +111,7 @@ const handler=async(req,res)=>{
   const meter=meters.find(row=>path.includes(`/${row.id}/`));if(!meter||mode.noMeters)return result(res,404,{});
   return result(res,200,{meter,available_kwh:meter.id===11?'8.95':'2.00',pending_kwh:'5.00',confirmed_kwh:'0.00',meter_reported_remaining_wh:null,simulator_remaining_wh:null,last_meter_contact:null});
  }
- if(path==='sandbox/loans/'&&req.method==='GET')return result(res,200,{loans});
+ if(path==='sandbox/loans/'&&req.method==='GET')return mode.loansError?result(res,503,{message:'Fixture loans unavailable.'}):result(res,200,{loans});
  if(path.startsWith('sandbox/loan-recovery/'))return result(res,200,{loan:loans.find(row=>path.includes(row.client_request_id))||null});
  if(path==='sandbox/quotes/'&&req.method==='POST'){
   const quote={id:randomUUID(),terms_hash:'a'.repeat(64),expires_at:new Date(Date.now()+900000).toISOString(),terms:terms(body.amount,body.meter_id,body.purpose)};quotes.set(quote.id,quote);return result(res,201,quote);
@@ -92,15 +120,21 @@ const handler=async(req,res)=>{
   const existing=loans.find(row=>row.client_request_id===body.client_request_id);if(existing)return result(res,200,{loan:existing});
   stats.applications++;const q=quotes.get(body.quote_id);const loan={id:randomUUID(),client_request_id:body.client_request_id,meter_id:q.terms.meter_id,currency:'UGX',environment:'UGX_DEMO',status:mode.rejectSubmit?'REJECTED':'DISBURSED',principal:q.terms.amount,total_due:q.terms.total_due,applied_repayments:'0',outstanding:mode.rejectSubmit?'0':q.terms.total_due,terms:q.terms,assessment:assessment(q.terms.meter_id),created_at:now(),due_at:dueAt(),closed_at:null,allocation_id:mode.rejectSubmit?null:202,allocated_kwh:mode.rejectSubmit?null:q.terms.energy_kwh,reason:mode.rejectSubmit?'Not approved: controlled server-side eligibility decision.':'Approved using your stored assessment.'};loans.push(loan);return result(res,201,{loan});
  }
- if(path==='sandbox/payments/'&&req.method==='GET')return result(res,200,{payments:payments.map(row=>({...row,server_time:now()})),pending:payments.filter(row=>row.status==='PENDING')});
+ if(path==='sandbox/payments/'&&req.method==='GET')return mode.paymentsError?result(res,503,{message:'Fixture payment history unavailable.'}):result(res,200,{payments:payments.map(serialize),pending:payments.filter(row=>row.status==='PENDING').map(serialize)});
  if(path==='sandbox/payments/'&&req.method==='POST'){
   const existing=payments.find(row=>row.client_request_id===body.client_request_id);if(existing)return result(res,200,{payment:existing,reused:true});
-  stats.initiations++;const q=quotes.get(body.quote_id), started=now();const payment={reference:randomUUID(),client_request_id:body.client_request_id,purpose:body.purpose,provider:'LOCAL_DEMO',currency:'UGX',environment:'UGX_DEMO',status:'PENDING',amount:body.amount||q.terms.amount,meter_id:q?.terms.meter_id||loans.find(row=>row.id===body.loan_id).meter_id,loan_id:body.loan_id||null,billed:'0',residual:'0',applied:'0',excess:'0',allocated_kwh:null,allocation_id:null,initiated_at:started,settled_at:null,demo_eligible_at:new Date(Date.parse(started)+5000).toISOString(),server_time:started,submission_state:'SUBMITTED',reconciliation_error:'',next_check_at:started};if(mapped){payment.provider='MTN_SANDBOX';payment.instruction_id=randomUUID();payment.authorization_policy=authorization.policy;payment.demo_eligible_at=null;payment.provider_receipt={reference:payment.reference,external_id:'fixture-'+payment.reference,transaction_id:null,amount:'1.00',currency:'EUR',environment:'MTN_SANDBOX',status:'PENDING',purpose:'TEST_AUTHORIZATION',no_real_money:true};}payments.unshift(payment);return result(res,202,{payment,reused:false});
+  stats.initiations++;const payment=newPayment(body,quotes.get(body.quote_id));return result(res,202,{payment:serialize(payment),reused:false});
  }
- if(path.startsWith('sandbox/payment-recovery/'))return result(res,200,{payment:payments.find(row=>path.includes(row.client_request_id))||null});
+ if(path.startsWith('sandbox/payment-recovery/'))return result(res,200,{payment:payments.find(row=>path.includes(row.client_request_id))?serialize(payments.find(row=>path.includes(row.client_request_id))):null});
+ if(/^sandbox\/payments\/.+\/retry\/$/.test(path)&&req.method==='POST'){
+  const existing=payments.find(row=>row.client_request_id===body.client_request_id);if(existing)return result(res,200,{payment:serialize(existing)});
+  const original=payments.find(row=>path.includes(row.reference));if(!original||!checkout(original).retry_available||!body.accept_test_terms)return result(res,409,{message:'Retry unavailable.'});
+  stats.initiations++;const payment=newPayment({...body,purpose:original.purpose,amount:original.amount,loan_id:original.loan_id},{terms:{amount:original.amount,meter_id:original.meter_id}},original);
+  return result(res,202,{payment:serialize(payment)});
+ }
  if(/^sandbox\/payments\/.+\/$/.test(path)){
-  const payment=payments.find(row=>path.includes(row.reference));if(!payment)return result(res,404,{});if(req.method==='POST')finish(payment);
-  return result(res,200,{payment:{...payment,server_time:now()}});
+  const payment=payments.find(row=>path.includes(row.reference));if(!payment)return result(res,404,{});if(mode.statusDelay)await new Promise(resolve=>setTimeout(resolve,mode.statusDelay));if(req.method==='POST')finish(payment);
+  return result(res,200,{payment:serialize(payment)});
  }
  if(path==='meter/energy-tokens/'){
   const id=Number(url.searchParams.get('allocation_id')), payment=payments.find(row=>row.allocation_id===id);

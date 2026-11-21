@@ -64,3 +64,23 @@ class SandboxUGXSettlement(models.Model):
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(authorized=models.F('applied')+models.F('excess')+models.F('billed')+models.F('residual'))
             & models.Q(authorized__gt=0, applied__gte=0, excess__gte=0, billed__gte=0, residual__gte=0), name='ugx_test_effect_conservation')]
+
+
+class SandboxCheckout(models.Model):
+    """Local checkout lifecycle, deliberately independent of provider outcome.
+
+    Replacement attempts point to one root. Only the root records its winning
+    authorization. Immutable instructions and actual provider receipts stay intact.
+    """
+    intent = models.OneToOneField('transactions.PaymentIntent', on_delete=models.PROTECT, related_name='checkout')
+    root = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='attempts')
+    replaces = models.OneToOneField('self', null=True, blank=True, on_delete=models.PROTECT, related_name='replacement')
+    expired_at = models.DateTimeField(null=True, blank=True)
+    initiation_cancelled_at = models.DateTimeField(null=True, blank=True)
+    closure_reason = models.CharField(max_length=40, blank=True, default='')
+    fulfilled_by = models.OneToOneField('transactions.PaymentIntent', null=True, blank=True, on_delete=models.PROTECT, related_name='fulfilled_checkout')
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(initiation_cancelled_at__isnull=True) | models.Q(expired_at__isnull=False) | models.Q(closure_reason='OPERATION_ALREADY_FULFILLED'),
+            name='checkout_local_cancel_requires_expiry'),
+            models.CheckConstraint(condition=models.Q(root__isnull=True) | models.Q(fulfilled_by__isnull=True), name='checkout_only_root_fulfills')]

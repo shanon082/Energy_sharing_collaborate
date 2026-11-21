@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, paymentStatusMethod, canClearRecoveredRetry, testPhone,
-  type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote, type PricingStatus } from "../lib/sandbox";
+  paymentConflictReason, checkoutRetryId, type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote, type PricingStatus } from "../lib/sandbox";
 
 import { EnergyTokenCard } from "./energy-token-card";
 import { TariffDetails } from "./tariff-details";
 import { readFinanceSetup } from "../lib/finance-setup";
+import { withRequestDeadline } from "../lib/request-deadline";
 import { assessmentContextKey, loanProgressionReason } from "../lib/meter-credit";
 import SandboxMobileView, { type ConsumerFinanceView, type FinanceDestination } from "./sandbox-mobile-view";
 
@@ -61,7 +62,12 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [fetched, setFetched] = useState<string | null>(null);
-  const [unresolved, setUnresolved] = useState(false);
+  const [unresolvedLoan, setUnresolvedLoan] = useState(false);
+  const [unresolvedPayment, setUnresolvedPayment] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loansError, setLoansError] = useState<string | null>(null);
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const unresolved = purpose === "LOAN" ? unresolvedLoan : unresolvedPayment;
   const [offline, setOffline] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const epoch = useRef(0);
@@ -69,6 +75,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   const token = useRef(0);
   const inFlight = useRef(false);
   const reading = useRef(false);
+  const polling = useRef(false);
   const destination = useRef(selectedMeter?.id);
   destination.current = selectedMeter?.id;
   // Parents key this component by account; late responses cannot repopulate a new account.
@@ -86,20 +93,22 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     reading.current = true; setRefreshing(true);
     const run = ++token.current; const identity = epoch.current;
     try {
-      const [setup, l, p] = await Promise.all([
-        readFinanceSetup(client, meterId, capabilities.loanCurrency === "UGX" && !demo,
-          {currency: paymentCurrency, environment: paymentEnvironment}, {currency: loanCurrency, environment: loanEnvironment}),
-        client.get<{ loans: unknown[] }>("sandbox/loans/"),
-        client.get<{ payments: unknown[]; pending: unknown[] }>("sandbox/payments/"),
+      const [setupResult, loanResult, paymentResult] = await Promise.allSettled([
+        withRequestDeadline(() => readFinanceSetup(client, meterId, capabilities.loanCurrency === "UGX" && !demo,
+          {currency: paymentCurrency, environment: paymentEnvironment}, {currency: loanCurrency, environment: loanEnvironment})),
+        withRequestDeadline(() => client.get<{ loans: unknown[] }>("sandbox/loans/")),
+        withRequestDeadline(() => client.get<{ payments: unknown[]; pending: unknown[] }>("sandbox/payments/")),
       ]);
       const recoveredLoans: TestLoan[] = []; const recoveredPayments: TestPayment[] = [];
-      let unknown = false;
-      for (const recoveryEnvironment of ["UGX_DEMO", "MTN_SANDBOX"] as const) {
-        for (const kind of ["LOAN", "PURCHASE", "LOAN_REPAYMENT"] as const) {
+      let unknownLoan = false; let unknownPayment = paymentResult.status === "rejected";
+      const recoveryErrors: string[] = [];
+      await Promise.all((["UGX_DEMO", "MTN_SANDBOX"] as const).flatMap(recoveryEnvironment =>
+        (["LOAN", "PURCHASE", "LOAN_REPAYMENT"] as const).map(async kind => {
           const id = readRetry(owner, kind, recoveryEnvironment);
-          if (!id) continue;
+          if (!id) return;
+          try {
           if (kind === "LOAN") {
-            const recovery = await client.get<{ loan: unknown }>(`sandbox/loan-recovery/${id}/`);
+            const recovery = await withRequestDeadline(() => client.get<{ loan: unknown }>(`sandbox/loan-recovery/${id}/`));
             if (recovery.loan) {
               const loan = parseTestLoan(recovery.loan);
               if (loan.client_request_id !== id || loan.environment !== recoveryEnvironment) throw new Error("Loan recovery belongs to a different request or test environment.");
@@ -107,7 +116,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
               if (canClearRecoveredRetry(loan) && current(identity) && token.current === run) writeRetry(owner, kind, null, recoveryEnvironment);
             }
           } else {
-            const recovery = await client.get<{ payment: unknown }>(`sandbox/payment-recovery/${id}/`);
+            const recovery = await withRequestDeadline(() => client.get<{ payment: unknown }>(`sandbox/payment-recovery/${id}/`));
             if (recovery.payment) {
               const record = parseTestPayment(recovery.payment);
               if (record.client_request_id !== id || record.environment !== recoveryEnvironment) throw new Error("Payment recovery belongs to a different request or test environment.");
@@ -115,11 +124,16 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
               if (canClearRecoveredRetry(record) && current(identity) && token.current === run) writeRetry(owner, kind, null, recoveryEnvironment);
             }
           }
-        }
-      }
-      // If any lookup fails, catch retains the handles and blocks another initiation.
-      unknown = (["UGX_DEMO", "MTN_SANDBOX"] as const).some(recoveryEnvironment => ["LOAN", "PURCHASE", "LOAN_REPAYMENT"].some(kind => !!readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", recoveryEnvironment) &&
-        ![...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", recoveryEnvironment))));
+          } catch (cause) {
+            recoveryErrors.push(describe(cause));
+          }
+          const matched = [...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === id);
+          if (!matched) { if (kind === "LOAN") unknownLoan = true; else unknownPayment = true; }
+        })));
+      const setup = setupResult.status === "fulfilled" ? setupResult.value : {
+        lending: {status: "rejected", reason: setupResult.reason} as PromiseRejectedResult,
+        purchase: {status: "rejected", reason: setupResult.reason} as PromiseRejectedResult,
+      };
       if (!current(identity) || token.current !== run || destination.current !== meterId) return;
       let parsed: Assessment | null = null;
       let loanFailure: string | null = null;
@@ -139,15 +153,26 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       setLoanPolicy(a?.policy ?? null); setPurchasePolicy(purchase?.policy ?? null);
       setLoanPricing(a?.pricing ?? {available: false, message: loanFailure ?? 'Loan assessment unavailable.'});
       setPurchasePricing(purchase?.pricing ?? {available: false, message: purchaseFailure ?? 'Purchase terms unavailable.'});
-      setLoans([...new Map([...l.loans.map(parseTestLoan), ...recoveredLoans].map(row => [row.id, row])).values()]);
-      setPayments([...new Map([...mergePayments(p.payments, p.pending), ...recoveredPayments].map(row => [row.reference, row])).values()]);
-      setUnresolved(unknown); setOffline(false); setFetched(new Date().toISOString()); setError(null);
+      let loanFailureRead = loanResult.status === 'rejected' ? `Loans unavailable: ${describe(loanResult.reason)}` : null;
+      let paymentFailureRead = paymentResult.status === 'rejected' ? `Payments unavailable: ${describe(paymentResult.reason)}` : null;
+      if (loanResult.status === 'fulfilled') {
+        try { setLoans([...new Map([...loanResult.value.loans.map(parseTestLoan), ...recoveredLoans].map(row => [row.id, row])).values()]); }
+        catch (cause) { loanFailureRead = `Loans unavailable: ${describe(cause)}`; }
+      }
+      if (paymentResult.status === 'fulfilled') {
+        try { setPayments([...new Map([...mergePayments(paymentResult.value.payments, paymentResult.value.pending), ...recoveredPayments].map(row => [row.reference, row])).values()]); }
+        catch (cause) { paymentFailureRead = `Payments unavailable: ${describe(cause)}`; unknownPayment = true; }
+      }
+      setLoansError(loanFailureRead); setPaymentsError(paymentFailureRead);
+      setUnresolvedLoan(unknownLoan); setUnresolvedPayment(unknownPayment); setOffline(false);
+      if (!loanFailureRead && !paymentFailureRead) setFetched(new Date().toISOString());
+      setError([loanFailureRead, paymentFailureRead, ...recoveryErrors].filter(Boolean).join(' ') || null);
     } catch (cause) {
       if (!current(identity) || token.current !== run) return;
-      setError(describe(cause)); setUnresolved(true); onError?.(cause);
+      setError(describe(cause)); setUnresolvedPayment(true); onError?.(cause);
     } finally {
       if (current(identity) && token.current === run) {
-        reading.current = false; setRefreshing(false);
+        reading.current = false; setRefreshing(false); setLoaded(true);
       }
     }
   }, [client, owner, demo, loanCurrency, capabilities.loanCurrency, paymentCurrency, paymentEnvironment, loanEnvironment, onError, selectedMeter?.id]);
@@ -179,13 +204,13 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     return () => window.clearInterval(timer);
   }, [quote]);
 
-  const perform = async (work: () => Promise<void>, recovery = false, uncertainFinancialEffect = true) => {
-    if (inFlight.current || reading.current || offline || (!recovery && (!mutationsAvailable || unresolved))) return;
+  const perform = async (work: () => Promise<void>, recovery = false, uncertainFinancialEffect = true, operation = purpose === "LOAN" ? "LOAN" : "PAYMENT") => {
+    if (inFlight.current || reading.current || offline || (!recovery && (!mutationsAvailable || (operation === "LOAN" ? unresolvedLoan : unresolvedPayment)))) return;
     inFlight.current = true;
     const identity = epoch.current;
     setBusy(true); setError(null); setNotice(null);
     try { await work(); }
-    catch (cause) { if (current(identity)) { setError(describe(cause)); if (uncertainFinancialEffect) setUnresolved(true); onError?.(cause); } }
+    catch (cause) { if (current(identity)) { setError(describe(cause)); if (uncertainFinancialEffect) { if (operation === "LOAN") setUnresolvedLoan(true); else setUnresolvedPayment(true); } onError?.(cause); } }
     finally { inFlight.current = false; if (current(identity)) setBusy(false); }
   };
   const getQuote = (event: FormEvent) => {
@@ -246,7 +271,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       if (!current(identity)) return;
       setPayments(previous => [payment, ...previous.filter(row => row.reference !== payment.reference)]);
       setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : `Repayment ${payment.status}. Pending requests do not reduce debt.`); setRepayAccepted(false); inFlight.current = false; await refresh();
-    });
+    }, false, true, "PAYMENT");
   };
   const pending = payments.some(row => row.status === "PENDING");
   useEffect(() => {
@@ -254,10 +279,10 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     let disposed = false; const identity = epoch.current;
     const tick = async () => {
       const now = Date.now(); setClock(now);
-      if (disposed || offline || inFlight.current || reading.current || document.visibilityState !== "visible") return;
+      if (disposed || offline || inFlight.current || polling.current || reading.current || document.visibilityState !== "visible") return;
       const row = payments.find(item => item.status === "PENDING" && now >= (nextAttempt.current.get(item.reference) ?? 0));
       if (!row || now < (nextAttempt.current.get(row.reference) ?? 0)) return;
-      inFlight.current = true; nextAttempt.current.set(row.reference, now + 2000);
+      polling.current = true; nextAttempt.current.set(row.reference, now + 2000);
       try {
         const result = paymentStatusMethod(row, now) === "GET"
           ? await client.get<{ payment: unknown }>(`sandbox/payments/${row.reference}/`)
@@ -270,17 +295,30 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
           setNotice(record.status === "FAILED" ? "Sandbox payment failed. No financial effect was applied." : record.provider === "LOCAL_DEMO" ? DEMO_SUCCESS : "Sandbox payment confirmed by Django. No real money was collected."); setError(null);
           const kind = record.purpose === "PURCHASE" ? "PURCHASE" : "LOAN_REPAYMENT";
           if (readRetry(owner, kind, record.environment) === record.client_request_id) writeRetry(owner, kind, null, record.environment);
-          inFlight.current = false; await refresh(); onChanged?.();
+          await refresh(); onChanged?.();
         }
       } catch (cause) {
         nextAttempt.current.set(row.reference, Date.now() + 15000);
         if (!disposed && current(identity)) { setError(describe(cause)); onError?.(cause); }
-      } finally { inFlight.current = false; }
+      } finally { polling.current = false; }
     };
     const interval = window.setInterval(() => { void tick(); }, 500);
     return () => { disposed = true; window.clearInterval(interval); };
   }, [client, demo, environment, offline, owner, payments, pending, refresh, onChanged, onError]);
-  const blocked = busy || refreshing || offline || unresolved || pending || !mutationsAvailable;
+  const blocked = busy || refreshing || offline || unresolved || !mutationsAvailable;
+  const purchaseBlockReason = paymentsError || paymentConflictReason(payments, "PURCHASE", selectedMeter?.id);
+  const repaymentBlockReason = paymentsError || paymentConflictReason(payments, "LOAN_REPAYMENT", undefined, loanId);
+  const retryPayment = (row: TestPayment) => void perform(async () => {
+    const key = checkoutRetryId(owner, row.reference);
+    writeRetry(owner, row.purpose === "PURCHASE" ? "PURCHASE" : "LOAN_REPAYMENT", key, row.environment);
+    const response = await client.post<{payment: unknown}>(`sandbox/payments/${row.reference}/retry/`, {client_request_id: key, accept_test_terms: true});
+    const replacement = parseTestPayment(response.payment);
+    assertTestPaymentBinding(replacement, {...row, reference: undefined, client_request_id: key});
+    if (replacement.checkout?.replaces_reference !== row.reference || replacement.checkout.operation_reference !== row.checkout?.operation_reference)
+      throw new Error("Replacement checkout is not bound to the original operation.");
+    setPayments(previous => [replacement, ...previous.filter(item => item.reference !== replacement.reference)]);
+    inFlight.current = false; await refresh();
+  }, true, true, "PAYMENT");
   const meterAssessment = loanCurrency !== "UGX" || assessment?.meter_id === (selectedMeter?.id ?? null) ? assessment : null;
   const loanReason = assessmentError || loanProgressionReason(meterAssessment, selectedMeter?.id ?? null, amount);
   const selectedLoan = loans.find(row => row.id === loanId && row.environment === paymentEnvironment && row.status === "DISBURSED");
@@ -296,12 +334,13 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     loanId={loanId} selectLoan={id => { setLoanId(id); setRepayment(""); setRepayAccepted(false); }}
     repayment={repayment} setRepayment={setRepayment} repayAccepted={repayAccepted} setRepayAccepted={setRepayAccepted}
     blocked={blocked} busy={busy} refreshing={refreshing} offline={offline} unresolved={unresolved} pending={pending}
+    loaded={loaded} loansError={loansError} paymentsError={paymentsError} purchaseBlockReason={purchaseBlockReason} repaymentBlockReason={repaymentBlockReason} retryPayment={retryPayment}
     error={error} notice={notice} fetched={fetched} clock={clock} validAmount={validAmount} validPhone={testPhone(phone)}
     initializeAssessment={selectedMeter && loanCurrency === 'UGX' ? () => { void perform(async () => {
       await client.post('sandbox/assessment/', {meter_id: selectedMeter.id}); inFlight.current = false; await refresh();
     }, false, false); } : undefined}
     refresh={() => void refresh()} getQuote={getQuote} submit={submit} repay={repay}
-    checkPayment={row => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); }, true)}
+    checkPayment={row => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); }, true, false)}
   />;
 
   return <section className="sandbox-consumer panel">
@@ -314,7 +353,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="tag" role="status">{notice}</p>}
     {unresolved && <p>Refresh to resolve the previous attempt before submitting another request. Never retry by creating a new payment identity.</p>}
-    {pending && <p>There is a pending test payment. Scheduled reconciliation continues when the app is closed. Another payment is blocked until its outcome is known.</p>}
+    {pending && <p>There is a pending test payment. Scheduled reconciliation continues when the app is closed. Its checkout expires after five minutes; provider reconciliation continues independently.</p>}
     {assessment && loanPolicy && <section><h3>{loanCurrency === "UGX" ? "Demo assessment — simulated account information" : "Test credit assessment"}</h3>
       <p>{loanCurrency === "UGX" && assessment.assessment_status !== "READY" ? `Score unavailable — ${assessment.assessment_status?.toLowerCase() ?? "pending"}` : assessment.starter ? "Starter allowance — no established credit score" : `Credit score: ${assessment.score}% (base ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
       <p>{loanReason || assessment.reason} Maximum: {testMoney(assessment.maximum, loanCurrency)}.</p>
@@ -349,7 +388,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       <p>Use a sandbox scenario, never your real account number or PIN. Example test-only 46733123499: ordinary success scenario; 46733123450: failure; 46733123453: ongoing; 46733123454: delayed. Provider evidence, not this label, decides the outcome.</p>
       {(!capabilities.purchases || !capabilities.repayments) && <p>Sandbox payments unavailable. Check the server capability message; no local-demo fallback is used.</p>}
     </section>}
-    <section><h3>Test loans & decisions</h3>{!fetched ? <p>Loading…</p> : !loans.length ? <p>No test applications.</p> : loans.map(loan => <article className="panel" key={loan.id}>
+    <section><h3>Test loans & decisions</h3>{!loaded ? <p>Loading…</p> : !loans.length ? <p>No test applications.</p> : loans.map(loan => <article className="panel" key={loan.id}>
       <strong>{loan.status} · {testMoney(loan.outstanding, loan.currency)} outstanding</strong><p>{loan.reason}</p>
       <p>Reference {loan.id} · meter ID {loan.meter_id} · accepted policy {loan.terms.policy.id}</p>
       <p>Principal {testMoney(loan.principal, loan.currency)} · frozen total {testMoney(loan.total_due, loan.currency)} · due {when(loan.due_at)} · closed {when(loan.closed_at)}.</p>
@@ -366,7 +405,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       <label><input type="checkbox" checked={repayAccepted} onChange={event => setRepayAccepted(event.target.checked)} /> I accept test repayment terms: any late excess is preserved for reconciliation; no automatic refund or credit.</label>
       <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !validPaymentAmount(repayment) || (!demo && !testPhone(phone))}>{demo ? "Start demo self-repayment" : "Initiate sandbox self-repayment"}</button>
     </form>
-    <section><h3>Sandbox receipts & pending recovery</h3>{!fetched ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
+    <section><h3>Sandbox receipts & pending recovery</h3>{!loaded ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
       <strong>{row.purpose} · {row.status} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
       <p>Environment: {row.environment}. Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} {row.provider === "LOCAL_DEMO" ? "No external provider or phone prompt." : `Next provider check ${when(row.next_check_at)}.`}</p>
       {row.status === "SETTLED" && row.purpose === "PURCHASE" && <EnergyTokenCard client={client} owner={owner} allocationId={row.allocation_id} />}

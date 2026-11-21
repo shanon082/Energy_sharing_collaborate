@@ -93,6 +93,21 @@ def apply_business_settlement(intent):
     # All EUR1 is retained as test evidence, never UGX receipts or energy pricing.
     SandboxSettlement.objects.create(intent=intent, currency='EUR', environment='MTN_SANDBOX',
         received=PROVIDER_AMOUNT, residual=PROVIDER_AMOUNT)
+    from transactions.checkouts import ensure_checkout
+    from transactions.models import SandboxCheckout
+    checkout = ensure_checkout(intent)
+    root = SandboxCheckout.objects.select_for_update().get(pk=checkout.root_id or checkout.pk)
+    if checkout.root_id:
+        original = validate_instruction(root.intent)
+        if (original.owner_id, original.meter_id, original.loan_id, original.purpose, original.amount, original.quote.terms) != (
+                instruction.owner_id, instruction.meter_id, instruction.loan_id, instruction.purpose, instruction.amount, instruction.quote.terms):
+            raise PaymentSettlementError('Replacement does not match the frozen business operation.')
+    if root.fulfilled_by_id:
+        # Preserve every successful EUR authorization, but only one UGX effect.
+        # No duplicate business settlement, allocation, token or debt reduction.
+        return False
+    root.fulfilled_by = intent
+    root.save(update_fields=['fulfilled_by'])
     if intent.purpose == 'PURCHASE':
         owned_test_meter(intent.owner, instruction.meter_id, lock=True)
         terms = instruction.quote.terms

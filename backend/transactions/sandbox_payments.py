@@ -53,8 +53,6 @@ def create_payment(owner, data):
                     or (purpose == "PURCHASE" and data.get("terms_hash") != prior.sandbox_quote.terms_hash)):
                 raise ValidationError({"code": "REQUEST_ID_CONFLICT"})
             return prior, False
-        if PaymentIntent.objects.filter(owner=owner, provider__in=["LOCAL_DEMO", "MTN_SANDBOX"], status="PENDING").exists():
-            raise ValidationError({"code": "PAYMENT_PENDING_RECONCILIATION", "message": "Reconcile the existing sandbox request before initiating another."})
         loan = None
         if purpose == "PURCHASE":
             if data.get("accept_test_terms") is not True:
@@ -92,6 +90,8 @@ def create_payment(owner, data):
                 terms_hash=sha256(json.dumps(terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest(), expires_at=timezone.now()+timedelta(minutes=15))
             if data.get("accept_test_terms") is not True:
                 raise ValidationError({"accept_test_terms": "Accept the test repayment/excess terms."})
+        from transactions.checkouts import payment_conflicts, ensure_checkout, SUBMISSION_PROOF
+        payment_conflicts(owner, purpose=purpose, meter_id=quote.meter_id, loan_id=loan.pk if loan else None)
         reference = uuid.uuid4()
         now = timezone.now()
         eligible = now + timedelta(seconds=5) if demo else None
@@ -101,9 +101,10 @@ def create_payment(owner, data):
             provider_reference=reference, provider_external_id=f"sandbox-{purpose.lower()}-{reference}",
             client_request_id=key, sandbox_quote=quote, meter=quote.meter if purpose == "PURCHASE" else None,
             sandbox_loan=loan, sandbox_context={"version": 3 if mapped else 2 if demo else 1, **({"authorization_policy": POLICY, "instruction_id": str(instruction_id)} if mapped else {}), "currency": "EUR" if mapped else currency, "environment": "MTN_SANDBOX" if mapped else environment, "purpose": purpose, "owner_id": owner.pk,
-                "meter_id": quote.meter_id, "terms": quote.terms, "msisdn": msisdn}, submission_state="DEMO_PENDING" if demo else "NEW")
+                "meter_id": quote.meter_id, "terms": quote.terms, "msisdn": msisdn, "checkout_submission_proof": SUBMISSION_PROOF}, submission_state="DEMO_PENDING" if demo else "NEW")
         if mapped:
             create_instruction(intent, quote, amount, instruction_id)
+        ensure_checkout(intent)
         return intent, True
 
 
@@ -203,11 +204,19 @@ def reconcile_sandbox_payment(intent_id):
     lease = uuid.uuid4()
     with transaction.atomic():
         intent = PaymentIntent.objects.select_for_update().get(pk=intent_id, provider="MTN_SANDBOX", currency="EUR")
+        from transactions.checkouts import expire_locked, deadline, classification
+        checkout = expire_locked(intent, now)
+        if checkout and checkout.initiation_cancelled_at:
+            return intent, False
+        from transactions.checkouts import close_unsubmitted_replacement_locked
+        if close_unsubmitted_replacement_locked(intent):
+            return intent, False
         if intent.status != "PENDING" or (intent.reconcile_lease_until and intent.reconcile_lease_until > now):
             return intent, False
         if intent.reconcile_after > now:
             return intent, False
-        submit = intent.submission_state == "NEW"
+        # After expiry even ambiguous NEW metadata is status-only. No new charge.
+        submit = classification(intent) == 'NEVER_SUBMITTED' and now < deadline(intent)
         if submit:
             # Pausing NEW collections must not prevent status recovery of an
             # already submitted reference. Never send a new charge while paused.
@@ -245,7 +254,8 @@ def reconcile_sandbox_payment(intent_id):
 def receipt(intent):
     ledger = getattr(intent, "sandbox_settlement", None)
     allocation = getattr(intent, "energy_allocation", None)
-    result = {"id": intent.pk, "reference": str(intent.provider_reference), "client_request_id": str(intent.client_request_id),
+    from transactions.checkouts import checkout_info
+    result = {"id": intent.pk, "reference": str(intent.provider_reference), "client_request_id": str(intent.client_request_id), "checkout": checkout_info(intent),
         "purpose": intent.purpose, "status": intent.status, "currency": intent.currency, "environment": "UGX_DEMO" if intent.provider == LOCAL_DEMO else "MTN_SANDBOX",
         "provider": intent.provider, "label": "UGX DEMO / NO REAL MONEY" if intent.provider == LOCAL_DEMO else "EUR TEST / MTN SANDBOX",
         "demo_eligible_at": intent.demo_eligible_at.isoformat() if intent.demo_eligible_at else None, "server_time": timezone.now().isoformat(),

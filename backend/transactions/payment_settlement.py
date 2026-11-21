@@ -289,16 +289,17 @@ def _settle_locked(intent_id, evidence, *, _demo_authority=None):
         intent.provider_transaction_id = provider_transaction_id
         intent.status = PaymentIntent.SETTLED
         intent.save(update_fields=["status", "provider_transaction_id"])
+        effect = True
         if intent.provider in {"MTN_SANDBOX", "LOCAL_DEMO"}:
             from transactions.sandbox_payments import apply_sandbox_settlement
-            apply_sandbox_settlement(intent)
+            effect = apply_sandbox_settlement(intent) is not False
         elif intent.purpose == PaymentIntent.PURCHASE:
             _settle_purchase(intent)
         else:
             _settle_repayment(intent)
         intent.settled_at = timezone.now()
         intent.save(update_fields=["settled_at"])
-        return intent, True
+        return intent, effect
 
 
 def reconcile_payment(intent_id):

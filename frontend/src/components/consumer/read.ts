@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { get, post, patch } from "../../lib/fetch-client";
 import { getApiErrorMessage } from "../../lib/api-response";
 import type { SandboxClient } from "../../lib/sandbox";
+import { withRequestDeadline } from "../../lib/request-deadline";
 
 async function unwrap<T>(response: Awaited<ReturnType<typeof get<T>>>): Promise<T> {
   if (response.error) throw new Error(getApiErrorMessage(response.error, "The request could not be completed."));
@@ -23,7 +24,7 @@ export function useConsumerRead<T>(path: string | null, parse: (raw: unknown) =>
   useEffect(() => {
     if (path === null) return;
     let current = true;
-    void consumerClient.get<unknown>(path).then(raw => {
+    void withRequestDeadline(() => consumerClient.get<unknown>(path)).then(raw => {
       const value = parse(raw);
       if (current) setResult({ key, scope, value, error: null });
     }).catch(cause => { if (current) setResult(previous => ({ key, scope,

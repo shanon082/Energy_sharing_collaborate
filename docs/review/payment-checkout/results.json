@@ -1,0 +1,15 @@
+{
+  "environment": "LOCAL production Next.js + SYNTHETIC HTTPS API",
+  "hosted": false,
+  "provider_tested": false,
+  "phone_tested": false,
+  "board_tested": false,
+  "results": [
+    "Open purchase has its own status panel; both forms stay visible and unrelated loan terms remain available.",
+    "Server-expired checkout needs consent; double-click and reload keep one replacement; two successes show one synthetic token and extra evidence under review.",
+    "Summary, loan and payment HTTP503 end loading with visible errors; payment read failure does not block an otherwise eligible loan quote.",
+    "A stalled summary request ends in a bounded timeout error, never a permanent Loading card.",
+    "Phone-width form, status and retry controls remain usable with no browser runtime errors."
+  ],
+  "errors": []
+}

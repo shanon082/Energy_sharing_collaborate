@@ -72,7 +72,8 @@ test('both clients explain unavailable loan origination before the Amount step',
       loanReason: 'EUR test loan assessment policy unavailable. UGX demo assessments cannot authorize EUR debt.' });
     assert.match(html, /Loan applications unavailable/);
     assert.match(html, /EUR test loan assessment policy unavailable/);
-    assert.doesNotMatch(html, /loan-stepper|<form|Submit application|Review terms/);
+    assert.doesNotMatch(html, /loan-stepper|Submit application/);
+    assert.match(html, /<form/); assert.match(html, /disabled[^>]*>Review terms/);
   }
 });
 test('eligible EUR purchases remain reviewable and older UGX debts explain the currency boundary', () => {
@@ -151,11 +152,11 @@ test('UGX loan quotes and EUR MTN receipts remain different on web and Android',
   }
 });
 
-test('paused new payments hide EUR entry on both surfaces while retaining receipts', () => {
+test('paused new payments keep fields and receipts visible with an explicit reason', () => {
   const capabilities=sandboxCapabilities({enabled:true,provider:'MTN_SANDBOX',currency:'EUR',environment:'MTN_SANDBOX',physical_delivery:false,new_payments_paused:true,purchases:true,repayments:true,loans:false});
   for(const surface of ['web','mobile']) {
     const html=render({...props,surface,view:'purchase',capabilities,pending:false,payments:[{...pending,status:'SETTLED',billed:'2.00',allocated_kwh:'2.00'}]});
-    assert.match(html,/UGX purchases unavailable/);assert.doesNotMatch(html,/Amount \(EUR TEST\)/);assert.match(html,/EUR/);
+    assert.match(html,/Test purchases paused/);assert.match(html,/Amount \(EUR TEST\)/);assert.match(html,/disabled[^>]*>Review terms/);assert.match(html,/EUR/);
   }
 });
 
@@ -245,5 +246,34 @@ test('missing provider capability explains UGX repayment denial without a false 
    loans:[{id:'synthetic-ugx-loan',meter_id:7,currency:'UGX',environment:'UGX_DEMO',status:'DISBURSED',principal:'10000',total_due:'10500',outstanding:'6500',
     repayment_available:true,repayment_message:'',terms:{policy:{id:'DEMO-UGX-ACLAB-v1'}},reason:'Approved test loan',due_at:pending.initiated_at,closed_at:null,allocation_id:null,allocated_kwh:null}]});
   assert.match(html,/MTN credentials missing/);assert.doesNotMatch(html,/UGX debt cannot be repaid with UGX/);assert.doesNotMatch(html,/EUR/);
+ }
+});
+
+
+test('open and expired purchases never hide either form or block unrelated lending',()=>{
+ const checkout={expires_at:'2026-11-17T10:05:00Z',expired:false,state:'OPEN',classification:'SUBMITTED',provider_cancelled:false,
+  operation_reference:pending.reference,replaces_reference:null,fulfilled_reference:null,business_effect:'NONE',retry_available:false,message:'Waiting for the confirmed payment outcome.'};
+ for(const surface of ['web','mobile']) for(const expired of [false,true]) {
+  const payment={...pending,server_time:'2026-11-17T10:00:00Z',observed_at:Date.parse('2026-11-17T10:00:00Z'),
+   checkout:{...checkout,expired,state:expired?'EXPIRED':'OPEN',message:expired?'Request timed out; payment confirmation is still being checked.':checkout.message}};
+  const base={...props,surface,pending:true,payments:[payment],selectedMeter:{...props.selectedMeter,sandbox_inventory:true},
+   policy:{id:'test-only',minimum:'1',maximum:'10000'},loaded:true,assessment:{score:85,assessment_status:'READY',eligible:true,maximum:'37500'}};
+  const buy=render({...base,view:'purchase',purchaseBlockReason:'Check the existing payment below.'});
+  assert.match(buy,/<form/);assert.match(buy,/Amount/);assert.match(buy,/Pending payment status/);assert.match(buy,/disabled[^>]*>Review terms/);
+  const loan=render({...base,view:'apply',purpose:'LOAN',capabilities:{...base.capabilities,loans:true}});
+  assert.match(loan,/<form/);assert.match(loan,/<button(?:(?!disabled)[^>])*>Review terms/);
+  if(expired)assert.match(buy,/Request timed out; payment confirmation is still being checked/);
+ }
+});
+test('initial loan read error ends loading and extra authorization has no second allocation claim',()=>{
+ for(const surface of ['web','mobile']) {
+  const failed=render({...props,surface,view:'loans',loaded:true,fetched:null,loansError:'Loans unavailable: HTTP 503',error:'HTTP 503'});
+  assert.match(failed,/Loans unavailable: HTTP 503/);assert.doesNotMatch(failed,/Loading loans/);
+  const extra={...pending,status:'SETTLED',checkout:{expires_at:'2026-11-17T10:05:00Z',expired:true,state:'EXPIRED',classification:'TERMINAL_PROVIDER_OUTCOME',provider_cancelled:false,
+   operation_reference:pending.reference,replaces_reference:null,fulfilled_reference:'another-reference',business_effect:'ADDITIONAL_AUTHORIZATION_REVIEW',retry_available:false,
+   message:'Additional successful test authorization retained for review; this operation was already fulfilled. No second financial effect.'}};
+  const html=render({...props,surface,view:'activity',payments:[extra]});
+  assert.match(html,/Additional successful test authorization retained for review/);
+  assert.doesNotMatch(html,/cloud allocation recorded/);
  }
 });

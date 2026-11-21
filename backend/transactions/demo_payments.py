@@ -80,5 +80,9 @@ def complete_demo_payment(intent_id, *, owner=None):
         intent = rows.first()
         if intent is None:
             raise NotFound("Demo payment not found.")
+        from transactions.checkouts import expire_locked
+        checkout = expire_locked(intent)
+        if checkout and checkout.initiation_cancelled_at:
+            return intent, False
         # Validation and settlement share the lock, including deadline and identity.
         return _settle_locked(intent.pk, _demo_evidence(intent), _demo_authority=_DEMO_AUTHORITY)
