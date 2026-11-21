@@ -7,7 +7,7 @@ from django.db.models import Q
 from transactions.models import PaymentIntent
 from transactions.sandbox_payments import reconcile_sandbox_payment
 from loan.sandbox_service import require_sandbox
-from backend.demo_config import require_mtn_sandbox, provider_mode
+from backend.demo_config import require_mtn_sandbox, provider_mode, new_mtn_payments_paused
 from mtn_momo.sandbox import MTNSandbox
 from rest_framework.exceptions import PermissionDenied
 
@@ -28,7 +28,7 @@ class Command(BaseCommand):
         now = timezone.now()
         rows = PaymentIntent.objects.filter(provider="MTN_SANDBOX", currency="EUR", status="PENDING", reconcile_after__lte=now).filter(
             Q(reconcile_lease_until__isnull=True) | Q(reconcile_lease_until__lte=now))
-        if provider_mode() != "MTN_SANDBOX":
+        if provider_mode() != "MTN_SANDBOX" or new_mtn_payments_paused():
             # Filter before LIMIT: paused NEW records cannot fill every batch
             # and starve recovery of already-submitted collections.
             rows = rows.exclude(submission_state="NEW")

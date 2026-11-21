@@ -1,0 +1,358 @@
+--- a/meter/diagnostics.py
++++ b/meter/diagnostics.py
+@@ -1,7 +1,127 @@
+-"""Fixed non-sensitive protocol codes; no arbitrary response values in logs."""
+-CODES = frozenset('COMMAND_UNAVAILABLE CREDIT_CONSERVATION DEVICE_BOOT_REPLAY DEVICE_STORAGE_REQUIRED EVENT_CONFLICT IDENTITY_OUT_OF_RANGE PZEM_COUNTER_RESET STALE_TELEMETRY REQUEST_INVALID TOKEN_LOOKUP_MISS TOKEN_UNAVAILABLE TOKEN_AMOUNT_MISMATCH TOKEN_SOURCE_UNVERIFIED TOKEN_ALREADY_USED PENDING_COMMAND RESERVATION_CONFLICT DEVICE_UNAUTHORIZED DEVICE_BINDING_MISMATCH DEVICE_SESSION_REQUIRED DEVICE_STORAGE_RESET DEVICE_COUNTER_REGRESSION RECONCILIATION_REQUIRED TOKEN_SERVICE_UNAVAILABLE TOKEN_STORAGE_UNAVAILABLE AC_LAB_DISABLED DEVICE_RATE_LIMITED RECEIPT_BINDING_MISMATCH RECEIPT_CONFLICT OUTPUT_DISABLED TESTING_OPERATION_UNAVAILABLE'.split())
++"""Device diagnostics contain IDs, fixed codes and stack locations, never data."""
++from contextlib import contextmanager
++from contextvars import ContextVar
++import logging
++from pathlib import Path
++import re
++import traceback
++import uuid
++
++CODES = frozenset('COMMAND_UNAVAILABLE CREDIT_CONSERVATION DEVICE_BOOT_REPLAY DEVICE_STORAGE_REQUIRED EVENT_CONFLICT IDENTITY_OUT_OF_RANGE PZEM_COUNTER_RESET STALE_TELEMETRY REQUEST_INVALID REQUEST_TOO_LARGE TOKEN_LOOKUP_MISS TOKEN_UNAVAILABLE TOKEN_AMOUNT_MISMATCH TOKEN_SOURCE_UNVERIFIED TOKEN_ALREADY_USED PENDING_COMMAND RESERVATION_CONFLICT DEVICE_UNAUTHORIZED DEVICE_BINDING_MISMATCH DEVICE_SESSION_REQUIRED DEVICE_STORAGE_RESET DEVICE_COUNTER_REGRESSION RECONCILIATION_REQUIRED TOKEN_SERVICE_UNAVAILABLE TOKEN_STORAGE_UNAVAILABLE AC_LAB_DISABLED DEVICE_RATE_LIMITED RECEIPT_BINDING_MISMATCH RECEIPT_CONFLICT OUTPUT_DISABLED TESTING_OPERATION_UNAVAILABLE INTERNAL_ERROR'.split())
++STAGES = frozenset('authentication device_binding request_validation token_lookup meter_environment_mismatch token_amount_validation source_eligibility token_integrity already_used_token pending_delivery conflicting_command delivery_reservation command_creation ack_command_lookup ack_validation credit_reconciliation hosting_policy request_routing response_serialization handler complete'.split())
++_current = ContextVar('device_diagnostic', default=None)
++logger = logging.getLogger('meter.device')
++# The isolated protocol logger must retain 2xx replies too: a device may reject
++# their JSON/command locally. Do not enable global DEBUG or attach request data.
++if not logger.handlers:
++    handler = logging.StreamHandler()
++    handler.setFormatter(logging.Formatter('%(message)s'))
++    logger.addHandler(handler)
++    logger.setLevel(logging.INFO)
++    logger.propagate = False
++
++
++def request_id(request):
++    value = request.headers.get('X-Request-ID', '')
++    if not isinstance(value, str) or len(value) != 36:
++        return str(uuid.uuid4())
++    try:
++        parsed = uuid.UUID(value)
++        if parsed.version == 4 and str(parsed) == value:
++            return value
++    except (ValueError, TypeError, AttributeError):
++        pass
++    return str(uuid.uuid4())  # Never echo/log an arbitrary incoming header.
++
++
++@contextmanager
++def trace_request(request, operation):
++    state = {'request_id': request_id(request), 'operation': operation, 'stage': 'handler'}
++    token = _current.set(state)
++    try:
++        yield state
++    finally:
++        _current.reset(token)
++
++
++def mark_stage(stage):
++    state = _current.get()
++    if state is not None:
++        state['stage'] = stage if stage in STAGES else 'handler'
+ 
+ 
+ def safe_code(data, status):
+     value = data.get('code') if isinstance(data, dict) else None
+     return str(value) if isinstance(value, str) and value in CODES else f'HTTP_{status}'
++
++
++def error_stage(code, current):
++    fixed = {'REQUEST_INVALID': 'request_validation', 'REQUEST_TOO_LARGE': 'request_validation',
++             'DEVICE_BINDING_MISMATCH': 'device_binding', 'DEVICE_SESSION_REQUIRED': 'device_binding',
++             'DEVICE_COUNTER_REGRESSION': 'credit_reconciliation', 'DEVICE_BOOT_REPLAY': 'credit_reconciliation',
++             'DEVICE_STORAGE_REQUIRED': 'credit_reconciliation', 'DEVICE_STORAGE_RESET': 'credit_reconciliation', 'TOKEN_LOOKUP_MISS': 'token_lookup',
++             'TOKEN_AMOUNT_MISMATCH': 'token_amount_validation', 'TOKEN_SOURCE_UNVERIFIED': 'source_eligibility',
++             'TOKEN_STORAGE_UNAVAILABLE': 'token_integrity', 'TOKEN_ALREADY_USED': 'already_used_token',
++             'PENDING_COMMAND': 'pending_delivery', 'RESERVATION_CONFLICT': 'conflicting_command',
++             'RECEIPT_CONFLICT': 'conflicting_command', 'RECEIPT_BINDING_MISMATCH': 'ack_validation',
++             'COMMAND_UNAVAILABLE': 'ack_command_lookup', 'AC_LAB_DISABLED': 'hosting_policy',
++             'TESTING_OPERATION_UNAVAILABLE': 'hosting_policy'}
++    return fixed.get(code, current if current in STAGES else 'handler')
++
++
++def safe_trace(exc):
++    """No exception messages, source text, request object or frame locals."""
++    locations = []
++    for frame, line in traceback.walk_tb(exc.__traceback__):
++        filename = Path(frame.f_code.co_filename).name
++        function = frame.f_code.co_name
++        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,95}\.py', filename):
++            filename = 'external'
++        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,95}', function):
++            function = 'external'
++        locations.append(f'{filename}:{line}:{function}')
++    name = type(exc).__name__
++    if name not in {'ValueError', 'KeyError', 'TypeError', 'AttributeError', 'RuntimeError', 'OperationalError', 'ProgrammingError', 'IntegrityError', 'DatabaseError', 'AssertionError'}:
++        name = 'Exception'
++    return name + ':' + (' > '.join(locations[-16:]) or 'unavailable')
++
++
++def log_result(state, status, code):
++    stage = error_stage(code, state['stage']) if status >= 400 else 'complete'
++    if code == 'TOKEN_UNAVAILABLE' and stage == 'token_lookup':
++        code = 'TOKEN_LOOKUP_MISS'  # Operator only; public reply stays generic.
++    logger.log(logging.ERROR if status >= 500 else logging.WARNING if status >= 400 else logging.INFO,
++               'DEVICE request_id=%s operation=%s http=%d stage=%s code=%s%s',
++               state['request_id'], state['operation'], status, stage, code,
++               ' traceback=' + state['traceback'] if 'traceback' in state else '')
++
++
++def hosting_rejection(request):
++    from django.http import JsonResponse
++    operation = request.path.rstrip('/').rsplit('/', 1)[-1]
++    if operation not in {'session', 'redeem', 'ack', 'telemetry'}:
++        operation = 'handler'
++    with trace_request(request, operation) as state:
++        mark_stage('hosting_policy')
++        response = JsonResponse({'code': 'TESTING_OPERATION_UNAVAILABLE',
++                                 'message': 'Device operation unavailable in this hosting profile.',
++                                 'request_id': state['request_id']}, status=503)
++        response['X-Request-ID'] = state['request_id']
++        response['Cache-Control'] = 'private, no-store'
++        log_result(state, 503, 'TESTING_OPERATION_UNAVAILABLE')
++        return response
++
++
++def unhandled_response(request, response):
++    """Correlate a missing route/proxy-to-Django failure without enabling it."""
++    if response.has_header('X-Request-ID'):
++        return response
++    operation = request.path.rstrip('/').rsplit('/', 1)[-1]
++    if operation not in {'session', 'redeem', 'ack', 'telemetry'}:
++        operation = 'handler'
++    with trace_request(request, operation) as state:
++        mark_stage('request_routing' if response.status_code == 404 else 'handler')
++        response['X-Request-ID'] = state['request_id']
++        response['Cache-Control'] = 'private, no-store'
++        log_result(state, response.status_code, f'HTTP_{response.status_code}')
++    return response
+--- a/meter/api/prototype_views.py
++++ b/meter/api/prototype_views.py
+@@ -1,13 +1,15 @@
+ """Only authenticated, explicitly commissioned AC lab firmware may mutate here."""
+ import json
+-import logging
+ from django.db import transaction
++from django.http import JsonResponse
+ from django.utils.decorators import method_decorator
+ from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
++from rest_framework.exceptions import APIException
+ from rest_framework.permissions import AllowAny
+ from rest_framework.response import Response
+ from rest_framework.views import APIView
+ from meter import prototype_device as service
++from meter.diagnostics import trace_request, mark_stage, safe_code, safe_trace, log_result
+ 
+ 
+ def unique_object(pairs):
+@@ -26,18 +28,56 @@
+     permission_classes = [AllowAny]
+     parser_classes = []
+ 
++    def dispatch(self, request, *args, **kwargs):
++        operation = 'ack' if self.operation.__name__ == 'acknowledge' else self.operation.__name__
++        with trace_request(request, operation) as self.diagnostic:
++            try:
++                response = super().dispatch(request, *args, **kwargs)
++                # Keep serialization failures inside the redacted diagnostic boundary.
++                if hasattr(response, 'render'):
++                    stage = self.diagnostic['stage']
++                    self.diagnostic['stage'] = 'response_serialization'
++                    response.render()
++                    self.diagnostic['stage'] = stage
++                log_result(self.diagnostic, response.status_code, self.diagnostic.get('result_code', safe_code(getattr(response, 'data', None), response.status_code)))
++                return response
++            except Exception as exc:
++                self.diagnostic['traceback'] = safe_trace(exc)
++                log_result(self.diagnostic, 500, 'INTERNAL_ERROR')
++                response = JsonResponse({'code': 'INTERNAL_ERROR', 'message': 'Device request failed; share the request ID with the operator.',
++                                         'request_id': self.diagnostic['request_id']}, status=500)
++                response['X-Request-ID'] = self.diagnostic['request_id']
++                response['Cache-Control'] = 'private, no-store'
++                response['Referrer-Policy'] = 'no-referrer'
++                return response
++
++    def handle_exception(self, exc):
++        if isinstance(exc, APIException):
++            return super().handle_exception(exc)
++        self.diagnostic['traceback'] = safe_trace(exc)
++        return Response({'code': 'INTERNAL_ERROR', 'message': 'Device request failed; share the request ID with the operator.'}, status=500)
++
+     def finalize_response(self, request, response, *args, **kwargs):
+         response = super().finalize_response(request, response, *args, **kwargs)
+         response['Cache-Control'] = 'private, no-store'
+         response['Referrer-Policy'] = 'no-referrer'
+-        from meter.diagnostics import safe_code
+-        logging.getLogger('meter.device').log(logging.WARNING if response.status_code >= 400 else logging.INFO, 'DEVICE operation=%s http=%d code=%s',
+-            self.operation.__name__, response.status_code, safe_code(getattr(response, 'data', None), response.status_code))
++        response['X-Request-ID'] = self.diagnostic['request_id']
++        code = safe_code(getattr(response, 'data', None), response.status_code)
++        self.diagnostic['result_code'] = code
++        if response.status_code >= 400:
++            public = 'TOKEN_UNAVAILABLE' if code == 'TOKEN_LOOKUP_MISS' else code
++            messages = {'TOKEN_UNAVAILABLE': 'Token unavailable for this device.',
++                        'DEVICE_UNAUTHORIZED': 'Device authentication failed.',
++                        'INTERNAL_ERROR': 'Device request failed; share the request ID with the operator.'}
++            response.data = {'code': public, 'message': messages.get(public, 'Device request rejected.'),
++                             'request_id': self.diagnostic['request_id']}
+         return response
+ 
+     @sensitive_variables()
+     def post(self, request):
++        mark_stage('authentication')
+         device = service.authenticate(request)
++        mark_stage('request_validation')
+         if request.content_type != 'application/json':
+             service.fail('REQUEST_INVALID', 'Use application/json.', 400)
+         raw = request.stream.read(4097) if request.stream is not None else b""
+--- a/meter/prototype_device.py
++++ b/meter/prototype_device.py
+@@ -13,6 +13,7 @@
+ from django.views.decorators.debug import sensitive_variables
+ 
+ from accounts.models import User
++from meter.diagnostics import mark_stage
+ from meter.bench_device import BenchError, payload_digest, rate_attempt
+ from meter.energy_tokens import authorized_source, cipher, digest_token
+ from meter.models import (EnergyAllocation, EnergyKeypadToken, Meter, MeterDelivery,
+@@ -103,6 +104,7 @@
+ 
+ 
+ def active_binding(device):
++    mark_stage('device_binding')
+     meter = Meter.all_objects.get(pk=device.meter_id)
+     if (not device.active or device.revoked_at or device.output_enabled or device.environment != permitted_environment()
+             or device.hardware_class != 'AC_LAB' or meter.user_id != device.owner_id or meter.is_deleted
+@@ -116,6 +118,7 @@
+ 
+ @sensitive_variables()
+ def authenticate(request):
++    mark_stage('authentication')
+     require_lab()
+     rate_attempt('ac-ip:' + str(request.META.get('REMOTE_ADDR', 'unknown')), 120)
+     try:
+@@ -132,14 +135,18 @@
+ 
+ 
+ def validate(body, device, fields):
++    mark_stage('request_validation')
+     if not isinstance(body, dict) or set(body) != IDENTITY | set(fields):
+         fail('REQUEST_INVALID', 'Payload fields do not match the firmware contract.', 400)
+     integer(body, 'binding_epoch', minimum=1)
++    mark_stage('device_binding')
+     if any(body.get(key) != value for key, value in identity(device).items()):
+         fail('DEVICE_BINDING_MISMATCH', 'Device binding does not match.', 403)
++    mark_stage('request_validation')
+ 
+ 
+ def lab_source(allocation, environment=None):
++    mark_stage('source_eligibility')
+     environment = environment or permitted_environment()
+     if environment not in DOMAIN_PROTOCOLS or allocation.accounting_environment != environment:
+         return False
+@@ -193,6 +200,7 @@
+ 
+ 
+ def credit_state(device, body, session=False):
++    mark_stage('credit_reconciliation')
+     """Device credit must equal ACKed commands, or precisely the one pending command."""
+     counter = integer(body, 'application_counter')
+     if counter < device.observed_application_counter:
+@@ -271,23 +279,28 @@
+         fail('DEVICE_SESSION_REQUIRED')
+     if not isinstance(body['token'], str) or not re.fullmatch(r'[0-9]{15}', body['token']):
+         fail('REQUEST_INVALID', 'Use a 15-digit token.', 400)
++    mark_stage('token_lookup')
+     try:
+         lookup = digest_token(body['token'])
+     except ImproperlyConfigured:
+         fail('TOKEN_SERVICE_UNAVAILABLE', 'Private token configuration requires operator review.', 503)
++    mark_stage('token_lookup')
+     row = EnergyKeypadToken.objects.filter(lookup_digest=lookup).first()
+     if row is None:
+         fail('TOKEN_LOOKUP_MISS', 'No matching token was found; retain the existing purchase for review.', 404)
++    mark_stage('meter_environment_mismatch')
+     allocation = EnergyAllocation.objects.select_for_update().get(pk=row.allocation_id)
+     token = EnergyKeypadToken.objects.select_for_update().get(pk=row.pk)
+     if (token.owner_id != device.owner_id or allocation.owner_id != device.owner_id or token.meter_id != device.meter_id
+             or allocation.meter_id != device.meter_id or token.meter_number != device.meter.meter_no
+             or token.environment != device.environment or allocation.accounting_environment != device.environment):
+         fail('TOKEN_UNAVAILABLE', 'Token unavailable for this device.', 404)
++    mark_stage('token_amount_validation')
+     if allocation.amount_kwh * 1000 != token.amount_wh or not 0 < token.amount_wh <= 1_000_000 or token.amount_wh % 10:
+         fail('TOKEN_AMOUNT_MISMATCH', 'Token amount requires reconciliation.', 409)
+     if not lab_source(allocation, device.environment):
+         fail('TOKEN_SOURCE_UNVERIFIED', 'Token source requires reconciliation; retain the existing purchase.', 409)
++    mark_stage('token_integrity')
+     # Check encrypted integrity as well as the lookup HMAC. Never return plaintext.
+     try:
+         plain = cipher().decrypt(token.ciphertext.encode()).decode('ascii')
+@@ -295,22 +308,27 @@
+             raise ValueError
+     except Exception:
+         fail('TOKEN_STORAGE_UNAVAILABLE', 'Token integrity requires operator review.', 409)
++    mark_stage('already_used_token')
+     if token.state == 'APPLIED':
+         fail('TOKEN_ALREADY_USED')
++    mark_stage('pending_delivery')
+     pending = device.commands.filter(receipt_id__isnull=True).select_related('delivery').first()
+     if pending:
+         if token.delivery_id == pending.delivery_id and count in {device.application_counter, pending.sequence}:
+             contact(device)
+             return {**identity(device), 'command': pending.delivery.command_payload}
+         fail('PENDING_COMMAND')
++    mark_stage('conflicting_command')
+     if count != device.application_counter:
+         fail()
+     if token.state != 'ISSUED' or token.delivery_id or allocation.deliveries.exists() or count == UINT32:
+         fail('RESERVATION_CONFLICT')
+     from meter.allocation_service import reserve_ac_lab_token
++    mark_stage('delivery_reservation')
+     delivery = reserve_ac_lab_token(token, device=device)
+     if max(delivery.pk, allocation.pk) > 2**53 - 1:
+         fail('IDENTITY_OUT_OF_RANGE')
++    mark_stage('command_creation')
+     command = {**identity(device), 'allocation_id': allocation.pk, 'delivery_id': delivery.pk,
+         'command_id': str(token.command_id), 'command_sequence': count + 1, 'credit_wh': token.amount_wh, 'type': 'AC_LAB_CREDIT'}
+     command['payload_digest'] = payload_digest(command)
+@@ -329,10 +347,12 @@
+         integer(body, key, 2**53 - 1, 1)
+     receipt = canonical_uuid(body['receipt_id'])
+     at = timestamp(body['applied_at'])
++    mark_stage('ack_command_lookup')
+     command = device.commands.select_related('delivery__allocation').filter(delivery_id=body['delivery_id']).first()
+     if command is None:
+         fail('COMMAND_UNAVAILABLE', status=404)
+     delivery = MeterDelivery.objects.select_for_update().get(pk=command.delivery_id)
++    mark_stage('ack_validation')
+     frozen = delivery.command_payload
+     if delivery.transport != 'AC_LAB' or delivery.status not in {MeterDelivery.DISPATCHED, MeterDelivery.OUTCOME_UNKNOWN, MeterDelivery.APPLIED}:
+         fail('RECONCILIATION_REQUIRED')
+@@ -347,6 +367,7 @@
+             or token.owner_id != device.owner_id or token.meter_id != device.meter_id
+             or not lab_source(allocation, device.environment)):
+         fail('RECEIPT_BINDING_MISMATCH')
++    mark_stage('conflicting_command')
+     if command.receipt_id:
+         if command.receipt_id != receipt or command.applied_at != at:
+             fail('RECEIPT_CONFLICT')
+--- a/backend/hosting_middleware.py
++++ b/backend/hosting_middleware.py
+@@ -76,6 +76,11 @@
+             response = JsonResponse({"code": "TESTING_OPERATION_UNAVAILABLE",
+                                  "message": "Financial, delivery and worker-dependent operations are unavailable on this testing host."}, status=503)
+             if path.startswith("/api/v1/prototype-device/v1/"):
+-                response["Cache-Control"] = "private, no-store"
++                from meter.diagnostics import hosting_rejection
++                response = hosting_rejection(request)
+             return response
+-        return self.get_response(request)
++        response = self.get_response(request)
++        if path.startswith("/api/v1/prototype-device/v1/"):
++            from meter.diagnostics import unhandled_response
++            response = unhandled_response(request, response)
++        return response

@@ -21,7 +21,18 @@ def require_demo(*, recovery=False):
         raise PermissionDenied({"code": "DEMO_DISABLED", "message": "Local demo payments are unavailable in this deployment mode."})
 
 
+def new_mtn_payments_paused():
+    return getattr(settings, "SANDBOX_NEW_PAYMENTS_ENABLED", True) is not True
+
+
+def require_new_mtn_payments():
+    if new_mtn_payments_paused():
+        raise PermissionDenied({"code": "NEW_PAYMENTS_PAUSED", "message": "New payments are paused. MTN Sandbox accepts EUR only; UGX payment support requires a separately approved provider. Existing receipts and pending-payment recovery remain available."})
+
+
 def require_mtn_sandbox(*, recovery=False):
+    if not recovery:
+        require_new_mtn_payments()
     if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is not True or (not recovery and provider_mode() != "MTN_SANDBOX"):
         raise PermissionDenied({"code": "MTN_PAUSED", "message": "New MTN collections are unavailable in this mode. Existing references retain their original provider for reconciliation."})
 

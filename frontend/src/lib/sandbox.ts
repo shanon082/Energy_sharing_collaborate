@@ -1,7 +1,7 @@
 /** Currency-isolated test contract, shared by Next.js and Capacitor. */
 export type TestCurrency = "EUR" | "UGX";
 export type TestEnvironment = "MTN_SANDBOX" | "UGX_DEMO";
-export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO" };
+export type SandboxCapabilities = { enabled: boolean; loans: boolean; purchases: boolean; repayments: boolean; currency?: TestCurrency; environment?: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO"; paymentMessage?: string; newPaymentsPaused?: boolean; labEnabled?: boolean; labEnvironment?: "SANDBOX" | "UGX_DEMO"; loanCurrency?: TestCurrency; loanEnvironment?: TestEnvironment };
 export const NO_SANDBOX: SandboxCapabilities = { enabled: false, loans: false, purchases: false, repayments: false };
 export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   if (!raw || typeof raw !== "object") return { ...NO_SANDBOX };
@@ -12,7 +12,10 @@ export function sandboxCapabilities(raw: unknown): SandboxCapabilities {
   const lab = row.ac_lab && typeof row.ac_lab === "object" ? row.ac_lab as Record<string, unknown> : null;
   const labEnvironment = demo ? "UGX_DEMO" : "SANDBOX";
   const labValid = lab?.environment === labEnvironment && lab?.protocol === (demo ? "GPAWA_PZEM_V1" : "GPAWA_PZEM_V2") && lab?.physical_output === false;
-  return { enabled: true, ...(lab ? {labEnabled: labValid && lab.enabled === true, labEnvironment} : {}), loans: row.loans === true, purchases: row.purchases === true, repayments: row.repayments === true,
+  const lending = row.lending && typeof row.lending === 'object' ? row.lending as Record<string, unknown> : null;
+  const ugxLoans = mtn && lending?.enabled === true && lending.currency === 'UGX' && lending.environment === 'UGX_DEMO' && lending.energy_environment === 'SANDBOX' && lending.policy === 'DEMO-UGX-ACLAB-v1' && lending.repayment_available === false;
+  const newPaymentsPaused = row.new_payments_paused === true;
+  return { enabled: true, ...(newPaymentsPaused ? {newPaymentsPaused: true} : {}), ...(ugxLoans ? {loanCurrency: 'UGX', loanEnvironment: 'UGX_DEMO'} as const : {}), ...(lab ? {labEnabled: labValid && lab.enabled === true, labEnvironment} : {}), loans: ugxLoans || row.loans === true && (lending?.enabled !== true || ugxLoans), purchases: !newPaymentsPaused && row.purchases === true, repayments: !newPaymentsPaused && row.repayments === true,
     ...(demo ? { currency: "UGX", environment: "UGX_DEMO", provider: "LOCAL_DEMO" } as const : { currency: "EUR", environment: "MTN_SANDBOX", provider: "MTN_SANDBOX" } as const),
     ...(typeof row.payment_message === "string" && row.payment_message ? { paymentMessage: row.payment_message } : {}) };
 }
@@ -21,7 +24,7 @@ export type TestMeter = { label?: string; status?: string; id: number; meter_num
 export type Assessment = { owner_id?: number; meter_id?: number | null; minimum_score?: number; assessment_id?: number | null; evidence_updated_at?: string | null; eligible: boolean; reason: string; starter: boolean; score: number | null; profile_score: number | null;
   factors: Record<string, number> | null; purchase_points: number | null; qualifying_billed_eur?: string; qualifying_billed_test?: string | null; maximum: string | null; policy_id: string;
   assessment_status?: "PENDING" | "READY" | "UNAVAILABLE"; label?: string; provider?: string; assessed_at?: string | null; scoring_policy_version?: string; categories?: Record<string, string> | null };
-export type TestPolicy = { id: string; currency?: TestCurrency; environment?: TestEnvironment; minimum: string; maximum: string; starter_limit: string; interest_percent: string; fee: string;
+export type TestPolicy = { repayment_message?: string; energy_environment?: string; id: string; currency?: TestCurrency; environment?: TestEnvironment; minimum: string; maximum: string; starter_limit: string; interest_percent: string; fee: string;
   rate_per_kwh: string | null; pricing_source?: string; due_days: number; penalty_percent: string; rounding: string; purchase_per_point: string; purchase_score_cap: number; score_threshold: number };
 export type PricingStatus = { available: boolean; message: string; revision?: string; tariff_code?: string };
 export type TariffPricing = { inputs_hash: string; inputs: { version: string; month: string; scope: string; vat_rate: string;
@@ -30,7 +33,7 @@ export type TariffPricing = { inputs_hash: string; inputs: { version: string; mo
 export type TestTerms = { pricing?: TariffPricing; owner_id?: number; meter_id?: number; policy: TestPolicy; purpose: string; amount: string; energy_kwh: string; billed: string; residual: string;
   interest: string; fee: string; total_due: string; due_at?: string; assessment: Assessment | null };
 export type TestQuote = { id: string; terms_hash: string; expires_at: string; terms: TestTerms };
-export type TestLoan = { currency: TestCurrency; environment: TestEnvironment; id: string; client_request_id: string; meter_id: number; status: "DISBURSED" | "COMPLETED" | "REJECTED";
+export type TestLoan = { repayment_available?: boolean; repayment_message?: string; energy_environment?: string | null; currency: TestCurrency; environment: TestEnvironment; id: string; client_request_id: string; meter_id: number; status: "DISBURSED" | "COMPLETED" | "REJECTED";
   reason: string; principal: string; total_due: string; outstanding: string; due_at: string; created_at?: string; closed_at: string | null;
   applied_repayments?: string; allocation_id: number | null; allocated_kwh: string | null; terms: TestTerms; assessment: Assessment };
 export type TestPayment = { pricing?: TariffPricing; currency: TestCurrency; environment: TestEnvironment; provider?: "MTN_SANDBOX" | "LOCAL_DEMO";
@@ -110,7 +113,7 @@ function canonicalMoney(value: string): string {
 }
 /** Validate accepted terms against this account, destination and exact request. */
 export function parseTestQuote(value: unknown, expected: { owner: number; meterId: number; amount: string;
-  purpose: "LOAN" | "PURCHASE"; currency: TestCurrency; environment: TestEnvironment }): TestQuote {
+  purpose: "LOAN" | "PURCHASE"; currency: TestCurrency; environment: TestEnvironment; loanContract?: string }): TestQuote {
   const row = obj(value), terms = obj(row.terms), policy = obj(terms.policy);
   if (typeof row.id !== "string" || !/^[0-9a-f-]{36}$/i.test(row.id) ||
     typeof row.terms_hash !== "string" || !/^[0-9a-f]{64}$/i.test(row.terms_hash) ||
@@ -120,6 +123,7 @@ export function parseTestQuote(value: unknown, expected: { owner: number; meterI
     typeof terms.amount !== "string" || !/^\d+(?:\.\d+)?$/.test(terms.amount) ||
     canonicalMoney(terms.amount) !== canonicalMoney(expected.amount) ||
     policy.currency !== expected.currency || (policy.environment ?? "MTN_SANDBOX") !== expected.environment ||
+    (expected.loanContract !== undefined && (policy.lending_contract !== expected.loanContract || terms.energy_environment !== 'SANDBOX' || policy.energy_environment !== 'SANDBOX')) ||
     typeof policy.id !== "string" || !["energy_kwh", "billed", "residual", "interest", "fee", "total_due"].every(
       field => typeof terms[field] === "string" && /^\d+(?:\.\d+)?$/.test(terms[field] as string)))
     throw new Error("Quote does not match your account, meter, amount or test currency. Request fresh terms.");

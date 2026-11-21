@@ -1,3 +1,4 @@
+from loan.prototype_lending import automatic_assessment_enabled
 from rest_framework.views import APIView
 import logging
 from accounts.tasks import handle_send_email_code, handle_send_email_verification
@@ -1023,7 +1024,7 @@ class UserProfileAPIView(GenericAPIView):
                 return False
 
             from backend.demo_config import provider_mode
-            if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+            if automatic_assessment_enabled():
                 return all(required_fields)  # Ordinary registration fields, never questionnaire answers.
             has_profile_data = profile_scoring_fields_complete(user)
             if not has_profile_data:
@@ -1042,7 +1043,7 @@ class UserProfileAPIView(GenericAPIView):
     def post(self, request):
         """Update historical profile data outside the automatic demo journey."""
         from backend.demo_config import provider_mode
-        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+        if automatic_assessment_enabled():
             return Response({"code": "QUESTIONNAIRE_RETIRED", "detail": "Demo assessment is automatic."}, status=403)
         try:
             user = request.user
@@ -1110,7 +1111,7 @@ class LoginAPIView(TokenObtainPairView):
         serializer.is_valid(raise_exception=True)
         user = serializer.user
         from backend.demo_config import provider_mode
-        if not (getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO"):
+        if not (automatic_assessment_enabled()):
             get_or_create_credit_signal(user)
 
         # Staff members with 2FA enabled → issue a challenge token instead of full JWT
@@ -1218,7 +1219,7 @@ class CreateUserAPIView(CreateAPIView):
         try:
             from loan.scoring import get_or_create_dummy_credit_signal
             from backend.demo_config import provider_mode
-            if not (getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO"):
+            if not (automatic_assessment_enabled()):
                 get_or_create_dummy_credit_signal(user)
             logger.info("Registration credit assessment initialized for user %s", user.id)
         except Exception as e:
@@ -1640,7 +1641,7 @@ class CreditScoreView(APIView):
     
     def get(self, request):
         from backend.demo_config import provider_mode
-        if getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) and provider_mode() == "LOCAL_DEMO":
+        if automatic_assessment_enabled():
             from loan.sandbox_service import assessment
             return Response({"demo_assessment": assessment(request.user, meter_id=request.query_params.get("meter_id"))})
         from loan.credit_score_service import CreditScoreService

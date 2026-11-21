@@ -1,3 +1,5 @@
+**Latest change:** fixed-code token diagnostics added to the active sketch. No token rejection cause is yet confirmed from hosted evidence. See [the diagnostic/lending handoff](../../backend/docs/UGX_LENDING_AND_TOKEN_DIAGNOSTICS.md). Earlier build/mode notes below retain their dates; do not reapply old patches.
+
 # AC_LAB SANDBOX integration sources
 
 **Current milestone (2026-11-19):** see [authenticated USB-powered credit testing](docs/USB_CREDIT_ONLY.md).

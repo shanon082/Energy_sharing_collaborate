@@ -95,16 +95,27 @@ def authorize_sandbox_loan_allocation(loan, units):
     require_sandbox()
     meter = owned_test_meter(loan.owner, loan.meter_id)
     from backend.demo_config import test_domain
-    if loan.status != "DISBURSED" or (loan.currency, loan.environment) != test_domain()[:2]:
+    from loan.prototype_lending import loan_energy_environment, is_lab_terms, enabled as ugx_enabled, require_lab_tokens
+    environment = loan_energy_environment(loan)
+    new_ugx = is_lab_terms(loan.terms)
+    if (loan.status != "DISBURSED" or environment is None
+            or (new_ugx and not ugx_enabled())
+            or (not new_ugx and (loan.currency, loan.environment) != test_domain()[:2])):
         raise AllocationError("An approved loan in the current test currency/environment is required.")
+    if new_ugx:
+        require_lab_tokens(loan.terms)
+    if Decimal(loan.terms['energy_kwh']) != parse_requested_kwh(units):
+        raise AllocationError('Loan allocation must match its accepted energy terms.')
     row, created = EnergyAllocation.objects.get_or_create(sandbox_loan=loan,
-        defaults={"owner": loan.owner, "meter": meter, "accounting_environment": "UGX_DEMO" if loan.environment == "UGX_DEMO" else "SANDBOX",
+        defaults={"owner": loan.owner, "meter": meter, "accounting_environment": environment,
                   "amount_kwh": parse_requested_kwh(units)})
-    if not created and (row.owner_id != loan.owner_id or row.meter_id != loan.meter_id or row.amount_kwh != parse_requested_kwh(units)):
+    if not created and (row.owner_id != loan.owner_id or row.meter_id != loan.meter_id or row.amount_kwh != parse_requested_kwh(units) or row.accounting_environment != environment):
         raise AllocationError("Sandbox source allocation differs from its frozen terms.")
     if created:
         from meter.energy_tokens import issue_energy_token
         issue_energy_token(row)
+    if new_ugx and not hasattr(row, 'keypad_token'):
+        raise AllocationError('Approved UGX prototype source requires its unique token; reconciliation required.')
     return row
 
 

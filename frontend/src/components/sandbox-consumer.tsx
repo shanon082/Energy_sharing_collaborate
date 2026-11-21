@@ -23,22 +23,31 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   mutationsAvailable?: boolean; onError?: (error: unknown) => void; registerBackHandler?: (handler: (() => boolean) | null) => void;
 }) {
   const demo = capabilities.provider === "LOCAL_DEMO";
-  const environment = demo ? "UGX_DEMO" : "MTN_SANDBOX";
-  const currency = demo ? "UGX" : "EUR";
-  const validAmount = demo ? testDemoAmount : testAmount;
-  const money = (value: string | null | undefined) => testMoney(value, currency);
+  const paymentEnvironment = demo ? "UGX_DEMO" : "MTN_SANDBOX";
+  const paymentCurrency = demo ? "UGX" : "EUR";
+  const loanEnvironment = capabilities.loanEnvironment ?? paymentEnvironment;
+  const loanCurrency = capabilities.loanCurrency ?? paymentCurrency;
+  const validPaymentAmount = demo ? testDemoAmount : testAmount;
   const [clock, setClock] = useState(Date.now);
   const formVersion = useRef(0);
   const nextAttempt = useRef(new Map<string, number>());
   const [assessment, setAssessment] = useState<Assessment | null>(null);
-  const [pricingStatus, setPricingStatus] = useState<PricingStatus>({ available: false, message: "Checking tariff…" });
   const pricingContext = useRef("");
   const readMeter = useRef<number | undefined>(undefined);
-  const [policy, setPolicy] = useState<TestPolicy | null>(null);
+  const [loanPolicy, setLoanPolicy] = useState<TestPolicy | null>(null);
+  const [purchasePolicy, setPurchasePolicy] = useState<TestPolicy | null>(null);
+  const [loanPricing, setLoanPricing] = useState<PricingStatus>({available:false,message:'Checking tariff…'});
+  const [purchasePricing, setPurchasePricing] = useState<PricingStatus>({available:false,message:'Checking pricing…'});
   const [loans, setLoans] = useState<TestLoan[]>([]);
   const [payments, setPayments] = useState<TestPayment[]>([]);
   const [purpose, setPurpose] = useState<"LOAN" | "PURCHASE">("LOAN");
-  const [amount, setAmount] = useState(demo ? "1000" : "2.00");
+  const currency = purpose === "LOAN" ? loanCurrency : paymentCurrency;
+  const environment = purpose === "LOAN" ? loanEnvironment : paymentEnvironment;
+  const validAmount = currency === "UGX" ? testDemoAmount : testAmount;
+  const money = (value: string | null | undefined) => testMoney(value, currency);
+  const policy = purpose === "LOAN" ? loanPolicy : purchasePolicy;
+  const pricingStatus = purpose === "LOAN" ? loanPricing : purchasePricing;
+  const [amount, setAmount] = useState(loanCurrency === "UGX" ? "1000" : "2.00");
   const [phone, setPhone] = useState("");
   const [quote, setQuote] = useState<TestQuote | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -75,7 +84,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     const run = ++token.current; const identity = epoch.current;
     try {
       const [a, l, p] = await Promise.all([
-        client.get<{ assessment: Assessment; policy: TestPolicy; pricing?: PricingStatus }>(`sandbox/assessment/${meterId === undefined ? "" : `?meter_id=${meterId}`}`),
+        client.get<{ assessment: Assessment; policy: TestPolicy; pricing?: PricingStatus; purchase_policy?: TestPolicy; purchase_pricing?: PricingStatus }>(`sandbox/assessment/?${meterId === undefined ? "" : `meter_id=${meterId}&`}${capabilities.loanCurrency === "UGX" && !demo ? "lending=ugx" : ""}`),
         client.get<{ loans: unknown[] }>("sandbox/loans/"),
         client.get<{ payments: unknown[]; pending: unknown[] }>("sandbox/payments/"),
       ]);
@@ -108,13 +117,13 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       unknown = (["UGX_DEMO", "MTN_SANDBOX"] as const).some(recoveryEnvironment => ["LOAN", "PURCHASE", "LOAN_REPAYMENT"].some(kind => !!readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", recoveryEnvironment) &&
         ![...recoveredLoans, ...recoveredPayments].some(row => row.client_request_id === readRetry(owner, kind as "LOAN" | "PURCHASE" | "LOAN_REPAYMENT", recoveryEnvironment))));
       if (!current(identity) || token.current !== run || destination.current !== meterId) return;
-      const parsed = demo ? parseStoredDemoAssessment(a.assessment, { owner, meterId: meterId ?? null }) : a.assessment;
+      const parsed = loanCurrency === "UGX" ? parseStoredDemoAssessment(a.assessment, { owner, meterId: meterId ?? null }) : a.assessment;
       const status = a.pricing ?? { available: false, message: "Pricing unavailable. Update the backend before using this app." };
-      const context = assessmentContextKey(parsed, a.policy, status);
+      const context = assessmentContextKey(parsed, a.policy, status) + JSON.stringify([a.purchase_policy, a.purchase_pricing]);
       if (pricingContext.current !== context) {
         formVersion.current++; setQuote(null); setAccepted(false); pricingContext.current = context;
       }
-      setAssessment(parsed); setPolicy(a.policy); setPricingStatus(status);
+      setAssessment(parsed); setLoanPolicy(a.policy); setPurchasePolicy(a.purchase_policy ?? a.policy); setLoanPricing(status); setPurchasePricing(a.purchase_pricing ?? status);
       setLoans([...new Map([...l.loans.map(parseTestLoan), ...recoveredLoans].map(row => [row.id, row])).values()]);
       setPayments([...new Map([...mergePayments(p.payments, p.pending), ...recoveredPayments].map(row => [row.reference, row])).values()]);
       setUnresolved(unknown); setOffline(false); setFetched(new Date().toISOString()); setError(null);
@@ -126,7 +135,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
         reading.current = false; setRefreshing(false);
       }
     }
-  }, [client, owner, demo, onError, selectedMeter?.id]);
+  }, [client, owner, demo, loanCurrency, capabilities.loanCurrency, onError, selectedMeter?.id]);
   useEffect(() => { if (!busy) void refresh(); }, [refresh, selectedMeter?.id, refreshVersion, busy]);
   useEffect(() => {
     const changed = () => { formVersion.current++; setQuote(null); setAccepted(false); setAssessment(null); };
@@ -142,8 +151,8 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   // A single mounted controller serves the mobile tabs; navigation never initiates a payment.
   useEffect(() => {
     const next = view === "purchase" ? "PURCHASE" : view === "apply" || view === "loans" ? "LOAN" : null;
-    if (next && next !== purpose) { formVersion.current++; setPurpose(next); setQuote(null); setAccepted(false); }
-  }, [view, purpose]);
+    if (next && next !== purpose) { formVersion.current++; setPurpose(next); setAmount((next === "LOAN" ? loanCurrency : paymentCurrency) === "UGX" ? "1000" : "2.00"); setQuote(null); setAccepted(false); }
+  }, [view, purpose, loanCurrency, paymentCurrency]);
   useEffect(() => {
     if (!quote) return;
     setClock(Date.now());
@@ -166,8 +175,8 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     if (!selectedMeter?.sandbox_inventory || !validAmount(amount)) { setError("Add or select a linked prototype meter and enter a positive matching test amount."); return; }
     const meterId = selectedMeter.id; const identity = epoch.current; const revision = formVersion.current; const intent = purpose;
     void perform(async () => {
-      const q = parseTestQuote(await client.post<unknown>("sandbox/quotes/", { meter_id: meterId, amount, purpose }),
-        { owner, meterId, amount, purpose: intent, currency, environment });
+      const q = parseTestQuote(await client.post<unknown>("sandbox/quotes/", { meter_id: meterId, amount, purpose, ...(purpose === "LOAN" && capabilities.loanCurrency === "UGX" && !demo ? {loan_contract: "UGX-PROTOTYPE-SANDBOX-v1"} : {}) }),
+        { owner, meterId, amount, purpose: intent, currency, environment, ...(purpose === "LOAN" && capabilities.loanCurrency === "UGX" && !demo ? {loanContract: "UGX-PROTOTYPE-SANDBOX-v1"} : {}) });
       if (current(identity) && destination.current === meterId && formVersion.current === revision && q.terms.purpose === intent) { setQuote(q); setAccepted(false); }
     }, false, false);
   };
@@ -202,17 +211,17 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
   };
   const repay = (event: FormEvent) => {
     event.preventDefault();
-    if (!loanId || !validAmount(repayment) || (!demo && !testPhone(phone)) || !repayAccepted) { setError("Choose your test loan, a positive matching test amount; accept the terms."); return; }
-    const loan = loans.find(row => row.id === loanId && row.environment === environment && row.status === "DISBURSED");
+    if (!loanId || !validPaymentAmount(repayment) || (!demo && !testPhone(phone)) || !repayAccepted) { setError("Choose your test loan, a positive matching test amount; accept the terms."); return; }
+    const loan = loans.find(row => row.id === loanId && row.environment === paymentEnvironment && row.status === "DISBURSED");
     if (!loan) { setError("Choose an active loan in the current test currency."); return; }
     const identity = epoch.current;
     void perform(async () => {
-      const key = readRetry(owner, "LOAN_REPAYMENT", environment) || crypto.randomUUID(); writeRetry(owner, "LOAN_REPAYMENT", key, environment);
+      const key = readRetry(owner, "LOAN_REPAYMENT", paymentEnvironment) || crypto.randomUUID(); writeRetry(owner, "LOAN_REPAYMENT", key, paymentEnvironment);
       const result = await client.post<{ payment: unknown }>("sandbox/payments/", { purpose: "LOAN_REPAYMENT", loan_id: loanId,
         amount: repayment, ...(demo ? {} : { msisdn: phone }), accept_test_terms: true, client_request_id: key });
       const payment = parseTestPayment(result.payment);
       assertTestPaymentBinding(payment, { client_request_id: key, purpose: "LOAN_REPAYMENT", amount: repayment,
-        meter_id: loan.meter_id, loan_id: loanId, currency, environment });
+        meter_id: loan.meter_id, loan_id: loanId, currency: paymentCurrency, environment: paymentEnvironment });
       if (!current(identity)) return;
       setPayments(previous => [payment, ...previous.filter(row => row.reference !== payment.reference)]);
       setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : `Repayment ${payment.status}. Pending requests do not reduce debt.`); setRepayAccepted(false); inFlight.current = false; await refresh();
@@ -251,14 +260,14 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     return () => { disposed = true; window.clearInterval(interval); };
   }, [client, demo, environment, offline, owner, payments, pending, refresh, onChanged, onError]);
   const blocked = busy || refreshing || offline || unresolved || pending || !mutationsAvailable;
-  const meterAssessment = !demo || assessment?.meter_id === (selectedMeter?.id ?? null) ? assessment : null;
+  const meterAssessment = loanCurrency !== "UGX" || assessment?.meter_id === (selectedMeter?.id ?? null) ? assessment : null;
   const loanReason = loanProgressionReason(meterAssessment, selectedMeter?.id ?? null, amount);
-  const selectedLoan = loans.find(row => row.id === loanId && row.environment === environment && row.status === "DISBURSED");
+  const selectedLoan = loans.find(row => row.id === loanId && row.environment === paymentEnvironment && row.status === "DISBURSED");
   const eligibleMeters = meters.filter(row => row.sandbox_inventory);
   const stale = !!error || offline;
   if (view !== "all") return <SandboxMobileView
-    client={client} owner={owner} view={view} surface={surface} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment}
-    capabilities={capabilities} assessment={meterAssessment} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
+    client={client} owner={owner} view={view} surface={surface} navigate={onNavigate ?? (() => {})} registerBackHandler={registerBackHandler} demo={demo} currency={currency} environment={environment} loanCurrency={loanCurrency} loanEnvironment={loanEnvironment} paymentCurrency={paymentCurrency} paymentEnvironment={paymentEnvironment} validPaymentAmount={validPaymentAmount}
+    capabilities={capabilities} assessment={meterAssessment} assessmentPolicy={loanPolicy} policy={policy} pricingStatus={pricingStatus} loanReason={loanReason} loans={loans} payments={payments}
     meters={meters} selectedMeter={selectedMeter} setSelectedMeter={onSelectMeter ?? (() => {})} onAddMeter={onAddMeter} purpose={purpose} amount={amount}
     setAmount={value => { formVersion.current++; setAmount(value); setQuote(null); setAccepted(false); }}
     quote={quote} clearQuote={() => { formVersion.current++; setQuote(null); setAccepted(false); }}
@@ -267,13 +276,16 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     repayment={repayment} setRepayment={setRepayment} repayAccepted={repayAccepted} setRepayAccepted={setRepayAccepted}
     blocked={blocked} busy={busy} refreshing={refreshing} offline={offline} unresolved={unresolved} pending={pending}
     error={error} notice={notice} fetched={fetched} clock={clock} validAmount={validAmount} validPhone={testPhone(phone)}
+    initializeAssessment={selectedMeter && loanCurrency === 'UGX' ? () => { void perform(async () => {
+      await client.post('sandbox/assessment/', {meter_id: selectedMeter.id}); inFlight.current = false; await refresh();
+    }, false, false); } : undefined}
     refresh={() => void refresh()} getQuote={getQuote} submit={submit} repay={repay}
     checkPayment={row => void perform(async () => { await client.post(`sandbox/payments/${row.reference}/`, {}); inFlight.current = false; await refresh(); onChanged?.(); }, true)}
   />;
 
   return <section className="sandbox-consumer panel">
     <h2>{demo ? "UGX DEMO / NO REAL MONEY" : "EUR TEST / MTN SANDBOX"}</h2>
-    <p>{demo ? "Local simulator. No real money or actual phone authorization. You may apply for one UGX demo loan alongside an existing EUR loan, without converting or closing it." : "EUR test currency only."} Core UGX debt, wallets and real scores remain separate. Cloud allocation is not confirmed meter delivery.</p>
+    <p>{demo ? "Local simulator. No real money or actual phone authorization. You may apply for one UGX demo loan alongside an existing EUR loan, without converting or closing it." : capabilities.loanCurrency === "UGX" ? "UGX prototype loans and EUR MTN payments are separate. No repayment conversion is approved." : "EUR test currency only."} Core UGX debt, wallets and real scores remain separate. Cloud allocation is not confirmed meter delivery.</p>
     <button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Refresh & recover stored requests</button>
     {fetched && <p className={stale ? "stale" : "muted"}>{stale ? "Stale — " : "Fetched "}{when(fetched)}</p>}
     {offline && <p role="status">Offline — no financial requests will be initiated.</p>}
@@ -282,22 +294,22 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
     {notice && <p className="tag" role="status">{notice}</p>}
     {unresolved && <p>Refresh to resolve the previous attempt before submitting another request. Never retry by creating a new payment identity.</p>}
     {pending && <p>There is a pending test payment. Scheduled reconciliation continues when the app is closed. Another payment is blocked until its outcome is known.</p>}
-    {assessment && policy && <section><h3>{demo ? "Demo assessment — simulated account information" : "Test credit assessment"}</h3>
-      <p>{demo && assessment.assessment_status !== "READY" ? `Score unavailable — ${assessment.assessment_status?.toLowerCase() ?? "pending"}` : assessment.starter ? "Starter allowance — no established credit score" : `Credit score: ${assessment.score}% (base ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
-      <p>{loanReason || assessment.reason} Maximum: {money(assessment.maximum)}.</p>
+    {assessment && loanPolicy && <section><h3>{loanCurrency === "UGX" ? "Demo assessment — simulated account information" : "Test credit assessment"}</h3>
+      <p>{loanCurrency === "UGX" && assessment.assessment_status !== "READY" ? `Score unavailable — ${assessment.assessment_status?.toLowerCase() ?? "pending"}` : assessment.starter ? "Starter allowance — no established credit score" : `Credit score: ${assessment.score}% (base ${assessment.profile_score}, purchase contribution ${assessment.purchase_points})`}</p>
+      <p>{loanReason || assessment.reason} Maximum: {testMoney(assessment.maximum, loanCurrency)}.</p>
       {assessment.factors && <p>{Object.entries(assessment.factors).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value} (${assessment.categories?.[key] ?? "recorded"})`).join(" · ")}</p>}
-      {demo && <p>These payment, consumption and financial categories are fixed synthetic test inputs, not utility, bank, telecom or credit-bureau records. No questionnaire is required. Assessment {when(assessment.assessed_at ?? null)} · {assessment.scoring_policy_version} · {assessment.provider}.</p>}
-      <p>Settled billed test purchases: {money(assessment.qualifying_billed_test ?? assessment.qualifying_billed_eur)}. One point per {money(policy.purchase_per_point)}, capped at {policy.purchase_score_cap}. Refreshing does not earn points.</p>
-      <p>Policy {policy.id}; threshold {policy.score_threshold}; flat interest {policy.interest_percent}%; fee {money(policy.fee)}; due {policy.due_days} days; overdue charge {policy.penalty_percent}%.</p>
-      <p>{policy.rounding}. Full repayment closes new test loans permanently.</p>
+      {loanCurrency === "UGX" && <p>These payment, consumption and financial categories are fixed synthetic test inputs, not utility, bank, telecom or credit-bureau records. No questionnaire is required. Assessment {when(assessment.assessed_at ?? null)} · {assessment.scoring_policy_version} · {assessment.provider}.</p>}
+      <p>Settled billed test purchases: {testMoney(assessment.qualifying_billed_test ?? assessment.qualifying_billed_eur, loanCurrency)}. One point per {testMoney(loanPolicy.purchase_per_point, loanCurrency)}, capped at {loanPolicy.purchase_score_cap}. Refreshing does not earn points.</p>
+      <p>Policy {loanPolicy.id}; threshold {loanPolicy.score_threshold}; flat interest {loanPolicy.interest_percent}%; fee {testMoney(loanPolicy.fee, loanCurrency)}; due {loanPolicy.due_days} days; overdue charge {loanPolicy.penalty_percent}%.</p>
+      <p>{loanPolicy.rounding}. Full repayment closes new test loans permanently.</p>
     </section>}
     <form onSubmit={getQuote}>
       <h3>Apply for test credit or buy test electricity</h3>
       {!selectedMeter?.sandbox_inventory ? <p>Add or select a linked prototype meter in Meters. {eligibleMeters.length ? `${eligibleMeters.length} test meter(s) linked.` : "No prototype meter is linked."}</p> : <p>Explicit destination: {selectedMeter.meter_number} · cloud test inventory. Hardware connection is pending; actual usage and physical meter balance are unavailable without device evidence.</p>}
       <label>Activity<select value={purpose} onChange={event => { formVersion.current++; setPurpose(event.target.value === "PURCHASE" ? "PURCHASE" : "LOAN"); setQuote(null); setAccepted(false); }}>
-        <option value="LOAN">Test electricity loan</option><option value="PURCHASE">{demo ? "Demo purchase" : "MTN sandbox purchase"}</option>
+        <option value="LOAN">Test electricity loan</option><option value="PURCHASE" disabled={capabilities.newPaymentsPaused}>{demo ? "Demo purchase" : "MTN sandbox purchase"}</option>
       </select></label>
-      <label>Principal / payment ({demo ? "whole UGX DEMO" : "EUR TEST"})<input inputMode={demo ? "numeric" : "decimal"} value={amount} onChange={event => { formVersion.current++; setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
+      <label>Principal / payment ({currency === "UGX" ? "whole UGX DEMO" : "EUR TEST"})<input inputMode={currency === "UGX" ? "numeric" : "decimal"} value={amount} onChange={event => { formVersion.current++; setAmount(event.target.value); setQuote(null); setAccepted(false); }} required /></label>
       <p>Quote range {money(policy?.minimum ?? null)} – {money(policy?.maximum ?? null)}. Approval uses your limit and existing obligations at submission.</p>
       {(purpose === "LOAN" && loanReason) && <p role="status">{loanReason}</p>}
       {!pricingStatus.available && <p role="status">{pricingStatus.message}</p>}
@@ -324,14 +336,14 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       <p>Test allocation {loan.allocated_kwh === null ? "None" : `${loan.allocated_kwh} kWh`} · confirmed physical application unavailable.</p>
       {payments.filter(payment => payment.loan_id === loan.id).map(payment => <p key={payment.reference}>Repayment {payment.status}: received {testMoney(payment.amount, payment.currency)}, applied {testMoney(payment.applied, payment.currency)}, excess {testMoney(payment.excess, payment.currency)}.</p>)}
     </article>)}</section>
-    <form onSubmit={repay}><h3>Self-repayment ({demo ? "UGX DEMO" : "MTN sandbox"})</h3>
+    <form onSubmit={repay} hidden={capabilities.newPaymentsPaused}><h3>Self-repayment ({demo ? "UGX DEMO" : "MTN sandbox"})</h3>
       <label>Your test loan<select value={loanId} onChange={event => { setLoanId(event.target.value); setRepayment(""); setRepayAccepted(false); }}><option value="">Choose explicitly</option>
-        {loans.filter(row => row.status === "DISBURSED" && row.environment === environment).map(row => <option key={row.id} value={row.id}>{row.id} · {testMoney(row.outstanding, row.currency)}</option>)}
+        {loans.filter(row => row.status === "DISBURSED" && row.environment === paymentEnvironment).map(row => <option key={row.id} value={row.id}>{row.id} · {testMoney(row.outstanding, row.currency)}</option>)}
       </select></label>
-      {selectedLoan && <p>Policy {selectedLoan.terms.policy.id}; outstanding {money(selectedLoan.outstanding)}. Repayment reduces only this loan; it creates no energy.</p>}
+      {selectedLoan && <p>Policy {selectedLoan.terms.policy.id}; outstanding {testMoney(selectedLoan.outstanding, paymentCurrency)}. Repayment reduces only this loan; it creates no energy.</p>}
       <label>Amount ({demo ? "whole UGX DEMO" : "EUR TEST cents"})<input inputMode={demo ? "numeric" : "decimal"} value={repayment} onChange={event => setRepayment(event.target.value)} required /></label>
       <label><input type="checkbox" checked={repayAccepted} onChange={event => setRepayAccepted(event.target.checked)} /> I accept test repayment terms: any late excess is preserved for reconciliation; no automatic refund or credit.</label>
-      <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !validAmount(repayment) || (!demo && !testPhone(phone))}>{demo ? "Start demo self-repayment" : "Initiate sandbox self-repayment"}</button>
+      <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !validPaymentAmount(repayment) || (!demo && !testPhone(phone))}>{demo ? "Start demo self-repayment" : "Initiate sandbox self-repayment"}</button>
     </form>
     <section><h3>Sandbox receipts & pending recovery</h3>{!fetched ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
       <strong>{row.purpose} · {row.status} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>

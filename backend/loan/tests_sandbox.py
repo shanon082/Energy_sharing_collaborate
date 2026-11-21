@@ -35,7 +35,7 @@ CONFIG = {"BASE_URL": BASE_URL, "ENVIRONMENT": "sandbox", "CURRENCY": "EUR",
           "SUBSCRIPTION_KEY": "synthetic-test-only", "API_USER_ID": "00000000-0000-4000-8000-000000000001", "API_KEY": "synthetic-test-only"}
 # Historical EUR origination fixtures only. Hosting does not enable this policy;
 # current consumers must never be asked to populate its obsolete questionnaire.
-SANDBOX = {"CONSUMER_SANDBOX_ENABLED": True, "PROTOTYPE_PAYMENT_PROVIDER": "MTN_SANDBOX", "SANDBOX_POLICY": POLICY, "MTN_SANDBOX_CONFIG": CONFIG, "SANDBOX_EUR_LOANS_ENABLED": True,
+SANDBOX = {"SANDBOX_NEW_PAYMENTS_ENABLED": True, "CONSUMER_SANDBOX_ENABLED": True, "PROTOTYPE_PAYMENT_PROVIDER": "MTN_SANDBOX", "SANDBOX_POLICY": POLICY, "MTN_SANDBOX_CONFIG": CONFIG, "SANDBOX_EUR_LOANS_ENABLED": True, "SANDBOX_UGX_LOANS_ENABLED": False,
            "ENERGY_TOKEN_ISSUANCE_ENABLED": True, "ENERGY_TOKEN_ENCRYPTION_KEYS": [base64.urlsafe_b64encode(b'S' * 32).decode()],
            "ENERGY_TOKEN_LOOKUP_KEY": "isolated-sandbox-test-only-lookup-key-abcdefghijklmnopqrstuvwxyz"}
 

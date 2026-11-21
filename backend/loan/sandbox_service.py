@@ -76,6 +76,9 @@ def owned_test_meter(owner, meter_id, *, lock=False):
 def assessment(owner, test_policy=None, *, meter_id=None):
     require_sandbox()
     verified_consumer(owner)
+    from loan.prototype_lending import enabled as ugx_enabled, ugx_assessment
+    if test_policy is None and ugx_enabled():
+        return ugx_assessment(owner, meter_id)
     cfg = test_policy or policy()
     if cfg.get("environment") == "UGX_DEMO":
         from loan.demo_assessment import stored_demo_eligibility
@@ -152,15 +155,21 @@ def eur_pricing_available(cfg):
 def create_quote(owner, meter_id, raw_amount, purpose):
     require_sandbox()
     verified_consumer(owner)
+    if purpose == 'PURCHASE' and test_domain()[2] == 'MTN_SANDBOX':
+        from backend.demo_config import require_new_mtn_payments
+        require_new_mtn_payments()
     meter = owned_test_meter(owner, meter_id)
-    amount = money(raw_amount)
-    cfg = policy()
-    currency, environment, _ = test_domain()
+    from loan.prototype_lending import lending_policy, lending_domain, enabled as ugx_enabled, require_lab_tokens
+    currency, environment = lending_domain() if purpose == 'LOAN' else test_domain()[:2]
+    amount = money(raw_amount, currency)
+    cfg = lending_policy() if purpose == 'LOAN' else policy()
+    if purpose == 'LOAN' and ugx_enabled():
+        require_lab_tokens()
     if currency == "EUR" and not eur_pricing_available(cfg):
         raise ValidationError({"code": "EUR_TEST_PRICING_UNAVAILABLE", "message": "Configure a versioned EUR test price before requesting new energy. UGX tariffs cannot price EUR receipts."})
     if amount < Decimal(cfg["minimum"]) or amount > Decimal(cfg["maximum"]):
         raise ValidationError({"amount": f"Test quotes must be between {currency} {cfg['minimum']} and {cfg['maximum']}."})
-    result = assessment(owner, cfg, meter_id=meter.pk) if purpose == "LOAN" else None
+    result = assessment(owner, None if ugx_enabled() else cfg, meter_id=meter.pk) if purpose == "LOAN" else None
     if purpose == "LOAN" and (not result["eligible"] or result["score"] is None or result["score"] < 80):
         raise ValidationError({"code": "LOAN_INELIGIBLE", "message": result["reason"]})
     if purpose == "LOAN" and amount > Decimal(result["maximum"]):
@@ -181,6 +190,9 @@ def create_quote(owner, meter_id, raw_amount, purpose):
         "assessment": result, **({"pricing": pricing} if pricing else {})}
     if purpose == "LOAN":
         terms["due_at"] = (timezone.now() + timedelta(days=cfg["due_days"])).isoformat()
+        if ugx_enabled():
+            terms['energy_environment'] = 'SANDBOX'
+            require_lab_tokens(terms)
     hashed = sha256(json.dumps(terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return SandboxQuote.objects.create(owner=owner, meter=meter, purpose=purpose, amount=amount, currency=currency, environment=environment, terms=terms,
         terms_hash=hashed, expires_at=timezone.now() + timedelta(minutes=cfg["quote_minutes"]))
@@ -191,7 +203,9 @@ def accepted_quote(owner, quote_id, terms_hash, purpose):
         quote = SandboxQuote.objects.select_for_update().get(pk=uuid.UUID(str(quote_id)), owner=owner, purpose=purpose)
     except (ValueError, SandboxQuote.DoesNotExist):
         raise NotFound("Quote not found.") from None
-    if (quote.currency, quote.environment) != test_domain()[:2]:
+    from loan.prototype_lending import lending_domain, lending_policy
+    expected_domain = lending_domain() if purpose == 'LOAN' else test_domain()[:2]
+    if (quote.currency, quote.environment) != expected_domain:
         raise ValidationError({"code": "TEST_CURRENCY_MISMATCH", "message": "Obtain a quote for the current prototype currency and environment; old quotes are not converted."})
     if quote.terms_hash != terms_hash or sha256(json.dumps(quote.terms, sort_keys=True, separators=(",", ":")).encode()).hexdigest() != quote.terms_hash:
         raise ValidationError({"code": "TERMS_MISMATCH", "message": "Review and accept the exact server quote."})
@@ -201,7 +215,7 @@ def accepted_quote(owner, quote_id, terms_hash, purpose):
     if quote.environment == "UGX_DEMO":
         from loan.demo_tariffs import require_current_quote
         require_current_quote(owner, quote)
-        if quote.terms["policy"] != policy():
+        if quote.terms["policy"] != (lending_policy() if purpose == 'LOAN' else policy()):
             raise ValidationError({"code": "QUOTE_STALE", "message": "Loan or purchase policy changed. Review a new quote."})
         if purpose == "LOAN":
             current = assessment(owner, meter_id=quote.meter_id)
@@ -221,7 +235,8 @@ def apply_loan(owner, quote_id, terms_hash, client_request_id):
         if prior:
             if prior.owner_id != owner.pk or str(prior.quote_id) != str(quote_id) or prior.quote.terms_hash != terms_hash:
                 raise ValidationError({"code": "REQUEST_ID_CONFLICT"})
-            if (prior.currency, prior.environment) != test_domain()[:2]:
+            from loan.prototype_lending import lending_domain
+            if (prior.currency, prior.environment) != lending_domain():
                 raise ValidationError({"code": "TEST_CURRENCY_MISMATCH"})
             return prior, False
         quote = accepted_quote(owner, quote_id, terms_hash, "LOAN")
@@ -255,6 +270,9 @@ def apply_loan(owner, quote_id, terms_hash, client_request_id):
 
 def loan_record(loan):
     allocation = getattr(loan, "energy_allocation", None)
+    from loan.prototype_lending import REPAYMENT_MESSAGE
+    from backend.demo_config import new_mtn_payments_paused
+    repayment_available = (loan.currency, loan.environment) == test_domain()[:2] and not (test_domain()[2] == 'MTN_SANDBOX' and new_mtn_payments_paused())
     return {"id": str(loan.pk), "client_request_id": str(loan.client_request_id), "meter_id": loan.meter_id,
         "status": loan.status, "reason": loan.decision_reason, "currency": loan.currency, "environment": loan.environment,
         "principal": str(loan.principal), "total_due": str(loan.total_due), "outstanding": str(loan.outstanding),
@@ -262,5 +280,8 @@ def loan_record(loan):
         "due_at": loan.due_at.isoformat(), "closed_at": loan.closed_at.isoformat() if loan.closed_at else None,
         "created_at": loan.created_at.isoformat(), "terms": loan.terms, "assessment": loan.assessment,
         "allocation_id": allocation.pk if allocation else None,
+        'energy_environment': allocation.accounting_environment if allocation else None,
+        'repayment_available': repayment_available,
+        'repayment_message': '' if repayment_available else REPAYMENT_MESSAGE if loan.currency == 'UGX' else 'Matching EUR payment servicing unavailable in this mode.',
         "allocated_kwh": str(allocation.amount_kwh) if allocation else None,
         "meter_application_confirmed": False}

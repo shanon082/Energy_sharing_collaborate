@@ -21,7 +21,8 @@ class Command(BaseCommand):
         parser.add_argument("--refresh-purchases", action="store_true")
 
     def handle(self, *args, **options):
-        require_demo()
+        from loan.demo_assessment import require_automatic_assessment
+        require_automatic_assessment()
         if not 1 <= options["limit"] <= 100:
             raise CommandError("Use limit 1–100.")
         if (options["scenario"] or options["meter_id"]) and not options["user_id"]:

@@ -15,6 +15,7 @@
 #include <math.h>
 #include "MeterCore.h"
 #include "Protocol.h"
+#include "SafeDiagnostics.h"
 #include "PzemFrame.h"
 #include "HardwareConfig.h"
 #include "DeviceDomain.h"
@@ -39,8 +40,26 @@ uint32_t lastSession=0;
 bool sounding=false,emptySeen=false,diagnostic=false;
 pz::Reading measured{};
 enum class JobKind:uint8_t {Session,Redeem,Ack,Telemetry};
-struct Request {JobKind kind;char body[2304];};
-struct Reply {JobKind kind;int status;char body[4096];};
+struct Request {JobKind kind;char requestId[37];char body[2304];};
+struct Reply {JobKind kind;int status;int httpStatus;DiagnosticTransport transport;char requestId[37];char serverRequestId[37];char body[4096];};
+const Reply* diagnosticReply=nullptr;
+const char* diagnosticBackendCode="NO_SERVER_RESPONSE";
+void uuid4(char* out);
+const char* operationName(JobKind kind){return kind==JobKind::Session?"session":kind==JobKind::Redeem?"redeem":kind==JobKind::Ack?"ack":"telemetry";}
+void diagnosticLocal(const char* cause,const char* stage,bool failed=true,JobKind kind=JobKind::Session){
+ char fresh[37];if(!diagnosticReply)uuid4(fresh);
+ const char* op=diagnosticReply?operationName(diagnosticReply->kind):operationName(kind);
+ const char* id=diagnosticReply?diagnosticReply->requestId:fresh;
+ const bool ack=diagnosticReply?diagnosticReply->kind==JobKind::Ack:kind==JobKind::Ack;
+ Serial.printf("DEVICE request_id=%s operation=%s http=%d category=%s cause=%s stage=%s code=%s correlation=%s\n",
+   diagnosticLogId(id,diagnosticReply?diagnosticReply->serverRequestId:nullptr),op,diagnosticReply?diagnosticReply->httpStatus:0,
+   diagnosticCategory(ack,cause,failed),cause,stage,diagnosticReply?diagnosticBackendCode:"NO_SERVER_RESPONSE",
+   diagnosticReply?diagnosticCorrelation(id,diagnosticReply->serverRequestId):"not_sent");
+}
+struct DiagnosticReplyScope{
+ DiagnosticReplyScope(const Reply& reply,const char* code){diagnosticReply=&reply;diagnosticBackendCode=code;}
+ ~DiagnosticReplyScope(){diagnosticReply=nullptr;diagnosticBackendCode="NO_SERVER_RESPONSE";}
+};
 QueueHandle_t requestQueue=nullptr,replyQueue=nullptr;
 void say(const char* msg){snprintf(message,sizeof message,"%s",msg);showAt=millis();}
 void eraseToken(){memset(tokenDigits,0,sizeof tokenDigits);tokenLength=0;}
@@ -67,16 +86,19 @@ void latch(const char* why) {
 bool persist(State next) {
   seal(next);
   if (!valid(next)) {
+    diagnosticLocal("PERSISTENT_STORAGE_FAILURE","journal_validation");
     latch("Invalid state - service");
     return false;
   }
   if (prefs.putBytes("state", &next, sizeof next) != sizeof next) {
-    latch("Storage write failed");
+    diagnosticLocal("PERSISTENT_STORAGE_FAILURE","storage_write");
+    latch("Save failed");
     return false;
   }
   State verify{};
   if (prefs.getBytesLength("state") != sizeof verify || prefs.getBytes("state", &verify, sizeof verify) != sizeof verify || memcmp(&next, &verify, sizeof next) || !valid(verify)) {
-    latch("Storage verify failed");
+    diagnosticLocal("PERSISTENT_STORAGE_FAILURE","storage_verify");
+    latch("Save check failed");
     return false;
   }
   state = next; savedWh=next.meterWh;
@@ -148,6 +170,9 @@ void networkWorker(void*) {
     Reply response{};
     response.kind = req.kind;
     response.status = -1;
+    response.transport = DiagnosticTransport::Connection;
+    memcpy(response.requestId,req.requestId,sizeof response.requestId);
+    if(WiFi.status()==WL_CONNECTED&&!clockValid())response.transport=DiagnosticTransport::Clock;
     if (WiFi.status() == WL_CONNECTED && clockValid()) {
       WiFiClientSecure tls;
       tls.setCACert(cfg::ROOT_CA);
@@ -156,15 +181,27 @@ void networkWorker(void*) {
       http.setConnectTimeout(5000);
       http.setTimeout(5000);
       http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+      response.transport=DiagnosticTransport::HttpBegin;
       if (http.begin(tls, String(cfg::API_BASE) + route(req.kind))) {
+        const char* headers[]={"X-Request-ID"};http.collectHeaders(headers,1);
+        http.addHeader("X-Request-ID",req.requestId);
         http.addHeader("Content-Type", "application/json");
         http.addHeader("X-Device-Id", cfg::DEVICE_ID);
         http.addHeader("X-Device-Token", cfg::DEVICE_SECRET);
         response.status = http.POST((uint8_t*)req.body, strlen(req.body));
         if (response.status > 0) {
+          response.httpStatus=response.status;response.transport=DiagnosticTransport::Ok;
+          String returned=http.header("X-Request-ID");
+          if(diagnosticId(returned.c_str()))memcpy(response.serverRequestId,returned.c_str(),37);
           BoundedBody body;
-          if (http.getSize() > 4095 || http.writeToStream(&body) < 0 || body.overflow) response.status = -2;
-          else memcpy(response.body, body.value, body.count + 1);
+          if(http.getSize()>4095){response.status=-2;response.transport=DiagnosticTransport::BodyLimit;}
+          else if(http.writeToStream(&body)<0||body.overflow){response.status=-2;response.transport=body.overflow?DiagnosticTransport::BodyLimit:DiagnosticTransport::BodyRead;}
+          else memcpy(response.body,body.value,body.count+1);
+        }else{
+          char discarded[96];int tlsError=tls.lastError(discarded,sizeof discarded);
+          // ESP32's -1 covers TCP failures AND some handshake timeouts. Do not invent a narrower cause.
+          response.transport=tlsError < -1?DiagnosticTransport::TLS:DiagnosticTransport::ConnectionTLS;
+          memset(discarded,0,sizeof discarded);
         }
         http.end();
       }
@@ -176,15 +213,20 @@ void networkWorker(void*) {
   }
 }
 bool enqueue(JobKind kind, JsonDocument& doc) {
-  if (busy || !requestQueue || WiFi.status() != WL_CONNECTED || !clockValid()) return false;
+  if (busy || !requestQueue || WiFi.status() != WL_CONNECTED || !clockValid()) {
+    diagnosticLocal(WiFi.status()!=WL_CONNECTED?"CONNECTION_FAILURE":!clockValid()?"CLOCK_UNAVAILABLE":"REQUEST_NOT_SENT","enqueue",true,kind);
+    return false;
+  }
   Request r{};
   r.kind = kind;
+  uuid4(r.requestId);
   if (measureJson(doc) >= sizeof r.body) {
+    diagnosticLocal("REQUEST_NOT_SENT","request_size",true,kind);
     latch("Request too large");
     return false;
   }
   serializeJson(doc, r.body, sizeof r.body);
-  if (xQueueSend(requestQueue, &r, 0) != pdTRUE) return false;
+  if (xQueueSend(requestQueue, &r, 0) != pdTRUE){diagnosticLocal("REQUEST_NOT_SENT","queue",true,kind);return false;}
   volatile char* p = r.body;
   for (size_t i = 0; i < sizeof r.body; ++i) p[i] = 0;
   busy = true;
@@ -234,7 +276,8 @@ void sendAck() {
   // Include frozen command so Django can check allocation/delivery bindings.
   JsonDocument original;
   if (deserializeJson(original, state.lastCommand.canonical)) {
-    latch("Receipt corrupt - service");
+    diagnosticLocal("COMMAND_VALIDATION_FAILURE","ack_journal",true,JobKind::Ack);
+    latch("ACK journal bad");
     return;
   }
   j["allocation_id"] = original["allocation_id"];
@@ -282,6 +325,16 @@ void handleReply() {
   Reply r{};
   if (xQueueReceive(replyQueue, &r, 0) != pdTRUE) return;
   busy = false;
+  JsonDocument diagnostic;
+  const bool jsonValid=!deserializeJson(diagnostic,r.body)&&diagnostic.is<JsonObject>();
+  // Header-stripping proxies may still preserve the safe error-envelope ID.
+  if(!r.serverRequestId[0]&&r.httpStatus>=400&&diagnostic["request_id"].is<const char*>()&&diagnosticId(diagnostic["request_id"]))
+    memcpy(r.serverRequestId,diagnostic["request_id"].as<const char*>(),37);
+  const char* code=diagnosticCode(diagnostic.as<JsonVariantConst>(),r.httpStatus);
+  DiagnosticReplyScope trace(r,code);
+  if(r.transport!=DiagnosticTransport::Ok)diagnosticLocal(transportCause(r.transport),"transport");
+  else if(r.status<200||r.status>=300)diagnosticLocal("HTTP_REJECTION","http_rejection");
+  else diagnosticLocal("HTTP_RESPONSE","response_received",false);
   if (r.status == 401 || r.status == 403) {
     meterTick(true);
     switchOff();
@@ -303,23 +356,23 @@ void handleReply() {
       return;
     }
     if (r.kind == JobKind::Redeem) {
-      if (r.status == 409) say("Used token or conflict");
-      else if (r.status == 400 || r.status == 404) say("Token not accepted");
+      if (r.status == 400 || r.status == 404 || r.status == 409) say(rejectionMessage(code));
       else if (r.status == 503) say("Device API unavailable");
-      else say("No result - retry token");
-    } else say(r.status == 503 ? "Device API unavailable" : "Offline - retry pending");
+      else say(r.transport==DiagnosticTransport::BodyRead||r.transport==DiagnosticTransport::BodyLimit?"API reply failed":r.transport==DiagnosticTransport::TLS?"TLS failed":r.transport==DiagnosticTransport::Clock?"Clock not ready":"No API response");
+    } else say(r.kind==JobKind::Ack?"ACK retry pending":r.status==503?"API unavailable":"Retry pending");
     return;
   }
-  JsonDocument j;
-  if (deserializeJson(j, r.body) || !matching(j.as<JsonVariantConst>())) {
-    latch("Invalid server response");
-    return;
+  if(!jsonValid){diagnosticLocal("INVALID_JSON","response_json");latch("Bad server JSON");return;}
+  JsonDocument& j=diagnostic;
+  if(!matching(j.as<JsonVariantConst>())){
+    diagnosticLocal("COMMAND_VALIDATION_FAILURE","response_binding");latch("Wrong reply bind");return;
   }
   retryDelay = 2000;
   nextNetwork = millis() + 1000;
   if (r.kind == JobKind::Session) {
     if (!j["status"].is<const char*>() || strcmp(j["status"], "READY")) {
-      latch("Session not authorized");
+      diagnosticLocal("COMMAND_VALIDATION_FAILURE","session_status");
+      latch("Bad session reply");
       return;
     }
     State next = state;
@@ -334,7 +387,8 @@ void handleReply() {
     }
     Command c{};
     if (!parseCommand(j["command"], c)) {
-      latch("Invalid credit command");
+      diagnosticLocal("COMMAND_VALIDATION_FAILURE","command_validation");
+      latch("Bad credit cmd");
       return;
     }
     char receipt[37], at[25];
@@ -343,23 +397,26 @@ void handleReply() {
     State next = state;
     auto result = apply(next, c, receipt, at);
     if (result == Apply::New) {
-      if(persist(next)){beep(2);say("Credit saved");}
+      if(persist(next)){diagnosticLocal("CREDIT_SAVED","persisted",false);beep(2);say("Credit saved");}
     } else if (result == Apply::Duplicate) say("Already stored - recovering");
-    else { latch("Credit conflict - service"); }
+    else {diagnosticLocal("COMMAND_VALIDATION_FAILURE","command_application");latch("Credit conflict");}
   } else if (r.kind == JobKind::Ack) {
     if (!j["status"].is<const char*>() || strcmp(j["status"], "APPLIED") || !j["command_id"].is<const char*>() || !j["receipt_id"].is<const char*>() || !j["command_sequence"].is<uint32_t>() || j["command_sequence"].as<uint32_t>() != state.applicationCounter || !j["payload_digest"].is<const char*>() || strcmp(j["payload_digest"], state.lastCommand.digest)) {
-      latch("Invalid receipt response");
+      diagnosticLocal("COMMAND_VALIDATION_FAILURE","ack_response");
+      latch("ACK reply bad");
       return;
     }
     State next = state;
     if (!acknowledge(next, j["command_id"], j["receipt_id"])) {
-      latch("Receipt mismatch");
+      diagnosticLocal("COMMAND_VALIDATION_FAILURE","ack_binding");
+      latch("ACK mismatch");
       return;
     }
-    if (persist(next)) say("Credit confirmed");
+    if (persist(next)){diagnosticLocal("ACK_CONFIRMED","ack_saved",false);say("Credit confirmed");}
   } else {
     if (!j["status"].is<const char*>() || strcmp(j["status"], "ACCEPTED") || !j["boot_id"].is<const char*>() || strcmp(j["boot_id"], bootId) || !j["sequence"].is<uint32_t>() || j["sequence"].as<uint32_t>() != telemetrySequence) {
-      latch("Telemetry response invalid");
+      diagnosticLocal("COMMAND_VALIDATION_FAILURE","telemetry_response");
+      latch("Telemetry bad");
       return;
     }
   }
@@ -446,8 +503,11 @@ void handleKey(){
  if(persist(next)){beep(2);say("10 test Wh saved");}
  eraseToken();
 #else
- if(!sessionReady||WiFi.status()!=WL_CONNECTED||!clockValid()){say("Need device API");return;}
- if(busy||state.ackPending){say("Please retry");return;}
+ if(!sessionReady||WiFi.status()!=WL_CONNECTED||!clockValid()){
+   diagnosticLocal(WiFi.status()!=WL_CONNECTED?"CONNECTION_FAILURE":!clockValid()?"CLOCK_UNAVAILABLE":"SESSION_NOT_READY","request_not_sent",true,JobKind::Redeem);
+   say("Need device API");return;
+ }
+ if(busy||state.ackPending){diagnosticLocal(state.ackPending?"PENDING_ACK":"REQUEST_PENDING","request_not_sent",true,JobKind::Redeem);say(state.ackPending?"ACK pending":"Request pending");return;}
  JsonDocument j;identity(j);j["token"]=tokenDigits;j["application_counter"]=state.applicationCounter;
  if(enqueue(JobKind::Redeem,j)){eraseToken();say("Checking token");}
 #endif
@@ -505,9 +565,9 @@ void firmwareSetup(){
  const char* met=usb?"00000000001":cfg::METER_NUMBER;
  unsigned epoch=usb?1:cfg::BINDING_EPOCH;
  const char* domain=usb?"USB_EXERCISE":commissioning::ENVIRONMENT;
- if(!prefs.begin(usb?"gpawa_ex2":(!strcmp(domain,"SANDBOX")?"gpawa_sbx2":"gpawa_ac1"),false)){latch("NVS unavailable");return;}
+ if(!prefs.begin(usb?"gpawa_ex2":(!strcmp(domain,"SANDBOX")?"gpawa_sbx2":"gpawa_ac1"),false)){diagnosticLocal("PERSISTENT_STORAGE_FAILURE","nvs_open");latch("NVS unavailable");return;}
  if(prefs.isKey("state")){
-   if(prefs.getBytesLength("state")!=sizeof state||prefs.getBytes("state",&state,sizeof state)!=sizeof state||!valid(state)){latch("Invalid journal");return;}
+   if(prefs.getBytesLength("state")!=sizeof state||prefs.getBytes("state",&state,sizeof state)!=sizeof state||!valid(state)){diagnosticLocal("PERSISTENT_STORAGE_FAILURE","journal_read");latch("Invalid journal");return;}
    if(strcmp(dev,state.deviceId)||strcmp(id,state.storageId)||strcmp(met,state.meterNumber)||epoch!=state.bindingEpoch||strcmp(domain,accountingEnvironment(state))){latch("Identity/domain changed");return;}
  }else{
    if(!usb&&!cfg::ALLOW_FIRST_BOOT){latch("Provision first");return;}
@@ -523,7 +583,7 @@ void firmwareSetup(){
    // No button or compile flag may turn a suspended lifetime reading into usage.
    latch("Baseline review");return;
  }
- if(!bootRecover(state)){latch("Invalid journal");return;}
+ if(!bootRecover(state)){diagnosticLocal("PERSISTENT_STORAGE_FAILURE","journal_read");latch("Invalid journal");return;}
  if(!persist(state))return;
  storageOK=true;
 #if !GPAWA_USB_EXERCISE

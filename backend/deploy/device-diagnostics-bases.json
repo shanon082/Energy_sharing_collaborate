@@ -1,0 +1,32 @@
+{
+  "head": {
+    "before": {
+      "meter/diagnostics.py": null,
+      "meter/api/prototype_views.py": "5d646c2c654917d8d846befb80b44ec8c5b60e1f8e61282bb9472067cc0072a5",
+      "meter/prototype_device.py": "f88d7c40df6490869fddda1481bd6bc28871996966d0c5e861c2e2b12bf575e9",
+      "backend/hosting_middleware.py": "92fb4c53b13a5ac73ca5bd4dc7c446583cc645ccf0ac31435121dbd3e211d00b"
+    },
+    "after": {
+      "meter/diagnostics.py": "9dd2604a0bd607c3c14d9e18cb1d29ad92d916361abcde9d8cc7cdf83b07ab55",
+      "meter/api/prototype_views.py": "c393a2709aced7862825f4b4d40fa0a1d0fe4a93eaaf8a0696760a925201118e",
+      "meter/prototype_device.py": "b15d29319daa61db19746e214ac6a0fe5ed1bbe35b5432c7e24333949e7b0015",
+      "backend/hosting_middleware.py": "9827632abcc9324419c0000ead9d1ba0e856dfcb178900183b06fd5ecc820039"
+    },
+    "patch_sha256": "45d2c533b9f8754336488b60be8f1bb112ea76da9d53dd55fa19f11a46a644c9"
+  },
+  "prior-release": {
+    "before": {
+      "meter/diagnostics.py": "1c24ca73d7f967d415299afc365d89e2da2f4523b6494a5c0fa37ec574072095",
+      "meter/api/prototype_views.py": "fb6fb11ca426868c006818378a84d0136e4f2857ec71881dadeb428f2c3f35cb",
+      "meter/prototype_device.py": "6b83f1d57872ba0af2ffccbbafc4d036d76f6abe6953078ebf1b10dd1f941441",
+      "backend/hosting_middleware.py": "5072ac510bd574127211e9dbaa63836fb6cf21d619b3047bec4540f523b1d3a8"
+    },
+    "after": {
+      "meter/diagnostics.py": "9dd2604a0bd607c3c14d9e18cb1d29ad92d916361abcde9d8cc7cdf83b07ab55",
+      "meter/api/prototype_views.py": "c393a2709aced7862825f4b4d40fa0a1d0fe4a93eaaf8a0696760a925201118e",
+      "meter/prototype_device.py": "604bff7b40bb9b13041dc7e21b6a89871ecd3c9e290c4d0a0a45ce60c0c030ad",
+      "backend/hosting_middleware.py": "926d3972a4b22d60efe515373c15fc9ecf71842e20e317f44f0a410883546927"
+    },
+    "patch_sha256": "62aa55414adb62e5667b102a88e983583aebfb1b94193198a9996cf64453621c"
+  }
+}

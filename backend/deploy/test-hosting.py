@@ -95,6 +95,41 @@ if getattr(settings, 'ALWAYSDATA_TESTING', False):
     # artifacts or relying on previously collected development static files.
     settings.STATIC_ROOT = str(Path(private.name) / 'staticfiles')
     call_command('collectstatic', interactive=False, verbosity=0)
+# Optional cleanup allowance for resource-constrained local WSL runs. It never
+# changes request/financial-query timeouts or the hosted profile. SET LOCAL is
+# scoped to the flush transaction and PostgreSQL restores it on commit/rollback.
+if '--slow-test-cleanup' in sys.argv:
+    sys.argv.remove('--slow-test-cleanup')
+    from django.db import connection, transaction
+    original_flush = connection.ops.execute_sql_flush
+    def isolated_flush(sql_list):
+        if not str(connection.settings_dict['NAME']).startswith('test_gpawa_'):
+            raise AssertionError('Long cleanup is restricted to the isolated test database')
+        with transaction.atomic(using=connection.alias):
+            with connection.cursor() as cursor:
+                cursor.execute('SET LOCAL statement_timeout = 120000')
+                cursor.execute('SET LOCAL lock_timeout = 30000')
+            return original_flush(sql_list)
+    connection.ops.execute_sql_flush = isolated_flush
+    from contextlib import contextmanager
+    original_nodb = connection._nodb_cursor
+    @contextmanager
+    def isolated_nodb_cursor():
+        if (connection.settings_dict['HOST'], str(connection.settings_dict['PORT']), connection.settings_dict['USER']) != ('127.0.0.1', '55445', 'gpawa_alwaysdata_test'):
+            raise AssertionError('Long DB lifecycle allowance is restricted to isolated local PostgreSQL')
+        with original_nodb() as cursor:
+            cursor.execute('SHOW statement_timeout'); previous_timeout = cursor.fetchone()[0]
+            cursor.execute('SHOW lock_timeout'); previous_lock = cursor.fetchone()[0]
+            cursor.execute('SET statement_timeout = 120000')
+            cursor.execute('SET lock_timeout = 30000')
+            try:
+                yield cursor
+            finally:
+                cursor.execute("SELECT set_config('statement_timeout', %s, false)", [previous_timeout])
+                cursor.execute("SELECT set_config('lock_timeout', %s, false)", [previous_lock])
+    connection._nodb_cursor = isolated_nodb_cursor
+    print('Isolated test DB creation/cleanup allowance:120s; request/financial query timeouts unchanged', flush=True)
+
 labels = sys.argv[1:] or ['backend.tests_alwaysdata.PrivateEnvironmentTests',
                          'backend.tests_alwaysdata.AccountMailOutboxTests',
                          'accounts.tests_authentication', 'backend.tests_feature_flags']

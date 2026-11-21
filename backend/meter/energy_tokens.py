@@ -50,8 +50,9 @@ def authorized_source(allocation):
                 and expected == allocation.accounting_environment)
     if allocation.sandbox_loan_id:
         loan = allocation.sandbox_loan
-        expected = "UGX_DEMO" if loan.environment == "UGX_DEMO" else "SANDBOX"
-        return (loan.status in {"DISBURSED", "COMPLETED"} and loan.currency == ("UGX" if expected == "UGX_DEMO" else "EUR") and loan.owner_id == allocation.owner_id
+        from loan.prototype_lending import loan_energy_environment
+        expected = loan_energy_environment(loan)
+        return (loan.status in {"DISBURSED", "COMPLETED"} and loan.currency == ("UGX" if loan.environment == "UGX_DEMO" else "EUR") and loan.owner_id == allocation.owner_id
                 and loan.meter_id == allocation.meter_id and expected == allocation.accounting_environment)
     if allocation.loan_disbursement_id:
         source = allocation.loan_disbursement

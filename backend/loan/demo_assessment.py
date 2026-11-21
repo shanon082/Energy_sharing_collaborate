@@ -18,8 +18,14 @@ from loan.scoring import FACTOR_WEIGHTS, FACTOR_SUBFACTORS, get_factor_breakdown
 LABEL = "Demo assessment — simulated account information"
 
 
+def require_automatic_assessment():
+    from loan.prototype_lending import automatic_assessment_enabled
+    if not automatic_assessment_enabled():
+        raise PermissionDenied('Automatic prototype assessment is unavailable.')
+
+
 def initialize_demo_assessment(owner, *, meter=None, scenario=None):
-    require_demo()
+    require_automatic_assessment()
     if owner.user_role != User.CLIENT or owner.is_staff or owner.is_superuser:
         raise PermissionDenied("Demo consumer assessment only.")
     scenario = scenario or getattr(settings, "DEMO_ACCOUNT_PROFILE", "APPROVAL_V1")
@@ -62,8 +68,9 @@ def _update_purchases(row):
 
 
 def complete_demo_assessment(owner, meter):
-    require_demo()
-    from loan.sandbox_service import owned_test_meter, policy
+    require_automatic_assessment()
+    from loan.sandbox_service import owned_test_meter
+    from loan.prototype_lending import assessment_policy
     with transaction.atomic():
         owner = User.objects.select_for_update().get(pk=owner.pk)
         meter = owned_test_meter(owner, meter.pk, lock=True)
@@ -95,7 +102,7 @@ def complete_demo_assessment(owner, meter):
                 "profile_source": "Fixed synthetic categories independently assessed for this meter; not utility records"}}
             row.formula = {"major_weights": deepcopy(FACTOR_WEIGHTS), "subfactors": deepcopy(FACTOR_SUBFACTORS),
                            "rounding": "Existing loan.scoring: round factor weighted means to integer, then round the major weighted mean (half-even)."}
-            row.bonus_policy = deepcopy(policy())
+            row.bonus_policy = deepcopy(assessment_policy())
             row.score = row.base_score
             row.status = "READY"; row.error_code = ""; row.assessed_at = timezone.now(); row.meter = meter
         except (AccountDataUnavailable, OSError, TimeoutError):
@@ -116,7 +123,7 @@ def refresh_demo_purchase_contribution(owner, meter):
 
 def stored_demo_eligibility(owner, cfg, meter=None):
     """Stored evidence + fresh debt/limits. No provider or scoring writes on GET."""
-    require_demo()
+    require_automatic_assessment()
     from loan.models import SandboxLoan, LoanApplication
     row = DemoCreditAssessment.objects.filter(owner=owner, environment="UGX_DEMO", scope="METER", meter=meter).first()
     ready = meter is not None and row is not None and row.status == "READY" and row.bonus_policy.get("id") == cfg["id"]

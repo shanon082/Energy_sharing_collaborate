@@ -13,6 +13,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.debug import sensitive_variables
 
 from accounts.models import User
+from meter.diagnostics import mark_stage
 from meter.bench_device import BenchError, payload_digest, rate_attempt
 from meter.energy_tokens import authorized_source, cipher, digest_token
 from meter.models import (EnergyAllocation, EnergyKeypadToken, Meter, MeterDelivery,
@@ -103,6 +104,7 @@ def identity(device):
 
 
 def active_binding(device):
+    mark_stage('device_binding')
     meter = Meter.all_objects.get(pk=device.meter_id)
     if (not device.active or device.revoked_at or device.output_enabled or device.environment != permitted_environment()
             or device.hardware_class != 'AC_LAB' or meter.user_id != device.owner_id or meter.is_deleted
@@ -116,6 +118,7 @@ def active_binding(device):
 
 @sensitive_variables()
 def authenticate(request):
+    mark_stage('authentication')
     require_lab()
     rate_attempt('ac-ip:' + str(request.META.get('REMOTE_ADDR', 'unknown')), 120)
     try:
@@ -132,14 +135,18 @@ def authenticate(request):
 
 
 def validate(body, device, fields):
+    mark_stage('request_validation')
     if not isinstance(body, dict) or set(body) != IDENTITY | set(fields):
         fail('REQUEST_INVALID', 'Payload fields do not match the firmware contract.', 400)
     integer(body, 'binding_epoch', minimum=1)
+    mark_stage('device_binding')
     if any(body.get(key) != value for key, value in identity(device).items()):
         fail('DEVICE_BINDING_MISMATCH', 'Device binding does not match.', 403)
+    mark_stage('request_validation')
 
 
 def lab_source(allocation, environment=None):
+    mark_stage('source_eligibility')
     environment = environment or permitted_environment()
     if environment not in DOMAIN_PROTOCOLS or allocation.accounting_environment != environment:
         return False
@@ -163,6 +170,15 @@ def lab_source(allocation, environment=None):
         except (KeyError, TypeError, ValueError, ArithmeticError):
             return False
     if allocation.sandbox_loan_id:
+        from loan.prototype_lending import loan_energy_environment, is_lab_terms
+        loan = allocation.sandbox_loan
+        if is_lab_terms(loan.terms):
+            try:
+                from decimal import Decimal
+                return (environment == 'SANDBOX' and loan_energy_environment(loan) == environment
+                        and Decimal(loan.terms['energy_kwh']) == allocation.amount_kwh)
+            except (KeyError, TypeError, ValueError, ArithmeticError):
+                return False
         # Delivering an already-approved source never originates or approves a loan.
         expected = ('MTN_SANDBOX', 'EUR') if environment == 'SANDBOX' else ('UGX_DEMO', 'UGX')
         try:
@@ -184,6 +200,7 @@ def locked(device):
 
 
 def credit_state(device, body, session=False):
+    mark_stage('credit_reconciliation')
     """Device credit must equal ACKed commands, or precisely the one pending command."""
     counter = integer(body, 'application_counter')
     if counter < device.observed_application_counter:
@@ -262,21 +279,28 @@ def redeem(device, body):
         fail('DEVICE_SESSION_REQUIRED')
     if not isinstance(body['token'], str) or not re.fullmatch(r'[0-9]{15}', body['token']):
         fail('REQUEST_INVALID', 'Use a 15-digit token.', 400)
+    mark_stage('token_lookup')
     try:
         lookup = digest_token(body['token'])
     except ImproperlyConfigured:
         fail('TOKEN_SERVICE_UNAVAILABLE', 'Private token configuration requires operator review.', 503)
+    mark_stage('token_lookup')
     row = EnergyKeypadToken.objects.filter(lookup_digest=lookup).first()
     if row is None:
-        fail('TOKEN_UNAVAILABLE', 'Token unavailable for this device.', 404)
+        fail('TOKEN_LOOKUP_MISS', 'No matching token was found; retain the existing purchase for review.', 404)
+    mark_stage('meter_environment_mismatch')
     allocation = EnergyAllocation.objects.select_for_update().get(pk=row.allocation_id)
     token = EnergyKeypadToken.objects.select_for_update().get(pk=row.pk)
     if (token.owner_id != device.owner_id or allocation.owner_id != device.owner_id or token.meter_id != device.meter_id
             or allocation.meter_id != device.meter_id or token.meter_number != device.meter.meter_no
-            or token.environment != device.environment or allocation.accounting_environment != device.environment
-            or allocation.amount_kwh * 1000 != token.amount_wh or not lab_source(allocation, device.environment)
-            or not 0 < token.amount_wh <= 1_000_000 or token.amount_wh % 10):
+            or token.environment != device.environment or allocation.accounting_environment != device.environment):
         fail('TOKEN_UNAVAILABLE', 'Token unavailable for this device.', 404)
+    mark_stage('token_amount_validation')
+    if allocation.amount_kwh * 1000 != token.amount_wh or not 0 < token.amount_wh <= 1_000_000 or token.amount_wh % 10:
+        fail('TOKEN_AMOUNT_MISMATCH', 'Token amount requires reconciliation.', 409)
+    if not lab_source(allocation, device.environment):
+        fail('TOKEN_SOURCE_UNVERIFIED', 'Token source requires reconciliation; retain the existing purchase.', 409)
+    mark_stage('token_integrity')
     # Check encrypted integrity as well as the lookup HMAC. Never return plaintext.
     try:
         plain = cipher().decrypt(token.ciphertext.encode()).decode('ascii')
@@ -284,22 +308,27 @@ def redeem(device, body):
             raise ValueError
     except Exception:
         fail('TOKEN_STORAGE_UNAVAILABLE', 'Token integrity requires operator review.', 409)
+    mark_stage('already_used_token')
     if token.state == 'APPLIED':
         fail('TOKEN_ALREADY_USED')
+    mark_stage('pending_delivery')
     pending = device.commands.filter(receipt_id__isnull=True).select_related('delivery').first()
     if pending:
         if token.delivery_id == pending.delivery_id and count in {device.application_counter, pending.sequence}:
             contact(device)
             return {**identity(device), 'command': pending.delivery.command_payload}
         fail('PENDING_COMMAND')
+    mark_stage('conflicting_command')
     if count != device.application_counter:
         fail()
     if token.state != 'ISSUED' or token.delivery_id or allocation.deliveries.exists() or count == UINT32:
         fail('RESERVATION_CONFLICT')
     from meter.allocation_service import reserve_ac_lab_token
+    mark_stage('delivery_reservation')
     delivery = reserve_ac_lab_token(token, device=device)
     if max(delivery.pk, allocation.pk) > 2**53 - 1:
         fail('IDENTITY_OUT_OF_RANGE')
+    mark_stage('command_creation')
     command = {**identity(device), 'allocation_id': allocation.pk, 'delivery_id': delivery.pk,
         'command_id': str(token.command_id), 'command_sequence': count + 1, 'credit_wh': token.amount_wh, 'type': 'AC_LAB_CREDIT'}
     command['payload_digest'] = payload_digest(command)
@@ -318,10 +347,12 @@ def acknowledge(device, body):
         integer(body, key, 2**53 - 1, 1)
     receipt = canonical_uuid(body['receipt_id'])
     at = timestamp(body['applied_at'])
+    mark_stage('ack_command_lookup')
     command = device.commands.select_related('delivery__allocation').filter(delivery_id=body['delivery_id']).first()
     if command is None:
         fail('COMMAND_UNAVAILABLE', status=404)
     delivery = MeterDelivery.objects.select_for_update().get(pk=command.delivery_id)
+    mark_stage('ack_validation')
     frozen = delivery.command_payload
     if delivery.transport != 'AC_LAB' or delivery.status not in {MeterDelivery.DISPATCHED, MeterDelivery.OUTCOME_UNKNOWN, MeterDelivery.APPLIED}:
         fail('RECONCILIATION_REQUIRED')
@@ -336,6 +367,7 @@ def acknowledge(device, body):
             or token.owner_id != device.owner_id or token.meter_id != device.meter_id
             or not lab_source(allocation, device.environment)):
         fail('RECEIPT_BINDING_MISMATCH')
+    mark_stage('conflicting_command')
     if command.receipt_id:
         if command.receipt_id != receipt or command.applied_at != at:
             fail('RECEIPT_CONFLICT')

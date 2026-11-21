@@ -57,6 +57,7 @@ class FreeTestingMiddleware:
         sandbox_write = bool(getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
             and request.method == "POST" and (path in {
                 "/api/v1/sandbox/quotes/", "/api/v1/sandbox/loans/", "/api/v1/sandbox/payments/",
+                "/api/v1/sandbox/assessment/",
                 "/api/v1/meter/sandbox-meter-enrollment/"
             } or re.fullmatch(r"/api/v1/sandbox/payments/[0-9a-fA-F-]{36}/", path)))
         local_metadata = path in {
@@ -75,6 +76,11 @@ class FreeTestingMiddleware:
             response = JsonResponse({"code": "TESTING_OPERATION_UNAVAILABLE",
                                  "message": "Financial, delivery and worker-dependent operations are unavailable on this testing host."}, status=503)
             if path.startswith("/api/v1/prototype-device/v1/"):
-                response["Cache-Control"] = "private, no-store"
+                from meter.diagnostics import hosting_rejection
+                response = hosting_rejection(request)
             return response
-        return self.get_response(request)
+        response = self.get_response(request)
+        if path.startswith("/api/v1/prototype-device/v1/"):
+            from meter.diagnostics import unhandled_response
+            response = unhandled_response(request, response)
+        return response

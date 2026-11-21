@@ -20,11 +20,11 @@ with tempfile.TemporaryDirectory(prefix='gpawa-domain-cpp-') as directory:
         source = target / 'source'
         (source / 'tests').mkdir(parents=True)
         (source / 'GpawaAC').mkdir()
-        for name in ('Protocol.h', 'MeterCore.h', 'PzemFrame.h', 'HardwareConfig.h'):
+        for name in ('Protocol.h', 'MeterCore.h', 'PzemFrame.h', 'HardwareConfig.h', 'SafeDiagnostics.h'):
             shutil.copyfile(args.sketch / name, source / 'GpawaAC' / name)
-        for name in ('recovery.cpp', 'domain_protocol.cpp', 'credit_only.cpp', 'protocol-vectors.h'):
+        for name in ('recovery.cpp', 'domain_protocol.cpp', 'credit_only.cpp', 'diagnostics.cpp', 'protocol-vectors.h'):
             shutil.copyfile(root / 'tests' / name, source / 'tests' / name)
-    for name in ('recovery', 'domain_protocol', 'credit_only'):
+    for name in ('recovery', 'domain_protocol', 'credit_only', 'diagnostics'):
         subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
                         '-I', str(args.arduinojson), str(source / 'tests' / (name + '.cpp')),
                         '-o', str(target / name)], check=True)

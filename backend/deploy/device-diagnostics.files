@@ -1,0 +1,3 @@
+deploy/device-diagnostics-head.patch
+deploy/device-diagnostics-prior-release.patch
+deploy/device-diagnostics-bases.json

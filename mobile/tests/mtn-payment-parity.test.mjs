@@ -126,3 +126,35 @@ test('Next.js and Android present the same pending, settled and failed server re
     assert.match(repay, /Loan repayment/); assert.doesNotMatch(repay, /Electricity tokens|15-digit/);
   }
 });
+
+test('UGX loan quotes and EUR MTN receipts remain different on web and Android', () => {
+  const caps = sandboxCapabilities({enabled: true, provider: 'MTN_SANDBOX', currency: 'EUR', environment: 'MTN_SANDBOX',
+    physical_delivery: false, loans: true, purchases: true, repayments: true,
+    lending: {enabled: true, currency: 'UGX', environment: 'UGX_DEMO', energy_environment: 'SANDBOX', policy: 'DEMO-UGX-ACLAB-v1', repayment_available: false}});
+  assert.equal(caps.currency, 'EUR'); assert.equal(caps.loanCurrency, 'UGX');
+  const policy = {id: 'DEMO-UGX-ACLAB-v1', currency: 'UGX', environment: 'UGX_DEMO', minimum: '1000', maximum: '50000',
+    interest_percent: '5', fee: '0', due_days: 7, penalty_percent: '0', purchase_per_point: '10000', purchase_score_cap: 10, rounding: 'Whole UGX; 10 Wh',
+    repayment_message: 'UGX debt cannot be repaid with EUR MTN sandbox payments. No repayment mapping is approved.'};
+  for (const surface of ['web', 'mobile']) {
+    const loan = {...props, surface, capabilities: caps, view: 'apply', purpose: 'LOAN', currency: 'UGX', environment: 'UGX_DEMO',
+      paymentCurrency: 'EUR', paymentEnvironment: 'MTN_SANDBOX', loanCurrency: 'UGX', loanEnvironment: 'UGX_DEMO',
+      selectedMeter: {...props.selectedMeter, sandbox_inventory: true}, amount: '10000', pending: false, policy,
+      assessment: {score: 85, eligible: true, assessment_status: 'READY', maximum: '37500'}};
+    const amount = render(loan);
+    assert.match(amount, /Amount \(UGX\)/); assert.doesNotMatch(amount, /Use EUR test amounts/);
+    const quote = {id: 'synthetic-quote', expires_at: '2030-01-01T00:00:00Z', terms: {policy, purpose: 'LOAN', amount: '10000', energy_kwh: '10.00', billed: '10000', residual: '0', interest: '500', fee: '0', total_due: '10500'}};
+    const terms = render({...loan, quote});
+    assert.match(terms, /No repayment mapping is approved/); assert.match(terms, /10,?500/);
+    assert.match(terms, /disabled[^>]*>Continue/); assert.doesNotMatch(terms, /MTN sandbox number/);
+    const purchase = render({...loan, view: 'home', currency: 'EUR', environment: 'MTN_SANDBOX', assessmentPolicy: policy, policy: {...policy, currency: 'EUR', purchase_per_point: '10'}, payments: [{...pending, status: 'SETTLED', billed: '2.00', allocated_kwh: '2.00'}]});
+    assert.match(purchase, /EUR/); assert.doesNotMatch(purchase, /UGX(?: DEMO)? 2\.00/);
+  }
+});
+
+test('paused new payments hide EUR entry on both surfaces while retaining receipts', () => {
+  const capabilities=sandboxCapabilities({enabled:true,provider:'MTN_SANDBOX',currency:'EUR',environment:'MTN_SANDBOX',physical_delivery:false,new_payments_paused:true,purchases:true,repayments:true,loans:false});
+  for(const surface of ['web','mobile']) {
+    const html=render({...props,surface,view:'purchase',capabilities,pending:false,payments:[{...pending,status:'SETTLED',billed:'2.00',allocated_kwh:'2.00'}]});
+    assert.match(html,/UGX purchases unavailable/);assert.doesNotMatch(html,/Amount \(EUR TEST\)/);assert.match(html,/EUR/);
+  }
+});

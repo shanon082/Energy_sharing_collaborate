@@ -1,3 +1,5 @@
+> Current new-payment policy: [UGX lending and token diagnostics](UGX_LENDING_AND_TOKEN_DIAGNOSTICS.md) pauses new EUR purchases/repayments while preserving MTN history and recovery. The earlier initiation instructions below are historical, not authorization to start a payment.
+
 # MTN Sandbox → SANDBOX token → AC_LAB credit-only milestone
 
 Implemented locally, **not deployed or tested against MTN, a phone or a board**.

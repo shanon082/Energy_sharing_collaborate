@@ -27,9 +27,21 @@ class SandboxConsumerView(APIView):
 
 
 class SandboxAssessmentView(SandboxConsumerView):
-    def get(self, request):
-        cfg = policy()
-        result = assessment(request.user, meter_id=request.query_params.get("meter_id"))
+    def post(self, request):
+        from loan.sandbox_service import verified_consumer, owned_test_meter
+        from loan.demo_assessment import complete_demo_assessment
+        verified_consumer(request.user)
+        if set(request.data) != {'meter_id'}:
+            raise ValidationError({'code': 'ASSESSMENT_INPUT_FORBIDDEN', 'message': 'Only the owned meter may be selected. Assessment inputs come from the server.'})
+        meter = owned_test_meter(request.user, request.data.get('meter_id'))
+        complete_demo_assessment(request.user, meter)
+        return self.get(request, meter_id=meter.pk, lending=True)
+
+    def get(self, request, meter_id=None, lending=False):
+        from loan.prototype_lending import lending_policy, enabled as ugx_enabled
+        lending = lending or request.query_params.get('lending') == 'ugx'
+        cfg = lending_policy() if lending else policy()
+        result = assessment(request.user, None if lending and ugx_enabled() else cfg, meter_id=meter_id or request.query_params.get("meter_id"))
         pricing = {"available": True, "message": ""}
         if cfg.get("currency") == "EUR":
             from loan.sandbox_service import eur_pricing_available
@@ -41,7 +53,12 @@ class SandboxAssessmentView(SandboxConsumerView):
                 pricing = {"available": True, "message": "", "revision": fingerprint(inputs), "tariff_code": inputs["tariff"]["code"]}
             except ValidationError as exc:
                 pricing = {"available": False, "message": str(exc.detail.get("message", "Tariff unavailable"))}
-        return Response({"assessment": result, "policy": cfg, "pricing": pricing})
+        from loan.sandbox_service import eur_pricing_available
+        purchase_cfg = policy()
+        purchase_pricing = pricing if purchase_cfg['currency'] == cfg['currency'] else {
+            'available': eur_pricing_available(purchase_cfg), 'message': '' if eur_pricing_available(purchase_cfg) else 'EUR test pricing unavailable.'}
+        return Response({"assessment": result, "policy": cfg, "pricing": pricing,
+                         'purchase_policy': purchase_cfg, 'purchase_pricing': purchase_pricing})
 
 
 class SandboxQuoteView(SandboxConsumerView):
@@ -49,6 +66,9 @@ class SandboxQuoteView(SandboxConsumerView):
         purpose = request.data.get("purpose")
         if purpose not in {"LOAN", "PURCHASE"}:
             raise ValidationError({"purpose": "Use LOAN or PURCHASE."})
+        from loan.prototype_lending import enabled as ugx_enabled, CONTRACT
+        if purpose == 'LOAN' and ugx_enabled() and request.data.get('loan_contract') != CONTRACT:
+            raise ValidationError({'code': 'LOAN_CONTRACT_REQUIRED', 'message': 'Use the updated UGX prototype loan flow. EUR loan origination remains unavailable.'})
         meter_id = request.data.get("meter_id")
         if not isinstance(meter_id, int) or isinstance(meter_id, bool) or not 0 < meter_id < 2**63:
             raise ValidationError({"meter_id": "Select a positive test meter ID."})

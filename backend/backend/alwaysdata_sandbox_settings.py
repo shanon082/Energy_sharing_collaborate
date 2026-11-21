@@ -29,3 +29,7 @@ if DEMO_ACCOUNT_PROFILE not in SCENARIOS:
 from backend.feature_config import parse_feature_bool
 PROTOTYPE_AC_LAB_ENABLED = parse_feature_bool(os.environ.get("PROTOTYPE_AC_LAB_ENABLED", "false"), name="PROTOTYPE_AC_LAB_ENABLED")
 PROTOTYPE_RELAY_OUTPUT_ENABLED = False  # Not environment-configurable in this milestone.
+SANDBOX_UGX_LOANS_ENABLED = parse_feature_bool(os.environ.get('SANDBOX_UGX_LOANS_ENABLED', 'true'), name='SANDBOX_UGX_LOANS_ENABLED')
+
+# UGX-only consumer prototype: keep MTN credentials/history; pause NEW EUR charges.
+SANDBOX_NEW_PAYMENTS_ENABLED = parse_feature_bool(os.environ.get('SANDBOX_NEW_PAYMENTS_ENABLED', 'false'), name='SANDBOX_NEW_PAYMENTS_ENABLED')

@@ -73,7 +73,7 @@ def enroll_sandbox_meter(owner, raw_number):
 
 
 def _complete_assessment(owner, meter):
-    from backend.demo_config import provider_mode
-    if provider_mode() == "LOCAL_DEMO":
+    from loan.prototype_lending import automatic_assessment_enabled
+    if automatic_assessment_enabled():
         from loan.demo_assessment import complete_demo_assessment
         complete_demo_assessment(owner, meter)
