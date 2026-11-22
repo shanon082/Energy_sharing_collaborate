@@ -116,10 +116,10 @@ test('enabled LOCAL_DEMO loans retain Amount, Terms and explicit-consent progres
 test('Next.js and Android present the same pending, settled and failed server receipt', () => {
   for (const surface of ['web', 'mobile']) {
     const wait = render({ ...props, surface });
-    assert.match(wait, /Waiting for MTN sandbox confirmation/);
+    assert.match(wait, /Checking sandbox payment status…/);
     assert.doesNotMatch(wait, /Sandbox payment verified|simulating phone authorization|seconds/);
     const done = render({ ...props, surface, pending: false, payments: [{ ...pending, status: 'SETTLED', billed: '2.00', residual: '0', allocated_kwh: '2.00', settled_at: pending.next_check_at }] });
-    assert.match(done, /Sandbox payment verified/); assert.match(done, /EUR/);
+    assert.match(done, /Payment completed/); assert.match(done, /EUR/);
     assert.match(done, /SANDBOX\/GPAWA_PZEM_V2/);
     const failed = render({ ...props, surface, pending: false, payments: [{ ...pending, status: 'FAILED' }] });
     assert.match(failed, /Payment failed/); assert.doesNotMatch(failed, /Sandbox payment verified/);
@@ -217,7 +217,7 @@ test('approved UGX instructions keep provider EUR1 evidence separate on web and 
     assert.match(html,/Amount \(UGX\)/);assert.doesNotMatch(html,/Amount \(EUR/);
     assert.match(html,/<button(?:(?!disabled)[^>])*>Review terms/);
     const pendingHtml=render({...ready,pending:true,payments:[receipt]});
-    assert.match(pendingHtml,/Waiting for MTN sandbox confirmation/);assert.doesNotMatch(pendingHtml,/seconds|simulating phone authorization/);
+    assert.match(pendingHtml,/Checking sandbox payment status…/);assert.doesNotMatch(pendingHtml,/seconds|simulating phone authorization/);
     const settled={...receipt,status:'SETTLED',billed:'9999',residual:'1',allocated_kwh:'8.00',allocation_id:22,
       provider_receipt:{...receipt.provider_receipt,status:'SETTLED',transaction_id:'synthetic-provider-id'}};
     assert.equal(parseTestPayment(settled).currency,'UGX');
@@ -276,4 +276,22 @@ test('initial loan read error ends loading and extra authorization has no second
   assert.match(html,/Additional successful test authorization retained for review/);
   assert.doesNotMatch(html,/cloud allocation recorded/);
  }
+});
+
+test('web and Android distinguish pending, unknown, failed and settled receipts', () => {
+  for (const surface of ['web', 'mobile']) {
+    const show = payment => render({...props, surface, view:'activity', payments:[payment]});
+    assert.match(show(pending), /Checking sandbox payment status…/);
+    for (const code of ['MTN_AUTH_HTTP', 'MTN_STATUS_TRANSPORT', 'EVIDENCE_CURRENCY']) {
+      const html = show({...pending, reconciliation_error:code});
+      assert.match(html, /Confirmation delayed/);
+      assert.doesNotMatch(html, />Payment failed\./);
+      assert.match(html, /not a provider-declared payment failure/);
+    }
+    const expired = {...pending, checkout:{expired:true, message:'Request timed out; payment confirmation is still being checked.'}};
+    assert.match(show(expired), /Confirmation delayed/);
+    assert.doesNotMatch(show(expired), />Payment failed\./);
+    assert.match(show({...pending, status:'FAILED'}), /Payment failed/);
+    assert.match(show({...pending, status:'SETTLED'}), /Payment completed/);
+  }
 });

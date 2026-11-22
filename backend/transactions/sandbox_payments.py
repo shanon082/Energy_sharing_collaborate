@@ -13,7 +13,8 @@ from accounts.models import User
 from loan.models import SandboxLoan
 from loan.sandbox_service import require_sandbox, money, request_uuid, accepted_quote, owned_test_meter, verified_consumer
 from meter.allocation_service import authorize_purchase_allocation
-from mtn_momo.sandbox import MTNSandbox, test_msisdn
+from mtn_momo.sandbox import MTNSandbox, SandboxProviderError, test_msisdn
+from mtn_momo.diagnostics import diagnostic, record
 from transactions.models import PaymentIntent, SandboxSettlement
 from transactions.payment_settlement import PaymentSettlementError, settle_from_provider_evidence
 
@@ -108,30 +109,40 @@ def create_payment(owner, data):
         return intent, True
 
 
+class SandboxEvidenceError(PaymentSettlementError):
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(message)
+
+
 def validate_sandbox_evidence(intent, evidence):
     require_sandbox()
     require_mtn_sandbox(recovery=True)
     ctx = intent.sandbox_context or {}
-    if (intent.provider != "MTN_SANDBOX" or evidence.get("provider") != "MTN_SANDBOX"
-            or intent.currency != "EUR" or evidence.get("currency") != "EUR"
-            or str(evidence.get("reference_id")) != str(intent.provider_reference)
-            or evidence.get("external_id") != intent.provider_external_id
-            or ctx.get("purpose") != intent.purpose or ctx.get("owner_id") != intent.owner_id
-            or ctx.get("currency") != "EUR" or ctx.get("environment") != "MTN_SANDBOX"):
-        raise PaymentSettlementError("Sandbox provider/reference/currency/purpose does not match.")
+    checks = (
+        ('EVIDENCE_PROVIDER', intent.provider == 'MTN_SANDBOX' and evidence.get('provider') == 'MTN_SANDBOX'),
+        ('EVIDENCE_CURRENCY', intent.currency == 'EUR' and evidence.get('currency') == 'EUR'),
+        ('EVIDENCE_REFERENCE', str(evidence.get('reference_id')) == str(intent.provider_reference)),
+        ('EVIDENCE_EXTERNAL_ID', evidence.get('external_id') == intent.provider_external_id),
+        ('EVIDENCE_SOURCE', ctx.get('purpose') == intent.purpose and ctx.get('owner_id') == intent.owner_id
+         and ctx.get('currency') == 'EUR' and ctx.get('environment') == 'MTN_SANDBOX'),
+    )
+    for code, matches in checks:
+        if not matches:
+            raise SandboxEvidenceError(code, 'Sandbox provider/reference/currency/purpose does not match.')
     try:
         amount = Decimal(str(evidence.get("amount")))
         if not amount.is_finite() or amount != intent.amount:
             raise ValueError
     except (ValueError, ArithmeticError):
-        raise PaymentSettlementError("Sandbox amount does not match.") from None
+        raise SandboxEvidenceError('EVIDENCE_AMOUNT', "Sandbox amount does not match.") from None
     if evidence.get("payer") != ctx.get("msisdn"):
-        raise PaymentSettlementError("Sandbox payer does not match.")
+        raise SandboxEvidenceError('EVIDENCE_PAYER', "Sandbox payer does not match.")
     if evidence.get("status") == "SUCCESS" and (not isinstance(evidence.get("transaction_id"), str) or not evidence["transaction_id"].strip()):
-        raise PaymentSettlementError("Sandbox successful status lacks a financial transaction identity; reconcile with MTN.")
+        raise SandboxEvidenceError('EVIDENCE_TRANSACTION_ID', "Sandbox successful status lacks a financial transaction identity; reconcile with MTN.")
     if (not intent.sandbox_quote_id or (intent.purpose == "PURCHASE" and (not intent.meter_id or intent.sandbox_loan_id))
             or (intent.purpose == "LOAN_REPAYMENT" and (not intent.sandbox_loan_id or intent.meter_id))):
-        raise PaymentSettlementError("Sandbox source binding is invalid.")
+        raise SandboxEvidenceError('EVIDENCE_SOURCE', "Sandbox source binding is invalid.")
     from transactions.ugx_authorization import instruction_for, validate_instruction
     if instruction_for(intent) is not None or ctx.get('authorization_policy') is not None:
         validate_instruction(intent)
@@ -196,7 +207,7 @@ def apply_sandbox_settlement(intent):
             loan.save(update_fields=["status", "closed_at"])
 
 
-def reconcile_sandbox_payment(intent_id):
+def reconcile_sandbox_payment(intent_id, *, status_only=False):
     """Lease persists across process restarts; external I/O never holds DB locks."""
     require_sandbox()
     require_mtn_sandbox(recovery=True)
@@ -213,10 +224,10 @@ def reconcile_sandbox_payment(intent_id):
             return intent, False
         if intent.status != "PENDING" or (intent.reconcile_lease_until and intent.reconcile_lease_until > now):
             return intent, False
-        if intent.reconcile_after > now:
+        if intent.reconcile_after > now and not status_only:
             return intent, False
         # After expiry even ambiguous NEW metadata is status-only. No new charge.
-        submit = classification(intent) == 'NEVER_SUBMITTED' and now < deadline(intent)
+        submit = not status_only and classification(intent) == 'NEVER_SUBMITTED' and now < deadline(intent)
         if submit:
             # Pausing NEW collections must not prevent status recovery of an
             # already submitted reference. Never send a new charge while paused.
@@ -228,23 +239,37 @@ def reconcile_sandbox_payment(intent_id):
         intent.save(update_fields=["reconcile_lease_id", "reconcile_lease_until", "reconcile_attempts", "submission_state"])
     effect = False
     error = ""
+    adapter = None
+    def adapter_error(fallback):
+        value = getattr(adapter, 'last_diagnostic', None)
+        return value['code'] if isinstance(value, dict) and value.get('code') not in {None, 'NONE'} else fallback
     try:
         adapter = MTNSandbox(recovery=not submit)
         if submit:
             state = adapter.initiate(intent)
             PaymentIntent.objects.filter(pk=intent.pk, reconcile_lease_id=lease).update(submission_state=state)
+            if state != 'ACCEPTED':
+                error = adapter_error('MTN_SUBMISSION_UNCERTAIN')
             # Poll in a subsequent bounded run; initiation is not settlement.
         else:
             evidence = adapter.status(intent)
             intent, effect = settle_from_provider_evidence(intent.pk, evidence)
             if evidence.get("status") == "UNKNOWN":
-                error = "STATUS_UNAVAILABLE"
+                error = adapter_error('STATUS_UNAVAILABLE')
+    except (SandboxProviderError, SandboxEvidenceError) as exc:
+        error = exc.code
+        if isinstance(exc, SandboxEvidenceError):
+            record(intent, diagnostic('EVIDENCE_VALIDATION', http_status=200,
+                                     status='SUCCESSFUL' if evidence['status'] == 'SUCCESS' else 'FAILED', code=error))
     except (PaymentSettlementError, PermissionDenied):
         error = "PROVIDER_OR_EVIDENCE_UNAVAILABLE"
+        record(intent, diagnostic('SETTLEMENT_VALIDATION', code=error))
     finally:
         if error and submit:
             PaymentIntent.objects.filter(pk=intent.pk, reconcile_lease_id=lease).update(submission_state="OUTCOME_UNKNOWN")
-        delay = min(3600, 30 * 2 ** min(intent.reconcile_attempts-1, 7))
+        # Pending is not an error. Keep checking it promptly; transport/evidence
+        # errors back off to five minutes, not an hour. Never resubmit a reference.
+        delay = min(300, 30 * 2 ** min(intent.reconcile_attempts-1, 4)) if error else 5 if submit else 15
         PaymentIntent.objects.filter(pk=intent.pk, reconcile_lease_id=lease).update(
             reconcile_lease_until=None, reconcile_lease_id=None, reconciliation_error=error,
             reconcile_after=timezone.now()+timedelta(seconds=delay))

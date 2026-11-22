@@ -173,7 +173,10 @@ variable, provider key, tariff, lending rate or credential rotation is required.
 
    It expires up to20 overdue checkouts, then reconciles due MTN references, under
    the same total deadline. New-local-cancelled records cannot starve status recovery.
-   Provider backoff remains30s–1h; large backlogs require subsequent finite runs.
+   With the MTN status-checking patch, accepted submission is due for lookup after
+   5s, ordinary PENDING after15s, and errors back off30–300s. Large backlogs require
+   subsequent finite runs. See `MTN_STATUS_CHECKING.md` for safe targeted inspection
+   and status-only recovery of old references without resubmitting a charge.
    UI timeout appears from server time at300s; persisted expiry waits for the next
    scheduled run (normally up to about another minute, longer on a missed run).
    No persistent worker/Celery/Redis is introduced. Preserve account-email job

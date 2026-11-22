@@ -105,6 +105,15 @@ export function paymentStatusMethod(row: TestPayment, now = Date.now()): "GET" |
   const next = Date.parse(row.next_check_at);
   return Number.isFinite(next) && next <= now ? "POST" : "GET";
 }
+/** The same Django receipt drives both clients; elapsed time is never success/failure. */
+export function paymentStatusMessage(row: TestPayment): string {
+  if (row.status === 'SETTLED') return 'Payment completed';
+  if (row.status === 'FAILED') return 'Payment failed';
+  if (row.checkout?.state === 'LOCAL_INITIATION_CANCELLED') return 'Checkout closed; no new payment was submitted';
+  if (row.checkout?.expired || row.reconciliation_error || row.submission_state === 'OUTCOME_UNKNOWN')
+    return 'Confirmation delayed';
+  return row.provider === 'MTN_SANDBOX' ? 'Checking sandbox payment status…' : 'Waiting for server confirmation';
+}
 /** A missing recovery row may race an in-flight POST; it is not proof of failure. */
 export function canClearRecoveredRetry(row: { status: string; checkout?: TestCheckout } | null): boolean {
   return row !== null && (["SETTLED", "FAILED", "DISBURSED", "COMPLETED", "REJECTED"].includes(row.status)

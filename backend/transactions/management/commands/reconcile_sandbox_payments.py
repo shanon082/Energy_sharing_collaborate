@@ -1,6 +1,7 @@
 """Finite scheduled provider reconciliation, never a Celery/eager shortcut."""
 import time
 import signal
+import uuid
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from django.db.models import Q
@@ -19,18 +20,24 @@ class Command(BaseCommand):
         parser.add_argument("--run", action="store_true")
         parser.add_argument("--limit", type=int, default=2)
         parser.add_argument("--max-seconds", type=int, default=50)
+        parser.add_argument('--reference', type=uuid.UUID)
+        parser.add_argument('--status-only', action='store_true')
 
     def handle(self, *args, **options):
         require_sandbox()
         require_mtn_sandbox(recovery=True)
         if not 1 <= options["limit"] <= 10 or not 25 <= options["max_seconds"] <= 120:
             raise CommandError("Use limit 1–10 and max-seconds 25–120.")
+        targeted = options['reference'] is not None
+        if targeted != options['status_only']:
+            raise CommandError('Use --reference and --status-only together. A targeted recovery can never submit a charge.')
         from transactions.checkouts import overdue_checkouts, expire_due_checkouts, SUBMISSION_PROOF
         def due_ids():
             now = timezone.now()
-            rows = PaymentIntent.objects.filter(provider="MTN_SANDBOX", currency="EUR", status="PENDING", reconcile_after__lte=now).filter(
+            rows = PaymentIntent.objects.filter(provider="MTN_SANDBOX", currency="EUR", status="PENDING").filter(
                 Q(reconcile_lease_until__isnull=True) | Q(reconcile_lease_until__lte=now)).exclude(checkout__initiation_cancelled_at__isnull=False)
-            if provider_mode() != "MTN_SANDBOX" or new_mtn_payments_paused():
+            rows = rows.filter(provider_reference=options['reference']) if targeted else rows.filter(reconcile_after__lte=now)
+            if not targeted and (provider_mode() != "MTN_SANDBOX" or new_mtn_payments_paused()):
                 # Only provably unsubmitted NEW records are paused. Ambiguous
                 # metadata still needs status recovery under its original provider.
                 rows = rows.exclude(submission_state="NEW", reconcile_attempts=0,
@@ -49,7 +56,7 @@ class Command(BaseCommand):
         signal.signal(signal.SIGALRM, deadline)
         signal.alarm(options["max_seconds"])
         try:
-            expired = expire_due_checkouts(limit=20, stop_before=started+options['max_seconds']-25)
+            expired = [] if targeted else expire_due_checkouts(limit=20, stop_before=started+options['max_seconds']-25)
             self.stdout.write(f'local_checkout_expiry_ids={expired}; provider outcomes unchanged')
             ids = due_ids()
             if ids:
@@ -58,7 +65,7 @@ class Command(BaseCommand):
                 if time.monotonic() - started > options["max_seconds"] - 25:
                     break
                 try:
-                    row, applied = reconcile_sandbox_payment(pk)
+                    row, applied = reconcile_sandbox_payment(pk, status_only=targeted)
                 except PermissionDenied:
                     self.stdout.write(f"intent_id={pk} BLOCKED_NEW_COLLECTION; retained")
                     continue

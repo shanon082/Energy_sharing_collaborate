@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, paymentStatusMethod, canClearRecoveredRetry, testPhone,
+import { parseStoredDemoAssessment, parseTestQuote, assertTestPaymentBinding, mergePayments, parseTestLoan, parseTestPayment, readRetry, writeRetry, testAmount, testDemoAmount, testMoney, demoCountdown, paymentStatusMethod, paymentStatusMessage, canClearRecoveredRetry, testPhone,
   paymentConflictReason, checkoutRetryId, type Assessment, type SandboxCapabilities, type SandboxClient, type TestLoan, type TestMeter, type TestPayment, type TestPolicy, type TestQuote, type PricingStatus } from "../lib/sandbox";
 
 import { EnergyTokenCard } from "./energy-token-card";
@@ -246,7 +246,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
           meter_id: meterId, loan_id: null, currency, environment });
         if (current(identity)) {
           setPayments(previous => [payment, ...previous.filter(row => row.reference !== payment.reference)]);
-          setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : `Purchase ${payment.status}. Only verified settlement allocates test energy.`);
+          setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : paymentStatusMessage(payment));
         }
       }
       if (!current(identity)) return;
@@ -270,7 +270,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
         meter_id: loan.meter_id, loan_id: loanId, currency: paymentCurrency, environment: paymentEnvironment });
       if (!current(identity)) return;
       setPayments(previous => [payment, ...previous.filter(row => row.reference !== payment.reference)]);
-      setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : `Repayment ${payment.status}. Pending requests do not reduce debt.`); setRepayAccepted(false); inFlight.current = false; await refresh();
+      setNotice(demo ? payment.status === "SETTLED" ? DEMO_SUCCESS : DEMO_PENDING : paymentStatusMessage(payment)); setRepayAccepted(false); inFlight.current = false; await refresh();
     }, false, true, "PAYMENT");
   };
   const pending = payments.some(row => row.status === "PENDING");
@@ -292,7 +292,7 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
         if (disposed || !current(identity)) return;
         setPayments(previous => previous.map(item => item.reference === record.reference ? record : item));
         if (record.status !== "PENDING") {
-          setNotice(record.status === "FAILED" ? "Sandbox payment failed. No financial effect was applied." : record.provider === "LOCAL_DEMO" ? DEMO_SUCCESS : "Sandbox payment confirmed by Django. No real money was collected."); setError(null);
+          setNotice(record.provider === "LOCAL_DEMO" && record.status === 'SETTLED' ? DEMO_SUCCESS : paymentStatusMessage(record)); setError(null);
           const kind = record.purpose === "PURCHASE" ? "PURCHASE" : "LOAN_REPAYMENT";
           if (readRetry(owner, kind, record.environment) === record.client_request_id) writeRetry(owner, kind, null, record.environment);
           await refresh(); onChanged?.();
@@ -406,10 +406,10 @@ export default function SandboxConsumer({ client, owner, meters, selectedMeter, 
       <button type="submit" disabled={blocked || !capabilities.repayments || !repayAccepted || !selectedLoan || !validPaymentAmount(repayment) || (!demo && !testPhone(phone))}>{demo ? "Start demo self-repayment" : "Initiate sandbox self-repayment"}</button>
     </form>
     <section><h3>Sandbox receipts & pending recovery</h3>{!loaded ? <p>Loading…</p> : !payments.length ? <p>No sandbox payments.</p> : payments.map(row => <article className="panel" key={row.reference}>
-      <strong>{row.purpose} · {row.status} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
+      <strong>{row.purpose} · {paymentStatusMessage(row)} · {testMoney(row.amount, row.currency)}</strong><p>Reference {row.reference} · {when(row.initiated_at)}</p>
       <p>Environment: {row.environment}. Submission: {row.submission_state}. {row.reconciliation_error && `Reconciliation: ${row.reconciliation_error}.`} {row.provider === "LOCAL_DEMO" ? "No external provider or phone prompt." : `Next provider check ${when(row.next_check_at)}.`}</p>
       {row.status === "SETTLED" && row.purpose === "PURCHASE" && <EnergyTokenCard client={client} owner={owner} allocationId={row.allocation_id} />}
-      {row.status === "SETTLED" && <p>{row.provider === "LOCAL_DEMO" ? DEMO_SUCCESS : "Provider verified."} {when(row.settled_at)}. Billed {testMoney(row.billed, row.currency)}; remainder {testMoney(row.residual, row.currency)}; debt applied {testMoney(row.applied, row.currency)}; excess {testMoney(row.excess, row.currency)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
+      {row.status === "SETTLED" && <p>{row.provider === "LOCAL_DEMO" ? DEMO_SUCCESS : paymentStatusMessage(row)} {when(row.settled_at)}. Billed {testMoney(row.billed, row.currency)}; remainder {testMoney(row.residual, row.currency)}; debt applied {testMoney(row.applied, row.currency)}; excess {testMoney(row.excess, row.currency)}. Allocation {row.allocated_kwh ?? "None"} kWh; physical delivery unconfirmed.</p>}
       {row.status === "PENDING" && row.provider === "LOCAL_DEMO" && <p role="status">{DEMO_PENDING} Processing: {demoCountdown(row, clock) ?? "Unavailable"} seconds. {demoCountdown(row, clock) === 0 && "Awaiting server confirmation — not yet successful."}</p>}
       {row.provider_receipt && <details><summary>Provider test authorization</summary><p>EUR {row.provider_receipt.amount} · {row.authorization_policy}. Test evidence only, not a currency conversion or real UGX collection.</p></details>}
       {row.status === "PENDING" && row.environment !== environment && <p>This earlier request retains its original provider and currency. Scheduled reconciliation continues; it is not converted.</p>}
