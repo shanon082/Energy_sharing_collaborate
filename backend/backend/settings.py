@@ -334,7 +334,7 @@ from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     "verified-payment-reconciliation": {
         "task": "transactions.tasks.reconcile_pending_payments",
-        "schedule": crontab(minute="*/5"),
+        "schedule": timedelta(seconds=30),
         "options": {"queue": "celery"},
     },
     "ami-meter-balance-snapshots": {

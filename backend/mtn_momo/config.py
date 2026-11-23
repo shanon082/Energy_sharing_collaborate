@@ -23,9 +23,11 @@ MTN_MOMO_CONFIG = {
 }
 
 MTN_TEST_NUMBERS = [
-  "256771950092",
-  "256786973581",
-  "46733123454",
+  "56733123453",  # documented successful sandbox payer
+  "46733123450",  # failed
+  "46733123451",  # rejected
+  "46733123452",  # timeout/expired
+  "46733123454",  # pending/delayed
 ]
 
 

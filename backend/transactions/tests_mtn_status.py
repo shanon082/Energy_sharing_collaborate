@@ -25,6 +25,13 @@ class StatusContractTests(Fixtures, TestCase):
         response.json.return_value = body
         return response
 
+    def test_documented_test_payers_are_accepted_and_real_numbers_are_rejected(self):
+        from mtn_momo.sandbox import test_msisdn
+        for payer in ("56733123453", "46733123450", "46733123451", "46733123452", "46733123454"):
+            self.assertEqual(test_msisdn(payer), payer)
+        with self.assertRaises(Exception):
+            test_msisdn("256771950092")
+
     def submitted(self):
         row = self.purchase()
         with patch('mtn_momo.sandbox.requests.post', side_effect=[self.http({'access_token': 'synthetic-only'}), self.http(status=202)]):
@@ -111,6 +118,18 @@ class StatusContractTests(Fixtures, TestCase):
             call_command('reconcile_sandbox_payments', run=True, stdout=StringIO())
         row.refresh_from_db(); self.assertEqual(row.status, 'SETTLED')
         self.assertEqual(EnergyAllocation.objects.count(), 1)
+
+    def test_scheduled_task_reconciles_accepted_sandbox_payment(self):
+        from transactions.tasks import reconcile_pending_payments
+        row = self.submitted()
+        PaymentIntent.objects.filter(pk=row.pk).update(reconcile_after=timezone.now()-timedelta(seconds=1))
+        with patch('mtn_momo.sandbox.requests.post', return_value=self.http({'access_token': 'scheduled-token'})), \
+             patch('mtn_momo.sandbox.requests.get', return_value=self.http(self.body(row))):
+            reconciled = reconcile_pending_payments()
+        row.refresh_from_db()
+        self.assertEqual(reconciled, 1)
+        self.assertEqual(row.status, 'SETTLED')
+        self.assertEqual(SandboxSettlement.objects.count(), 1)
 
     def test_status_only_command_never_submits_settles_or_exposes_transaction_details(self):
         row = self.purchase(); output = StringIO()

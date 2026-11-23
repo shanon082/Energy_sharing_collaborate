@@ -9,6 +9,7 @@ from transactions.unified_history import filter_history, collect_unified_history
 import logging
 from datetime import timedelta
 from django.utils import timezone
+from django.db import models
 from transactions.models import PaymentIntent
 from transactions.payment_settlement import PaymentSettlementError, reconcile_payment
 
@@ -17,13 +18,25 @@ logger = logging.getLogger(__name__)
 
 @app.task()
 def reconcile_pending_payments():
-    """Poll trusted provider status independently of any browser session."""
-    cutoff = timezone.now() - timedelta(minutes=1)
-    ids = list(PaymentIntent.objects.filter(
-        status=PaymentIntent.PENDING,
-        provider="MTN_PRODUCTION",
-        initiated_at__lte=cutoff,
-    ).order_by("initiated_at").values_list("pk", flat=True)[:100])
+    """Poll trusted production and sandbox providers independently of a browser."""
+    now = timezone.now()
+    production_cutoff = now - timedelta(minutes=1)
+    production_ids = list(PaymentIntent.objects.filter(
+        status=PaymentIntent.PENDING, provider="MTN_PRODUCTION",
+        initiated_at__lte=production_cutoff, reconcile_after__lte=now,
+    ).order_by("initiated_at").values_list("pk", flat=True)[:50])
+
+    sandbox_ids = list(PaymentIntent.objects.filter(
+        status=PaymentIntent.PENDING, provider="MTN_SANDBOX", currency="EUR",
+        reconcile_after__lte=now,
+    ).filter(
+        (models.Q(reconcile_lease_until__isnull=True) |
+         models.Q(reconcile_lease_until__lte=now))
+    ).exclude(checkout__initiation_cancelled_at__isnull=False).order_by(
+        "reconcile_after"
+    ).values_list("pk", flat=True)[:50])
+
+    ids = list(dict.fromkeys([*production_ids, *sandbox_ids]))
     for intent_id in ids:
         try:
             reconcile_payment(intent_id)
@@ -32,8 +45,6 @@ def reconcile_pending_payments():
         except Exception:
             logger.exception("Payment intent %s reconciliation failed", intent_id)
     return len(ids)
-
-
 @app.task()
 def handle_send_transaction_statement_email(user_id, start_date, end_date):
     user = User.objects.filter(pk=user_id).first()

@@ -39,8 +39,13 @@ def configured(*, recovery=False):
 
 def test_msisdn(value):
     value = str(value or "").strip()
-    if not re.fullmatch(r"[0-9]{10,15}", value):
-        raise PaymentSettlementError("Use an MTN sandbox test MSISDN: 10–15 ASCII digits, no plus sign or spaces.")
+    supported = {
+        "56733123453",  # documented successful scenario
+        "46733123450", "46733123451", "46733123452", "46733123453",
+        "46733123454", "46733123499",
+    }
+    if not re.fullmatch(r"[0-9]{10,15}", value) or value not in supported:
+        raise PaymentSettlementError("Use a documented MTN sandbox test MSISDN; real mobile numbers are not accepted.")
     return value
 
 
