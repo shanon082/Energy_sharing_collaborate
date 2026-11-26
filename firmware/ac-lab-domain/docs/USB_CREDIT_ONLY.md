@@ -1,4 +1,9 @@
-# Authenticated USB-powered credit testing — 2026-11-19
+# Authenticated USB-powered credit testing — historical baseline mode
+
+The original credit-only deployment notes below describe AUTH_CREDIT_ONLY mode,
+not the current physical metering protocol. See
+[MEASUREMENT_TRANSITION.md](MEASUREMENT_TRANSITION.md) for the implemented
+retry-safe journal transition and current firmware behavior.
 
 Active sketch: `C:\Users\USER\OneDrive\Documents\Arduino\GpawaAC`.
 This mode needs USB power, configured Wi-Fi, correct time and verified HTTPS to
@@ -65,20 +70,19 @@ Boot counter advancement remains the normal existing recovery operation.
   “Baseline review”. The pure observe() function also refuses it without changing
   credit. Sensor reconnection alone never establishes a baseline or deducts usage.
 
-**Metered activation is intentionally blocked in this milestone.** It requires a
-separately reviewed operator workflow to establish/reconcile a real baseline,
-account for any unmeasured interval and durably authorize the transition. There
-is no keypad reset, bit-clearing shortcut or automatic subtraction of lifetime Wh.
-Physical output remains forbidden regardless of that future workflow. Never erase
-NVS or re-enable ALLOW_FIRST_BOOT to get around a used-binding/reconciliation error.
+Metered activation is now implemented through the authenticated prepare/commit
+workflow documented in [MEASUREMENT_TRANSITION.md](MEASUREMENT_TRANSITION.md).
+It establishes a new baseline and never charges lifetime Wh against existing
+credit. Output authorization is still disabled. Never erase NVS or re-enable
+ALLOW_FIRST_BOOT to get around a used-binding/reconciliation error.
 
 ## Backend and deployment impact
 
-No backend runtime change, new endpoint, schema migration, settings change,
-reprovisioning or hosting restart is required **beyond the already deployed
-MTN/SANDBOX GPAWA_PZEM_V2 implementation**. The four existing routes and payloads
-are unchanged. The backend does not require a PZEM baseline for session/redeem/ACK.
-All MTN settlement validation, seven disabled features and relay restrictions stay.
+The current local implementation adds two device-authenticated measurement
+transition endpoints and migration `0034_prototypemeasurementtransition`. Device
+deployments must not use this code until the backend schema and routes are
+deployed in the intended environment. MTN settlement validation and payment
+protections are unchanged; output remains disabled.
 
 The only backend addition is isolated tests in meter/tests_credit_only.py. Tests
 prove owner APIs show ACK-confirmed cloud entitlement separately from unavailable
@@ -125,3 +129,12 @@ remain private, outside Git and distribution packages.
 No deployment, flash, NVS access, provider/board request or relay operation was
 performed by this implementation. Host-side tests are not physical durability,
 TLS network reliability, keypad or sensor-accuracy evidence.
+
+## Separate GPIO14 / K1 low-voltage check
+
+The authenticated build above still never configures GPIO14. To test the relay
+board input without touching credit or backend state, use the isolated
+[GPIO14/K1 diagnostic procedure](RELAY_DIAGNOSTIC.md). That build starts GPIO14
+released and only drives HIGH/LOW on explicit serial commands; mains and all AC
+loads must remain disconnected. It does not infer active polarity or report
+relay-contact feedback. The commissioned-output compile prohibition remains.

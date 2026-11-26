@@ -80,7 +80,9 @@ class LabFixtures(Fixtures):
             'application_counter': command['command_sequence'], 'credited_uwh': credit,
             'consumed_uwh': 1_000_000, 'uncertain_uwh': 0, 'remaining_credit_uwh': credit - 1_000_000,
             'voltage_mv': 230000, 'current_ma': 100, 'power_mw': 23000, 'pzem_wh': 500,
-            'output_requested': False, 'output_feedback': 'UNKNOWN', 'sensor_status': 'OK'}
+            'frequency_cHz': 5000, 'power_factor_pct': 100,
+            'output_requested': False, 'output_feedback': 'UNKNOWN', 'sensor_status': 'OK',
+            'relay_active_level': 'LOW', 'fault_status': 'OK'}
 
 
 @override_settings(**LAB)
@@ -145,9 +147,10 @@ class PrototypeTests(LabFixtures, TransactionTestCase):
         # Consumer credentials alone cannot impersonate a device.
         self.dev.force_authenticate(self.owner)
         self.post('session', self.handshake, 401, **self.headers)
-        for overrides in ({'PROTOTYPE_AC_LAB_ENABLED': False}, {'ALWAYSDATA_TESTING': False},
-                          {'PROTOTYPE_RELAY_OUTPUT_ENABLED': True}):
+        for overrides in ({'PROTOTYPE_AC_LAB_ENABLED': False}, {'ALWAYSDATA_TESTING': False}):
             with override_settings(**overrides): self.post('session', self.handshake, 503)
+        with override_settings(PROTOTYPE_RELAY_OUTPUT_ENABLED=True):
+            self.assertFalse(self.post('session', self.handshake)['output_authorized'])
         with override_settings(PROTOTYPE_PAYMENT_PROVIDER='MTN_SANDBOX'):
             self.post('session', self.handshake, 401)  # Old UGX credential cannot cross domains.
         PrototypeDevice.objects.filter(pk=self.device.pk).update(revoked_at=timezone.now(), active=False)
@@ -213,15 +216,20 @@ class PrototypeTests(LabFixtures, TransactionTestCase):
         self.post('telemetry', {**sample, 'sequence': 1}, 409)
         self.post('telemetry', {**sample, 'sequence': 3, 'consumed_uwh': 0, 'remaining_credit_uwh': sample['credited_uwh']}, 409)
         self.post('telemetry', {**sample, 'sequence': 3, 'pzem_wh': 1}, 409)
-        self.post('telemetry', {**sample, 'sequence': 3, 'output_requested': True}, 403)
-        self.post('telemetry', {**sample, 'sequence': 3, 'sensor_status': []}, 400)
-        self.post('telemetry', {**sample, 'sequence': 3, 'sensor_status': 'FAULT'})
+        reported = self.post('telemetry', {**sample, 'sequence': 3, 'output_requested': True})
+        self.assertFalse(reported['output_authorized'])
+        self.assertEqual(reported['output_lease_seconds'], 0)
+        self.post('telemetry', {**sample, 'sequence': 4, 'sensor_status': []}, 400)
+        self.post('telemetry', {**sample, 'sequence': 4, 'sensor_status': 'FAULT',
+            'voltage_mv': None, 'current_ma': None, 'power_mw': None, 'pzem_wh': None,
+            'frequency_cHz': None, 'power_factor_pct': None,
+            'fault_status': 'SENSOR_UNAVAILABLE'})
         response = self.client.get(f'/api/v1/meter/mobile-meters/{self.meter.pk}/', **self.headers)
-        self.assertIsNone(response.data['lab_consumed_uwh'])
+        self.assertEqual(response.data['lab_consumed_uwh'], str(sample['consumed_uwh']))
         with patch('django.utils.timezone.now', return_value=timezone.now() + timedelta(seconds=100)):
             response = self.client.get(f'/api/v1/meter/mobile-meters/{self.meter.pk}/', **self.headers)
             self.assertEqual(response.data['contact_status'], 'STALE')
-        self.assertEqual(PrototypeTelemetry.objects.count(), 2)
+        self.assertEqual(PrototypeTelemetry.objects.count(), 3)
 
     def test_strict_schema_body_limits_and_private_error_responses(self):
         self.post('session', {**self.handshake, 'initialize': 1}, 400)

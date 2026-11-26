@@ -28,7 +28,12 @@ if DEMO_ACCOUNT_PROFILE not in SCENARIOS:
 # Separate commissioned AC lab capability; all household/relay routes stay blocked.
 from backend.feature_config import parse_feature_bool
 PROTOTYPE_AC_LAB_ENABLED = parse_feature_bool(os.environ.get("PROTOTYPE_AC_LAB_ENABLED", "false"), name="PROTOTYPE_AC_LAB_ENABLED")
-PROTOTYPE_RELAY_OUTPUT_ENABLED = False  # Not environment-configurable in this milestone.
+# Per-device commissioning records and firmware compile-time guards remain mandatory.
+# Set this deployment-owned kill switch to false for an immediate global inhibit.
+PROTOTYPE_RELAY_OUTPUT_ENABLED = parse_feature_bool(
+    os.environ.get("PROTOTYPE_RELAY_OUTPUT_ENABLED", "true"),
+    name="PROTOTYPE_RELAY_OUTPUT_ENABLED",
+)
 SANDBOX_UGX_LOANS_ENABLED = parse_feature_bool(os.environ.get('SANDBOX_UGX_LOANS_ENABLED', 'true'), name='SANDBOX_UGX_LOANS_ENABLED')
 
 # UGX-only consumer prototype: keep MTN credentials/history; pause NEW EUR charges.

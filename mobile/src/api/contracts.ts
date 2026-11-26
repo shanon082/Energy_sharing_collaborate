@@ -34,6 +34,18 @@ export type AllocationStatus = {
   lab_interval_start?: string | null;
   lab_sensor_status?: "OK" | "FAULT" | "UNAVAILABLE";
   lab_received_at?: string | null;
+  lab_measurement_state?: "UNINITIALIZED" | "SUSPENDED" | "MIGRATING" | "BASELINED" | "LEGACY_METERED";
+  lab_voltage_mv?: string | null;
+  lab_current_ma?: string | null;
+  lab_power_mw?: string | null;
+  lab_frequency_cHz?: string | null;
+  lab_power_factor_pct?: string | null;
+  lab_output_command?: "ON" | "OFF" | "UNKNOWN";
+  lab_fault_status?: "OK" | "SENSOR_UNAVAILABLE" | "ACCOUNTING_HOLD" | "SAFETY_FAULT";
+  output_authorized?: boolean;
+  output_authorization_state?: "NONE" | "ACTIVE" | "REVOKED" | "EXPIRED";
+  output_authorization_expires_at?: string | null;
+  output_restart_policy?: "AUTO" | "MANUAL";
 };
 
 export type DailyUsage = { date: string; kwh: string; source: string };
@@ -45,6 +57,9 @@ export type LabTelemetry = {
   boot_id: string; sequence: string; measured_at: string; received_at: string;
   consumed_uwh: string | null; remaining_credit_uwh: string; uncertain_uwh: string;
   sensor_status: "OK" | "FAULT"; pzem_wh: string | null;
+  voltage_mv: string | null; current_ma: string | null; power_mw: string | null;
+  frequency_cHz: string | null; power_factor_pct: string | null;
+  output_command: "ON" | "OFF" | "UNKNOWN"; fault_status: string;
 };
 export type ConsumptionHistory = {
   meter_no: string; daily_usage: DailyUsage[]; simulator_telemetry: Telemetry[];
@@ -124,6 +139,10 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
     throw new Error("Meter lab domain is unavailable.");
   const optionalWh = (value: unknown) => value == null ? null :
     typeof value === "string" && /^[0-9]+$/.test(value) ? value : (() => { throw new Error("Invalid meter credit reading."); })();
+  const optionalMetric = (value: unknown) => value == null ? null :
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? String(value) :
+    typeof value === "string" && /^[0-9]+$/.test(value) ? value :
+    (() => { throw new Error("Invalid physical meter measurement."); })();
   return { ...parseAllocation(data), contact_source: data.contact_source as AllocationStatus["contact_source"],
     contact_status: ["UNAVAILABLE", "STALE", "RECENT"].includes(String(data.contact_status))
       ? data.contact_status as AllocationStatus["contact_status"] : "UNAVAILABLE",
@@ -143,6 +162,24 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
     lab_sensor_status: ["OK", "FAULT", "UNAVAILABLE"].includes(String(data.lab_sensor_status))
       ? data.lab_sensor_status as AllocationStatus["lab_sensor_status"] : "UNAVAILABLE",
     lab_received_at: typeof data.lab_received_at === "string" ? data.lab_received_at : null,
+    lab_measurement_state: ["UNINITIALIZED", "SUSPENDED", "MIGRATING", "BASELINED", "LEGACY_METERED"].includes(String(data.lab_measurement_state))
+      ? data.lab_measurement_state as AllocationStatus["lab_measurement_state"] : undefined,
+    lab_voltage_mv: optionalMetric(data.lab_voltage_mv),
+    lab_current_ma: optionalMetric(data.lab_current_ma),
+    lab_power_mw: optionalMetric(data.lab_power_mw),
+    lab_frequency_cHz: optionalMetric(data.lab_frequency_cHz),
+    lab_power_factor_pct: optionalMetric(data.lab_power_factor_pct),
+    lab_output_command: ["ON", "OFF", "UNKNOWN"].includes(String(data.lab_output_command))
+      ? data.lab_output_command as AllocationStatus["lab_output_command"] : "UNKNOWN",
+    lab_fault_status: ["OK", "SENSOR_UNAVAILABLE", "ACCOUNTING_HOLD", "SAFETY_FAULT"].includes(String(data.lab_fault_status))
+      ? data.lab_fault_status as AllocationStatus["lab_fault_status"] : "SENSOR_UNAVAILABLE",
+    output_authorized: data.output_authorized === true,
+    output_authorization_state: ["NONE", "ACTIVE", "REVOKED", "EXPIRED"].includes(String(data.output_authorization_state))
+      ? data.output_authorization_state as AllocationStatus["output_authorization_state"] : "NONE",
+    output_authorization_expires_at: typeof data.output_authorization_expires_at === "string" &&
+      Number.isFinite(Date.parse(data.output_authorization_expires_at)) ? data.output_authorization_expires_at : null,
+    output_restart_policy: data.output_restart_policy === "AUTO" || data.output_restart_policy === "MANUAL"
+      ? data.output_restart_policy : undefined,
   };
 }
 
@@ -233,10 +270,19 @@ function parseLabTelemetry(value: unknown): LabTelemetry[] {
     if (typeof row.boot_id !== "string" || typeof row.measured_at !== "string" ||
         typeof row.received_at !== "string" || !["OK", "FAULT"].includes(String(row.sensor_status)))
       throw new Error("Invalid lab measurement.");
+    const optionalMetric = (v: unknown) => v == null ? null : count(v);
+    const outputCommand = ["ON", "OFF", "UNKNOWN"].includes(String(row.output_command))
+      ? row.output_command as "ON" | "OFF" | "UNKNOWN" : "UNKNOWN";
+    const faultStatus = typeof row.fault_status === "string" ? row.fault_status :
+      row.sensor_status === "OK" ? "OK" : "SENSOR_UNAVAILABLE";
     return { boot_id: row.boot_id, sequence: count(row.sequence), measured_at: row.measured_at,
       received_at: row.received_at, consumed_uwh: row.consumed_uwh === null ? null : count(row.consumed_uwh),
       remaining_credit_uwh: count(row.remaining_credit_uwh), uncertain_uwh: count(row.uncertain_uwh),
-      pzem_wh: row.pzem_wh === null ? null : count(row.pzem_wh), sensor_status: row.sensor_status as "OK" | "FAULT" };
+      pzem_wh: row.pzem_wh === null ? null : count(row.pzem_wh), sensor_status: row.sensor_status as "OK" | "FAULT",
+      voltage_mv: optionalMetric(row.voltage_mv), current_ma: optionalMetric(row.current_ma),
+      power_mw: optionalMetric(row.power_mw), frequency_cHz: optionalMetric(row.frequency_cHz),
+      power_factor_pct: optionalMetric(row.power_factor_pct),
+      output_command: outputCommand, fault_status: faultStatus };
   });
 }
 

@@ -153,6 +153,53 @@ Device uploads are every 30 seconds; recommend client polling no faster than tha
 for the active screen and mark readings stale after a documented interval, e.g.90 s.
 This is periodic monitoring, not instantaneous real-time or verified utility data.
 
+## POST /api/v1/prototype-device/v1/measurement/prepare/ and /commit/
+
+The one-time `GPAWA_BASELINE_V1` transition applies to a paused
+`AUTH_CREDIT_ONLY_V3` journal. Prepare carries the full exact device identity,
+`transition_id`, prior baseline presence/value, a newly validated PZEM lifetime
+Wh baseline, credit totals, application counter, ACK-pending flag and last
+credit receipt binding. Pending ACKs, telemetry that predates transition,
+changed transition IDs or inconsistent credit state are rejected.
+
+Prepare durably saves an idempotency-bound transition receipt without changing
+credit, consumption, command counters, receipts, or output policy. The exact
+body may be retried after a lost response. Commit accepts only that transition
+ID and receipt ID and durably moves the transition to COMMITTED. It is also
+idempotent. New token redemption is blocked between prepare and commit. Both
+responses include the transition ID, receipt and baseline; both explicitly
+return `output_authorized: false`. Transition completion never grants output.
+
+The device persists a CRC-protected INTENT before prepare and PREPARED receipt
+before commit. It writes the ordinary journal's baseline/version only after
+the server commit. Boot retries the same immutable proposal/receipt and checks
+the final baseline before removing the migration record. Any mismatch remains
+held and off; the operator must preserve NVS and reconcile, never reset it.
+The new baseline is not consumption: telemetry deductions start with later
+validated whole-Wh differences only.
+
+On `sensor_status: FAULT`, all unavailable measurement values must be `null`.
+Successful sensor snapshots include `frequency_cHz` and `power_factor_pct`.
+`fault_status` is one of `OK`, `SENSOR_UNAVAILABLE`, `ACCOUNTING_HOLD`, or
+`SAFETY_FAULT`. The backend checks each valid post-transition PZEM delta against
+the change to consumed credit and conservation totals. Fault snapshots cannot
+move counters or account consumption.
+
+## Output authorization
+
+Session and accepted telemetry responses also carry `output_authorized`,
+`output_lease_seconds` (bounded to 90 seconds and to sample freshness),
+`output_restart_policy` (`AUTO` or `MANUAL`) and
+`output_authorization_expires_at`. Device requests report the compiled
+`relay_active_level` as `HIGH`, `LOW`, or `null`. Authorization is granted only
+when the active audited per-device grant matches this reported polarity and
+all migration, credit, acknowledgement, meter freshness, fault and global
+enablement checks pass. The firmware turns output off on lease expiry or any
+local fault, regardless of a previous grant. Staff commissioning, evidence,
+revocation and immutable audit events are documented in
+[OUTPUT_AUTHORIZATION.md](./OUTPUT_AUTHORIZATION.md). Relay contact feedback
+remains `UNKNOWN`.
+
 ## Failure semantics
 
 400 malformed/token rejected, 401/403 credential/revoked/unauthorized,

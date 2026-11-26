@@ -260,10 +260,10 @@ class MTNDeviceTests(MTNFixture, TransactionTestCase):
             self.evidence(another, transaction_id=self.evidence(paid)['transaction_id']))
         self.assertEqual(EnergyKeypadToken.objects.count(), 1); self.assertEqual(SandboxSettlement.objects.count(), 1)
 
-    def test_sandbox_schema_keeps_physical_output_disabled(self):
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            PrototypeDevice.objects.filter(pk=self.device.pk).update(output_enabled=True)
-        self.device.refresh_from_db(); self.assertFalse(self.device.output_enabled)
+    def test_sandbox_output_bit_alone_cannot_grant_output(self):
+        from meter.prototype_device import output_authorization
+        PrototypeDevice.objects.filter(pk=self.device.pk).update(output_enabled=True)
+        self.assertFalse(output_authorization(self.device)['output_authorized'])
         for environment in ('CORE', 'MTN_SANDBOX'):
             with self.assertRaises(IntegrityError), transaction.atomic():
                 PrototypeDevice.objects.filter(pk=self.device.pk).update(environment=environment)

@@ -28,6 +28,9 @@ class PrototypeView(APIView):
     permission_classes = [AllowAny]
     parser_classes = []
 
+    def operation_options(self, request):
+        return {}
+
     def dispatch(self, request, *args, **kwargs):
         operation = 'ack' if self.operation.__name__ == 'acknowledge' else self.operation.__name__
         with trace_request(request, operation) as self.diagnostic:
@@ -87,7 +90,7 @@ class PrototypeView(APIView):
             body = json.loads(raw, object_pairs_hook=unique_object)
         except (ValueError, UnicodeError, RecursionError):
             service.fail('REQUEST_INVALID', 'Invalid JSON object.', 400)
-        return Response(self.operation(device, body))
+        return Response(self.operation(device, body, **self.operation_options(request)))
 
 
 class PrototypeSessionView(PrototypeView):
@@ -104,3 +107,16 @@ class PrototypeAckView(PrototypeView):
 
 class PrototypeTelemetryView(PrototypeView):
     operation = staticmethod(service.telemetry)
+
+    def operation_options(self, request):
+        # A retry keeps the original body byte-for-byte. This header can only
+        # suppress a lease, even if the original request never arrived.
+        return {'replay': request.headers.get('X-Gpawa-Telemetry-Replay') == '1'}
+
+
+class PrototypeMeasurementPrepareView(PrototypeView):
+    operation = staticmethod(service.prepare_measurement)
+
+
+class PrototypeMeasurementCommitView(PrototypeView):
+    operation = staticmethod(service.commit_measurement)

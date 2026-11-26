@@ -4,13 +4,16 @@ from backend.features import FeatureAvailabilityView
 
 from meter.api.keypad_views import BenchRedeemView, BenchAcknowledgeView, BenchSessionView
 
-from meter.api.prototype_views import PrototypeSessionView, PrototypeRedeemView, PrototypeAckView, PrototypeTelemetryView
+from meter.api.prototype_views import (PrototypeSessionView, PrototypeRedeemView, PrototypeAckView,
+    PrototypeTelemetryView, PrototypeMeasurementPrepareView, PrototypeMeasurementCommitView)
 
 urlpatterns = [
     path("prototype-device/v1/session/", PrototypeSessionView.as_view()),
     path("prototype-device/v1/redeem/", PrototypeRedeemView.as_view()),
     path("prototype-device/v1/ack/", PrototypeAckView.as_view()),
     path("prototype-device/v1/telemetry/", PrototypeTelemetryView.as_view()),
+    path("prototype-device/v1/measurement/prepare/", PrototypeMeasurementPrepareView.as_view()),
+    path("prototype-device/v1/measurement/commit/", PrototypeMeasurementCommitView.as_view()),
     path("bench-device/v1/session/", BenchSessionView.as_view()),
     path("bench-device/v1/redeem/", BenchRedeemView.as_view()),
     path("bench-device/v1/ack/", BenchAcknowledgeView.as_view()),

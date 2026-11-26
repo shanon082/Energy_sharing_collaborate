@@ -6,6 +6,7 @@ dist/
 android/.gradle/
 .gradle-user/
 .android-signing/
+artifacts/
 android/build/
 android/app/build/
 android/local.properties

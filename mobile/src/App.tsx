@@ -12,7 +12,8 @@ import { Access } from "./Access.tsx";
 import { ProfileEditor } from "./Profile.tsx";
 import { AllocationLedgers } from "../../frontend/src/components/allocation-ledgers.tsx";
 import { meterReadEnvironment } from "../../frontend/src/lib/sandbox-presentation.ts";
-import { LabReadings } from "./LabReadings.tsx";
+import { MeasuredConsumptionPanel } from "../../frontend/src/components/measured-consumption-panel.tsx";
+import { measuredConsumptionPath, parseMeasuredConsumption, sameUsageScope, type MeasuredConsumption, type UsageDays } from "../../frontend/src/lib/measured-consumption.ts";
 import { DeliveryPanel } from "./Delivery.tsx";
 import { Activity } from "./Activity.tsx";
 import { LoanQuote } from "./LoanQuote.tsx";
@@ -20,7 +21,7 @@ import { PurchasePanel, RepaymentPanel } from "./PaymentActions.tsx";
 import { Brand, Icon } from "./ui.tsx";
 import { CONSUMER_TABS, activeConsumerTab, type ConsumerTab } from "./consumer-navigation.ts";
 import { LatestRead } from "./api/read-scope.ts";
-import { microWhDisplay, parseMeterDashboard, selectedMeterStillAssigned, parseConsumption, parseLoans, parseMeters,
+import { parseMeterDashboard, selectedMeterStillAssigned, parseConsumption, parseLoans, parseMeters,
   type AllocationStatus, type ConsumptionHistory, type Loan, type MeterInfo } from "./api/contracts.ts";
 import { ApiError, SessionExpired, SessionManager, TransportError, type ConsumerIdentity } from "./auth/session.ts";
 import { AndroidSecureStore } from "./auth/secure-store.ts";
@@ -107,6 +108,8 @@ export default function App() {
   const [selectedMeter, setSelectedMeter] = useState<string | null>(null);
   const [allocation, setAllocation] = useState<Resource<AllocationStatus>>(empty);
   const [consumption, setConsumption] = useState<Resource<ConsumptionHistory>>(empty);
+  const [measured, setMeasured] = useState<Resource<MeasuredConsumption>>(empty);
+  const [usageDays, setUsageDays] = useState<UsageDays>(7);
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [capabilitiesReady, setCapabilitiesReady] = useState(false);
   const [sandbox, setSandbox] = useState<SandboxCapabilities>(NO_SANDBOX);
@@ -122,7 +125,7 @@ export default function App() {
 
   const clearView = useCallback(() => {
     setAccount(null); setMeters(empty()); setLoans(empty()); setAllocation(empty());
-    setConsumption(empty()); setSelectedMeter(null); selectedRef.current = null;
+    setConsumption(empty()); setMeasured(empty()); setUsageDays(7); setSelectedMeter(null); selectedRef.current = null;
     meterReads.current.invalidate(); selectedReads.current.invalidate(); setMeterNotice(null);
     setChangingPassword(false); setShowProfile(false); setShowAddMeter(false); setSandbox(NO_SANDBOX);
     setTab("dashboard"); setCapabilityError(null); setCapabilitiesReady(false); setMobileActions(DISABLED_MOBILE_ACTIONS);
@@ -170,7 +173,7 @@ export default function App() {
       setOffline(false);
       if (selectedRef.current && !selectedMeterStillAssigned(selectedRef.current, value)) {
         selectedRef.current = null; setSelectedMeter(null); selectedReads.current.invalidate();
-        setAllocation(empty()); setConsumption(empty());
+        setAllocation(empty()); setConsumption(empty()); setMeasured(empty());
         setMeterNotice("Your meter assignment changed. Select an assigned meter again.");
       }
       setMeters({ value, loading: false, error: null, fetchedAt: new Date().toISOString() });
@@ -196,24 +199,28 @@ export default function App() {
     }
   }, [expire]);
 
+  const usageEnvironment = sandbox.enabled ? meterReadEnvironment(sandbox.environment ?? "MTN_SANDBOX", sandbox.energyEnvironment) : "CORE";
   const loadSelected = useCallback(async (selected: MeterInfo) => {
     const meterNo = selected.meter_number;
     const owner = session.identity;
     const ticket = selectedReads.current.begin();
     setAllocation((old) => ({ ...old, loading: true, error: null }));
     setConsumption((old) => ({ ...old, loading: true, error: null }));
+    const scope = { id: selected.id, meter_number: meterNo, environment: usageEnvironment, days: usageDays };
+    setMeasured(old => ({ ...(old.value && sameUsageScope(old.value.scope, scope) ? old : empty<MeasuredConsumption>()), loading: true, error: null }));
     const path = encodeURIComponent(meterNo);
-    const [allocationResult, consumptionResult] = await Promise.allSettled([
-      session.get<unknown>(`meter/mobile-meters/${selected.id}/?environment=${sandbox.enabled ? meterReadEnvironment(sandbox.environment ?? "MTN_SANDBOX", sandbox.energyEnvironment) : "CORE"}`).then((data) => parseMeterDashboard(data, selected)),
-      session.get<unknown>(`meter/mobile-consumption/?meter_id=${selected.id}&meter_no=${path}`)
+    const [allocationResult, consumptionResult, measuredResult] = await Promise.allSettled([
+      session.get<unknown>(`meter/mobile-meters/${selected.id}/?environment=${usageEnvironment}`).then((data) => parseMeterDashboard(data, selected)),
+      session.get<unknown>(`meter/mobile-consumption/?meter_id=${selected.id}&meter_no=${path}&environment=${usageEnvironment}`)
         .then((data) => parseConsumption(data, selected)),
+      session.get<unknown>(measuredConsumptionPath(scope)).then(data => parseMeasuredConsumption(data, scope)),
     ]);
     if (owner !== session.identity || selectedRef.current?.id !== selected.id ||
         selectedRef.current.meter_number !== meterNo || !selectedReads.current.current(ticket)) return false;
     if (allocationResult.status === "rejected" && allocationResult.reason instanceof ApiError &&
         allocationResult.reason.status === 404) {
       selectedRef.current = null; setSelectedMeter(null); selectedReads.current.invalidate();
-      setAllocation(empty()); setConsumption(empty());
+      setAllocation(empty()); setConsumption(empty()); setMeasured(empty());
       setMeterNotice("This meter is no longer assigned to your account. Refresh and select a meter again.");
       return false;
     }
@@ -228,17 +235,21 @@ export default function App() {
     if (consumptionResult.status === "fulfilled") {
       setOffline(false);
       setConsumption({ value: consumptionResult.value, loading: false, error: null, fetchedAt: new Date().toISOString() });
-    } else if (consumptionResult.reason instanceof SessionExpired) { expire(); }
+    } else if (consumptionResult.reason instanceof SessionExpired) { expire(); return false; }
     else {
       if (consumptionResult.reason instanceof TransportError) setOffline(true);
       setConsumption((old) => ({ ...old, loading: false, error: message(consumptionResult.reason) }));
     }
-    return allocationResult.status === "fulfilled" && consumptionResult.status === "fulfilled";
-  }, [expire, sandbox.enabled, sandbox.environment, sandbox.energyEnvironment]);
+    if (measuredResult.status === "fulfilled") {
+      setMeasured({ value: measuredResult.value, error: null, loading: false, fetchedAt: new Date().toISOString() });
+    } else if (measuredResult.reason instanceof SessionExpired) { expire(); return false; }
+    else setMeasured(old => ({ ...old, loading: false, error: message(measuredResult.reason) }));
+    return allocationResult.status === "fulfilled" && consumptionResult.status === "fulfilled" && measuredResult.status === "fulfilled";
+  }, [expire, usageEnvironment, usageDays]);
 
   const chooseMeter = (selected: MeterInfo) => {
     selectedRef.current = selected; setSelectedMeter(selected.meter_number); setMeterNotice(null);
-    setAllocation(empty()); setConsumption(empty());
+    setAllocation(empty()); setConsumption(empty()); setMeasured(empty());
     void loadSelected(selected);
   };
 
@@ -363,6 +374,8 @@ export default function App() {
     onCancel={() => setChangingPassword(false)} />;
 
   const meter = meters.value?.find((item) => item.meter_number === selectedMeter) ?? null;
+  const usageScope = meter ? { id: meter.id, meter_number: meter.meter_number, environment: usageEnvironment, days: usageDays } : null;
+  const meterUsage = usageScope && measured.value && sameUsageScope(usageScope, measured.value.scope) ? measured.value : null;
   const title = { dashboard: "Home", meters: "My Meters", loans: "Loans", purchase: "Buy Units", account: "Account", activity: "Activity", consumption: "Usage", apply: "Apply for Loan" }[tab];
   const navigate = (next: Tab) => { setTab(next); setShowProfile(false); setShowAddMeter(false); window.scrollTo({ top: 0, behavior: "instant" }); };
   const financeView: ConsumerFinanceView = tab === "dashboard" ? "home" : (tab === "loans" || tab === "apply" || tab === "purchase" || tab === "activity") ? tab : "hidden";
@@ -404,7 +417,8 @@ export default function App() {
         {meter && <><Panel title={meter.label || "Meter details"}>
           <p className="meter-number muted">{meter.meter_number}</p><StateLine data={allocation} offline={offline} />
           <div className="detail-grid"><div><span>Cloud energy available</span><strong>{energy(allocation.value?.available_kwh)}</strong></div><div><span>Reserved energy</span><strong>{energy(allocation.value?.pending_kwh)}</strong></div><div><span>{allocation.value?.contact_source === "SIMULATOR" ? "Simulator remaining credit" : "Physical meter balance"}</span><strong>{allocation.value?.meter_reported_remaining_wh == null ? "Unavailable" : `${allocation.value.meter_reported_remaining_wh} Wh`}</strong></div></div>
-          {allocation.value?.contact_source === "AC_LAB" && <LabReadings reading={allocation.value} stale={offline || Boolean(allocation.error)} />}
+          {(allocation.value?.contact_source === "AC_LAB" || meterUsage?.device_bound || (usageEnvironment !== "CORE" && measured.error)) &&
+            <MeasuredConsumptionPanel compact data={meterUsage} loading={measured.loading} error={measured.error} days={usageDays} onDays={setUsageDays} onRefresh={() => void loadSelected(meter)} />}
           <div className="button-pair"><button onClick={() => navigate("purchase")}>Buy Units</button><button className="secondary" onClick={() => navigate("consumption")}>View usage</button></div>
           <details className="info-disclosure"><summary>Meter information</summary><p>Cloud allocations are separate from electricity applied to the physical meter.</p>
             {meter.ownership_provenance === "SELF_DECLARED" && <p>Linked using the number you provided. Ownership has not been checked with the utility.</p>}
@@ -412,19 +426,19 @@ export default function App() {
             <p>Recorded application: {allocation.value?.contact_source === "UNAVAILABLE" ? "Unavailable" : energy(allocation.value?.confirmed_kwh)}.</p>
             {allocation.value?.contact_source === "SIMULATOR" && <p>Contact and delivery readings are simulated.</p>}
           </details>
-        </Panel>{account && <AllocationLedgers client={session} owner={account.id} meterId={meter.id} />}{sandbox.provider === "MTN_SANDBOX" && <p role="status">{sandbox.labEnabled ? "SANDBOX AC lab redemption is configured. Credit is saved only after acknowledgement from the matching commissioned device; relay output stays disabled." : "AC lab redemption is disabled on the server. Your cloud allocation is retained; physical credit and relay output are not implied."}</p>}<details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
+        </Panel>{account && <AllocationLedgers client={session} owner={account.id} meterId={meter.id} />}{sandbox.provider === "MTN_SANDBOX" && <p role="status">{sandbox.labEnabled ? "SANDBOX AC lab redemption is configured. Credit is saved after acknowledgement from the matching commissioned device." : "AC lab redemption is disabled on the server. Your cloud allocation is retained; physical credit and relay output are not implied."}</p>}<details className="info-disclosure panel"><summary>Delivery history & loading</summary><DeliveryPanel key={meter.id} session={session} meter={meter} allocation={allocation.value} onReserved={() => void loadSelected(meter)} /></details></>}
       </>}
 
       {tab === "consumption" && <>
         <button className="text-button" onClick={() => navigate("meters")}><Icon name="back" />My Meters</button>
         <PageHeading title="Energy usage" text={meter ? `${meter.label} · ${meter.meter_number}` : "Select a meter to see its readings."} />
         {!meter ? <EmptyState icon="meter" title="Choose your meter" text="Usage belongs to the selected meter." action="Select meter" onAction={() => navigate("meters")} /> : <>
-          <StateLine data={consumption} offline={offline} />
-          <Panel title="Stored daily usage">{consumption.value?.daily_usage.length ? <>
+          <MeasuredConsumptionPanel data={meterUsage} loading={measured.loading} error={measured.error} days={usageDays} onDays={setUsageDays} onRefresh={() => void loadSelected(meter)} />
+          {(meterUsage?.device_bound === false || usageEnvironment === "CORE") && <><StateLine data={consumption} offline={offline} />
+          <Panel title="Other stored meter usage">{consumption.value?.daily_usage.length ? <>
             {!consumption.value.consumer_attribution_available && <p className="muted small">Meter history; previous consumer attribution is unavailable.</p>}
             {consumption.value.daily_usage.map(row => <div className="list-row" key={row.date}><span>{row.date}<small>{row.source === "STUB" ? "Sample reading" : row.source}</small></span><strong>{energy(row.kwh)}</strong></div>)}
-          </> : <div className="empty-inline"><Icon name="chart" /><h3>No readings yet</h3><p className="muted">Actual consumption appears when meter readings become available.</p></div>}</Panel>
-          {!!consumption.value?.ac_lab_telemetry.length && <Panel title="AC lab measured history"><p className="muted small">Cumulative device readings; missing intervals are not interpolated. Relay output disabled.</p>{consumption.value.ac_lab_telemetry.map(row => <div className="list-row" key={`${row.boot_id}:${row.sequence}`}><span>{dateTime(row.measured_at)}<small>{row.sensor_status} · Received {dateTime(row.received_at)}</small></span><strong>{row.pzem_wh == null ? "Unavailable" : `${row.pzem_wh} Wh cumulative`}</strong><small>Credit debited {microWhDisplay(row.consumed_uwh)} · Remaining {microWhDisplay(row.remaining_credit_uwh)}</small></div>)}</Panel>}
+          </> : <p>No stored daily usage.</p>}</Panel></>}
           {!!consumption.value?.simulator_telemetry.length && <details className="panel info-disclosure"><summary>Simulated readings</summary>{consumption.value.simulator_telemetry.map(row => <div className="list-row" key={row.event_id}><span>{dateTime(row.measured_at)}<small>{row.classification}</small></span><strong>{row.cumulative_wh} Wh</strong></div>)}</details>}
         </>}
       </>}

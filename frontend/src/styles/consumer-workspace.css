@@ -174,3 +174,12 @@
   border-radius: 10px;
   padding: 12px;
 }
+
+.measured-consumption { margin-block: 1rem; }
+.measured-consumption dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .5rem 1rem; }
+.measured-consumption dd { margin: 0; font-weight: 650; }
+.measured-consumption select { margin-inline-start: .5rem; }
+.measured-day-chart { display: grid; gap: .35rem; padding: 0; list-style: none; }
+.measured-day-chart li { display: grid; grid-template-columns: 7rem minmax(2rem, 1fr) 8rem; align-items: center; gap: .5rem; }
+.measured-day-chart meter { width: 100%; }
+.measured-day-chart meter[hidden] { display: block; visibility: hidden; }

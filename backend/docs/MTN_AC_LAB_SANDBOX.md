@@ -141,9 +141,11 @@ authenticate under the active SANDBOX capability. Do not erase them to unblock s
    the EXISTING private ENERGY_TOKEN_ENCRYPTION_KEYS and ENERGY_TOKEN_LOOKUP_KEY;
    see energy-tokens.env.example for syntax. Do not rotate/replace existing keys.
    Set `PROTOTYPE_AC_LAB_ENABLED=true` only for reviewed credit-only commissioning.
-   The settings default remains false. PROTOTYPE_RELAY_OUTPUT_ENABLED stays
-   hard-false; general physical routes, core money writes, simulator dispatch,
-   all deferred flags and EUR loan origination remain blocked. Preserve Gmail
+   The AC lab and consumer-sandbox settings remain opt-in. The sandbox profile's
+   `PROTOTYPE_RELAY_OUTPUT_ENABLED` is a deployment-owned global output switch
+   with an immediate `false` emergency override; per-device audited grants and
+   commissioned firmware remain mandatory. General physical routes, core money
+   writes, simulator dispatch, all deferred flags and EUR loan origination remain blocked. Preserve Gmail
    secrets, Django account URLs, CSRF/CORS/HTTPS settings and account-email outbox.
 
 4. Check target/actual TLS and review the real migration plan after code upload:

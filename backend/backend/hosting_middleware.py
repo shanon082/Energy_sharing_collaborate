@@ -46,14 +46,22 @@ class FreeTestingMiddleware:
         # Exact lab transport allowlist only. Views independently enforce the same
         # capability, unique device authentication, schema and meter binding.
         from meter.prototype_device import enabled as ac_lab_enabled
-        ac_lab_write = ac_lab_enabled() and request.method == "POST" and path in {
+        import re
+        ac_lab_write = ac_lab_enabled() and request.method == "POST" and (
+            path in {
             "/api/v1/prototype-device/v1/session/", "/api/v1/prototype-device/v1/redeem/",
             "/api/v1/prototype-device/v1/ack/", "/api/v1/prototype-device/v1/telemetry/",
-        }
+            "/api/v1/prototype-device/v1/measurement/prepare/",
+            "/api/v1/prototype-device/v1/measurement/commit/",
+            }
+            or re.fullmatch(
+                r"/api/v1/admin/prototype-devices/[0-9a-fA-F-]{36}/output-authorization(?:/revoke)?/",
+                path,
+            )
+        )
         auth = path.startswith("/api/v1/auth/")
         account_page = (getattr(settings, "DJANGO_HOSTED_ACCOUNT_PAGES", False)
                         and path in ACCOUNT_PAGE_PATHS and request.method == "POST")
-        import re
         sandbox_write = bool(getattr(settings, "CONSUMER_SANDBOX_ENABLED", False) is True
             and request.method == "POST" and (path in {
                 "/api/v1/sandbox/quotes/", "/api/v1/sandbox/loans/", "/api/v1/sandbox/payments/",

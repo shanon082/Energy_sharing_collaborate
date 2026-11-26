@@ -2,10 +2,32 @@
 
 # AC_LAB SANDBOX integration sources
 
+The repository sketch is the canonical public source for operational metering.
+Use [Operational firmware integration](docs/OPERATIONAL_INTEGRATION.md) for the
+current recovery contract, compile profiles and private Arduino staging process.
+The dated notes below describe earlier builds.
+
+The current physical-meter migration protocol is documented in
+[MEASUREMENT_TRANSITION.md](docs/MEASUREMENT_TRANSITION.md). It preserves the
+credit-only NVS journal and establishes an authenticated new PZEM baseline;
+existing lifetime energy is not deducted from credit. Output is disabled by
+default and requires an expiring, audited per-device backend grant; see
+[OUTPUT_AUTHORIZATION.md](docs/OUTPUT_AUTHORIZATION.md).
+Windows Arduino IDE export, board/library settings, isolated build profiles,
+low-voltage relay testing, watchdog details, and deployment preparation are in
+[PHASE5_HARDWARE_PREPARATION.md](docs/PHASE5_HARDWARE_PREPARATION.md).
+
 **Current milestone (2026-11-19):** see [authenticated USB-powered credit testing](docs/USB_CREDIT_ONLY.md).
 The active sketch and this public snapshot now use WIFI_TEST=0,
 AUTH_CREDIT_ONLY=1, USB_EXERCISE=0 and output=0. Existing private credentials,
 binding and NVS are preserved. No PZEM/AC measurement is required for credit.
+The repository `GpawaAC` source now defaults to isolated, read-only PZEM
+diagnostics (`GPAWA_PZEM_DIAGNOSTIC=1`, relay/authenticated credit/output off).
+The separate GPIO14 relay diagnostic is selected explicitly; see
+[RELAY_DIAGNOSTIC.md](docs/RELAY_DIAGNOSTIC.md). For PZEM validation see
+[PZEM_READ_ONLY_AND_RECONCILIATION.md](docs/PZEM_READ_ONLY_AND_RECONCILIATION.md).
+This does not alter the separately provisioned Windows sketch or any flashed
+device.
 The earlier mode/default/source-application notes below describe the2026-11-18
 milestone; do not reapply its old patch to the updated active sketch. The new
 `authenticated-credit-only.patch` is against the separately recorded current
@@ -29,7 +51,9 @@ The patch is retained for review/reproduction, **not for reapplying to this copy
 `public-firmware.patch` applies to the flat active sketch directory. Its baseline
 public-file hashes are in `UPSTREAM_SHA256.json`. Do not apply it to the older
 package folder. Review changes if any baseline public file has changed since
-inspection. No board firmware has been built, uploaded or flashed by this work.
+inspection. Phase 5 verified a compile-only build of the current authenticated
+metered/output-disabled source using the installed Windows toolchain. Nothing
+was uploaded or flashed.
 
 ## Manual source application, after reviewing/backing up public files
 
@@ -42,17 +66,24 @@ patch -p1 < /home/shanon/projects/next_projects/Energy-sharing-project/firmware/
 
 Do not overwrite private headers or erase NVS. Do not apply the patch a second
 time to an already updated sketch. Updating source does not change a flashed
-board. Arduino target compilation and physical-board tests remain required.
+board. The Phase 5 compile record is in
+[PHASE5_HARDWARE_PREPARATION.md](docs/PHASE5_HARDWARE_PREPARATION.md);
+upload and physical-board tests remain outstanding.
 
 ## Explicit mode and commissioning
 
-- `GPAWA_WIFI_TEST=1` remains the active sketch's diagnostic default. It uses
-  private `NetworkConfig.h`, tests Wi-Fi/keypad/PZEM only, and does not call Django,
-  write credit or accept tokens. The placeholder example is a safe compile fallback.
-- Authenticated operation requires explicit `GPAWA_WIFI_TEST=0`,
-  `GPAWA_USB_EXERCISE=0`, `GPAWA_COMMISSIONED_OUTPUT=0`, reviewed provisioning and
-  private `DeviceConfig.h`. The display retains hd44780. Physical output enablement
-  causes a compile error; the relay/load supply must also remain disconnected.
+- The repository source defaults to the read-only PZEM diagnostic mode. To build
+  authenticated metered firmware, explicitly set
+  `GPAWA_WIFI_TEST=0`, `GPAWA_PZEM_DIAGNOSTIC=0`,
+  `GPAWA_RELAY_DIAGNOSTIC=0`, `GPAWA_AUTH_CREDIT_ONLY=0`,
+  `GPAWA_USB_EXERCISE=0`, and `GPAWA_COMMISSIONED_OUTPUT=0`, with reviewed
+  private provisioning. `GPAWA_COMMISSIONED_OUTPUT=0` is mandatory until
+  independent physical results are supplied; backend authorization also
+  remains false. Keep the relay/load supply disconnected. See
+  [RELAY_DIAGNOSTIC.md](docs/RELAY_DIAGNOSTIC.md).
+- The separately provisioned active sketch remains authenticated
+  credit-only/WIFI_TEST=0; it is not changed by this public source work. Do not
+  copy its private identity or credentials into this repository.
 - Public `DeviceDomain.h` selects `commissioning::ENVIRONMENT="SANDBOX"`.
   The private header does not need a newly invented ENVIRONMENT member. Retain its
   unique credential, meter/device/storage/epoch values and verified CA; make them
@@ -75,8 +106,9 @@ python3 firmware/ac-lab-domain/tests/check.py --sketch /mnt/c/Users/USER/OneDriv
 
 Requires Linux g++ and the existing ArduinoJson headers (the script accepts
 `--arduinojson /path/to/ArduinoJson/src`). It exercises the existing credit/reboot/
-CRC/PZEM core, V1/V2 canonical SHA256 command vectors, wrong-domain/meter rejection,
-lost ACK, duplicate command persistence and compile-time output prohibition.
+PZEM frame/range/CRC/counter checks, V1/V2 canonical SHA256 command vectors,
+wrong-domain/meter rejection, lost ACK, duplicate command persistence and
+compile-time output prohibition.
 Digest vectors test canonical JSON against Python SHA256; the firmware's unchanged
 mbedtls crypto primitive is not independently tested by that callback.
 

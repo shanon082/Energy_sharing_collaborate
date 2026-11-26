@@ -129,6 +129,27 @@ class MobileMeterDashboardView(APIView):
         return response
 
 
+class MeasuredConsumptionView(APIView):
+    permission_classes = [IsAuthenticated, ConsumerAccountPermission]
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+    def get(self, request, meter_id):
+        from meter.measured_consumption import measured_consumption
+
+        meter = get_object_or_404(Meter, pk=meter_id, user=request.user, is_deleted=False)
+        environment = request.query_params.get('environment')
+        if environment not in ('CORE', 'SANDBOX', 'UGX_DEMO'):
+            raise ValidationError({'environment': 'Use CORE, SANDBOX, or UGX_DEMO.'})
+        days = request.query_params.get('days', '7')
+        if days not in ('1', '7', '30'):
+            raise ValidationError({'days': 'Use 1, 7, or 30 calendar days.'})
+        return Response(measured_consumption(request.user, meter, environment, int(days)))
+
+
 class MobileConsumptionHistoryView(APIView):
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)

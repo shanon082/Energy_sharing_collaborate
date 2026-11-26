@@ -32,7 +32,7 @@ export function useConsumerRead<T>(path: string | null, parse: (raw: unknown) =>
       error: cause instanceof Error ? cause.message : "Data unavailable." })); });
     return () => { current = false; };
   }, [path, parse, key, scope, retainOnRefresh]);
-  // Only capability metadata opts in; financial reads mask stale scopes by default.
+  // Retained data is visible only within the same owner and request scope.
   return result?.key === key ? { ...result, loading: false } : {
     value: retainOnRefresh && result?.scope === scope ? result.value : null, error: null, loading: path !== null };
 }
