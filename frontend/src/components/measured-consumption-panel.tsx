@@ -58,8 +58,8 @@ export function MeasuredConsumptionPanel({ data, loading, error, onRefresh, comp
       {data.latest_interval && data.latest_interval.classification !== 'MEASURED' &&
         <p>Interval coverage: {reasons[data.latest_interval.classification]}.</p>}
       <p>Last measurement {date(sample?.measured_at)} · Received {date(sample?.received_at)}</p>
-      <p>Last relay command {sample?.output_command ?? 'Unknown'} · Output permission {authorized ? 'Authorized' : 'Unavailable or inhibited'} · Physical contact unknown</p>
-      {relay && relay.state !== 'NONE' && <p>Authorization {relay.state.toLowerCase()} · {relay.restart_policy?.toLowerCase() ?? 'Unknown'} restart · Expires {date(relay.expires_at)}</p>}
+      <p>Last reported relay command {sample?.output_command ?? 'Unknown'} · {relay?.offline_allowed ? 'Offline operation permitted' : `Online permission ${authorized ? 'authorized' : 'unavailable or inhibited'}`} · Physical contact unknown</p>
+      {relay && relay.state !== 'NONE' && <p>Authorization {relay.state.toLowerCase()} · {relay.restart_policy?.toLowerCase() ?? 'Unknown'} restart · {relay.mode === 'PERSISTENT' ? 'Persistent commissioning' : `Expires ${date(relay.expires_at)}`}</p>}
       {!compact && <>
         <p>Measured energy in covered intervals <strong>{display(period?.measured_kwh, 'kWh')}</strong></p>
         <p>{period?.coverage === 'UNAVAILABLE' ? 'No covered intervals in this period.' :

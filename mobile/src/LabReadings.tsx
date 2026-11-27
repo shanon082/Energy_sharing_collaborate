@@ -28,7 +28,7 @@ export function LabReadings({ reading, stale }: { reading: AllocationStatus; sta
       <div><span>Power factor</span><strong>{reading.lab_power_factor_pct == null ? "Unavailable" : `${reading.lab_power_factor_pct}%`}</strong></div>
       <div><span>Device output command</span><strong>{reading.lab_output_command ?? "UNKNOWN"}</strong></div>
     </div>
-    <p className="muted small">Output authorization: {reading.output_authorized ? "Authorized" : "Disabled"} · {reading.output_authorization_state ?? "NONE"} · {reading.output_restart_policy ?? "MANUAL"} restart. Expires {dateTime(reading.output_authorization_expires_at)}. Physical relay contact: UNKNOWN (not independently sensed).</p>
+    <p className="muted small">{reading.output_offline_allowed ? "Offline operation permitted" : `Online output permission ${reading.output_authorized ? "authorized" : "unavailable"}`} · {reading.output_authorization_state ?? "NONE"} · {reading.output_restart_policy ?? "MANUAL"} restart · {reading.output_commissioning_mode === "PERSISTENT" ? "Persistent commissioning" : `Expires ${dateTime(reading.output_authorization_expires_at)}`}. Physical relay contact unknown.</p>
     {reading.lab_interval_start && <p className="muted small">Usage interval begins {dateTime(reading.lab_interval_start)}; missing samples are not interpolated.</p>}
     <p>Last measurement: {dateTime(reading.last_measurement_at)} · Last contact: {dateTime(reading.last_meter_contact)}</p>
     {reading.lab_sensor_status !== "OK" && <p role="status">Sensor reading unavailable · {reading.lab_fault_status ?? "SENSOR_UNAVAILABLE"}.</p>}

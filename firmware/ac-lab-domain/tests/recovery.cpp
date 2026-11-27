@@ -76,6 +76,54 @@ int main(){
  assert(leaseLiveAt(0,UINT32_MAX-499,1));
  assert(!leaseLiveAt(500,UINT32_MAX-499,1));
  assert(!leaseLiveAt(0,0,0)&&!leaseLiveAt(0,0,91));
+ OutputConditions output{false, true, true, false, false, false, true,
+                         true, true, false, true, true, true, true, false};
+ assert(!strcmp(outputInhibit(output), "METER_RECOVERY_PENDING"));
+ output.recoveryPending=false;
+ assert(!strcmp(outputInhibit(output), "OUTPUT_NOT_AUTHORIZED"));
+ output.leaseLive=leaseLiveAt(100,0,5);
+ assert(!outputInhibit(output));
+ output.hasCredit=false;
+ assert(!strcmp(outputInhibit(output), "CREDIT_EMPTY"));
+ output.ackPending=true; output.hasCredit=true;
+ assert(!strcmp(outputInhibit(output), "ACK_PENDING"));
+ output.ackPending=false; output.recoveryPending=true;
+ assert(!strcmp(outputInhibit(output), "METER_RECOVERY_PENDING"));
+ output.recoveryPending=false;
+ assert(!outputInhibit(output));
+ output.sensorReady=false;
+ assert(!strcmp(outputInhibit(output), "SENSOR_NOT_READY"));
+ output.sensorReady=true; output.leaseLive=leaseLiveAt(5000,0,5);
+ assert(!strcmp(outputInhibit(output), "OUTPUT_NOT_AUTHORIZED"));
+ output.leaseLive=true; output.storageReady=false;
+ assert(!strcmp(outputInhibit(output), "STORAGE_UNAVAILABLE"));
+ output.storageReady=true; output.profileEnabled=false;
+ assert(!strcmp(outputInhibit(output), "OUTPUT_NOT_COMMISSIONED"));
+ output.profileEnabled=true; output.offlineApproved=true;
+ output.sessionReady=false; output.networkReady=false; output.clockReady=false;
+ output.recoveryPending=true; output.leaseLive=false;
+ assert(!outputInhibit(output)); // A network outage or offline reboot alone leaves the load on.
+ output.ackPending=true;
+ assert(!strcmp(outputInhibit(output), "ACK_PENDING"));
+ output.ackPending=false; output.sensorReady=false;
+ assert(!strcmp(outputInhibit(output), "SENSOR_NOT_READY"));
+ output.sensorReady=true; output.offlineApproved=false;
+ assert(outputInhibit(output)); // A received revocation removes the local permission.
+ State saved=durable;
+ assert(acknowledge(saved,c.id,rec));
+ saved.reservedBytes[0]=1;
+ assert(observe(saved,3180)==Reading::Advanced && saved.availableUWh==3020*UWH_PER_WH);
+ seal(saved);
+ const auto approval=offlineApprovalFor(saved,0);
+ assert(bootRecover(saved) && matchesOfflineApproval(approval,saved,0));
+ assert(offlineCounterRestorable(saved.meterWh,3200));
+ assert(!offlineCounterRestorable(saved.meterWh,3179));
+ assert(!offlineCounterRestorable(saved.meterWh,3300));
+ assert(observe(saved,3200)==Reading::Advanced && saved.availableUWh==3000*UWH_PER_WH);
+ assert(observe(saved,3200)==Reading::Same && saved.availableUWh==3000*UWH_PER_WH);
+ assert(!matchesOfflineApproval(approval,saved,1));
+ ++saved.bindingEpoch;
+ assert(!matchesOfflineApproval(approval,saved,0));
  // Close the old epoch before applying credit. Excess measured Wh during
  // depletion may not be retroactively billed to the next command.
  State epoch=durable;

@@ -82,6 +82,22 @@ class MeasuredConsumptionTests(LabFixtures, TestCase):
         self.assertIsNone(usage['latest']['power_w'])
         self.assertIn('COUNTER_RESET', [row['classification'] for row in usage['history']])
 
+    def test_offline_checkpoints_expose_unknown_time_and_consecutive_upload_gaps(self):
+        now = datetime(2026, 11, 26, 12, tzinfo=utc.utc)
+        self.observation(1, now - timedelta(seconds=75), 100)
+        self.observation(2, now - timedelta(seconds=45), 104, offline_gap=True)
+        self.observation(3, now - timedelta(seconds=15), 107, clock_status='OFFLINE_UNTIMED',
+                         fault_status='SENSOR_UNAVAILABLE')
+        usage = self.usage(days=1, now=now)
+        self.assertIsNone(usage['period']['measured_kwh'])
+        self.assertEqual(usage['period']['unallocated_kwh'], '0.007')
+        self.assertEqual([row['classification'] for row in usage['history'][:2]], ['TIME_UNRESOLVED', 'UPLOAD_GAP'])
+        self.assertIsNone(usage['history'][0]['measured_at'])
+        self.assertIsNone(usage['latest']['measured_at'])
+        self.assertIsNone(usage['latest']['power_w'])
+        self.assertEqual(usage['latest']['cumulative_kwh'], '0.107')
+        self.assertEqual(usage['latest']['freshness'], 'STALE')
+
     def test_midnight_period_edge_restart_and_upload_gap(self):
         midnight = datetime(2026, 11, 26, tzinfo=utc.utc)
         boot = str(uuid.uuid4())

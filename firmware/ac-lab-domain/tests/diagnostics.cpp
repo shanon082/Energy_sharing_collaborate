@@ -19,6 +19,11 @@ int main(){
  assert(!strcmp(diagnosticCode(body.as<JsonVariantConst>(),404),"HTTP_NOT_FOUND"));
  body.clear();assert(!strcmp(diagnosticCode(body.as<JsonVariantConst>(),0),"TRANSPORT_ERROR"));
  assert(!strcmp(diagnosticCode(body.as<JsonVariantConst>(),200),"OK"));
+ assert(!strcmp(outputAuthorizationReason(body.as<JsonVariantConst>()),"UNREPORTED"));
+ body["output_reason"]="RELAY_POLARITY_MISMATCH";
+ assert(!strcmp(outputAuthorizationReason(body.as<JsonVariantConst>()),"RELAY_POLARITY_MISMATCH"));
+ body["output_reason"]="UNTRUSTED_DEVICE_SECRET";
+ assert(!strcmp(outputAuthorizationReason(body.as<JsonVariantConst>()),"UNREPORTED"));
  assert(!strcmp(transportCause(DiagnosticTransport::TLS),"TLS_FAILURE"));
  assert(!strcmp(transportCause(DiagnosticTransport::Connection),"CONNECTION_FAILURE"));
  assert(!strcmp(transportCause(DiagnosticTransport::ConnectionTLS),"CONNECTION_OR_TLS_FAILURE"));

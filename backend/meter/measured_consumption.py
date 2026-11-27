@@ -62,13 +62,15 @@ def interval(previous, current, devices):
         classification = 'SENSOR_UNAVAILABLE'
     elif after < before:
         classification = 'COUNTER_RESET'
+    elif current.observed_at is None or previous.observed_at is None:
+        classification, delta = 'TIME_UNRESOLVED', after - before
     elif seconds <= 0:
         classification = 'TIME_UNRESOLVED'
     else:
         delta = after - before
         if previous.boot_id != current.boot_id:
             classification = 'RESTART'
-        elif seconds > MAX_INTERVAL_SECONDS or current.sequence != previous.sequence + 1:
+        elif current.payload.get('offline_gap') is True or seconds > MAX_INTERVAL_SECONDS or current.sequence != previous.sequence + 1:
             classification = 'UPLOAD_GAP'
         elif start.astimezone(utc.utc).date() != end.astimezone(utc.utc).date():
             classification = 'DAY_BOUNDARY'
@@ -78,8 +80,8 @@ def interval(previous, current, devices):
         **b,
         'boot_id': str(current.boot_id),
         'sequence': str(current.sequence),
-        'start_at': time_string(start),
-        'measured_at': time_string(end),
+        'start_at': time_string(previous.observed_at),
+        'measured_at': time_string(current.observed_at),
         'received_at': time_string(current.received_at),
         'sensor_state': current.payload.get('sensor_status', 'UNAVAILABLE'),
     }
@@ -89,18 +91,18 @@ def latest_snapshot(device, reading, now):
     if not reading:
         return None
     age = (now - reading.received_at).total_seconds()
-    freshness = 'RECENT' if (device.active and not device.revoked_at and age <= MAX_INTERVAL_SECONDS
+    freshness = 'RECENT' if (reading.observed_at and device.active and not device.revoked_at and age <= MAX_INTERVAL_SECONDS
                               and abs((now - reading.measured_at).total_seconds()) <= MAX_INTERVAL_SECONDS) else 'STALE'
     return {
-        'measured_at': time_string(reading.measured_at),
+        'measured_at': time_string(reading.observed_at),
         'received_at': time_string(reading.received_at),
         'freshness': freshness,
         'sensor_state': ('FAULT' if reading.payload.get('fault_status') == 'SENSOR_UNAVAILABLE'
                          else reading.payload.get('sensor_status', 'UNAVAILABLE')),
         'fault_status': reading.payload.get('fault_status'),
-        'voltage_v': units(value(reading, 'voltage_mv'), 1000),
-        'current_a': units(value(reading, 'current_ma'), 1000),
-        'power_w': units(value(reading, 'power_mw'), 1000),
+        'voltage_v': units(value(reading, 'voltage_mv'), 1000) if reading.observed_at else None,
+        'current_a': units(value(reading, 'current_ma'), 1000) if reading.observed_at else None,
+        'power_w': units(value(reading, 'power_mw'), 1000) if reading.observed_at else None,
         'cumulative_kwh': units(value(reading, 'pzem_wh'), 1000),
         'remaining_credit_kwh': units(reading.payload.get('remaining_credit_uwh'), 1_000_000_000),
         'output_command': 'ON' if reading.payload.get('output_requested') else 'OFF',
@@ -131,7 +133,7 @@ def measured_consumption(owner, meter, environment, days, now=None):
     for row in rows.filter(measured_at__gte=start).order_by(*order).iterator(chunk_size=2000):
         if previous is None:
             history.append({**binding(row, devices), 'boot_id': str(row.boot_id), 'sequence': str(row.sequence),
-                            'start_at': None, 'measured_at': time_string(row.measured_at),
+                            'start_at': None, 'measured_at': time_string(row.observed_at),
                             'received_at': time_string(row.received_at), 'sensor_state': row.payload.get('sensor_status', 'UNAVAILABLE'),
                             'classification': 'NO_PRIOR_SAMPLE', 'consumption_kwh': None})
         else:
@@ -143,7 +145,7 @@ def measured_consumption(owner, meter, environment, days, now=None):
                 bucket['wh'] += delta
                 bucket['intervals'] += 1
                 bucket['covered_ms'] += int((row.measured_at - previous.measured_at).total_seconds() * 1000)
-            elif delta is not None:
+            elif delta is not None and previous.observed_at is not None:
                 unallocated_wh += delta
                 unallocated_count += 1
             history.append({**fields, 'classification': category, 'consumption_kwh': units(delta, 1000)})
@@ -163,7 +165,8 @@ def measured_consumption(owner, meter, environment, days, now=None):
         }
 
     latest = latest_interval = None
-    relay = {'authorized': False, 'state': 'NONE', 'expires_at': None, 'restart_policy': None, 'contact': 'UNKNOWN'}
+    relay = {'authorized': False, 'state': 'NONE', 'expires_at': None, 'restart_policy': None, 'contact': 'UNKNOWN', 'mode': None,
+             'offline_allowed': False}
     if device:
         current = rows.filter(device=device, payload__binding_epoch=device.binding_epoch,
                               payload__storage_id=str(device.storage_id), payload__meter_number=meter.meter_no)
@@ -180,9 +183,10 @@ def measured_consumption(owner, meter, environment, days, now=None):
         output = output_authorization(device, now, record_expiration=False)
         record = device.output_authorizations.order_by('-granted_at', '-pk').first()
         if record:
-            state = 'EXPIRED' if record.state == 'ACTIVE' and record.expires_at <= now else record.state
+            state = 'EXPIRED' if record.state == 'ACTIVE' and record.is_expired(now) else record.state
             relay.update(authorized=output['output_authorized'], state=state,
-                         expires_at=time_string(record.expires_at), restart_policy=record.restart_policy)
+                         expires_at=time_string(record.expires_at), restart_policy=record.restart_policy, mode=record.mode,
+                         offline_allowed=output['output_offline_allowed'])
 
     return {
         'meter': {'id': meter.pk, 'meter_number': meter.meter_no},

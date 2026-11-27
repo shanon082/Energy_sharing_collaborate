@@ -17,7 +17,7 @@ def lab_dashboard(device):
     previous_valid = telemetry.filter(payload__sensor_status='OK').order_by('-received_at', '-pk')[:2]
     previous = previous_valid[1] if len(previous_valid) > 1 else None
     now = timezone.now()
-    fresh = bool(device.active and not device.revoked_at and reading and (now - reading.received_at).total_seconds() <= 90
+    fresh = bool(device.active and not device.revoked_at and reading and reading.observed_at and (now - reading.received_at).total_seconds() <= 90
                  and abs((now - reading.measured_at).total_seconds()) <= 90)
     data = reading.payload if reading else None
     if transition is None:
@@ -25,7 +25,7 @@ def lab_dashboard(device):
     else:
         measurement_state = 'BASELINED' if transition.state == 'COMMITTED' else 'MIGRATING'
     # Faulty PZEM data is not a measured zero. Remaining credit is device journal evidence.
-    measured = bool(data and data['sensor_status'] == 'OK')
+    measured = bool(data and reading.observed_at and data['sensor_status'] == 'OK')
     from meter.prototype_device import output_authorization
     output = output_authorization(device, now)
     authorization = device.output_authorizations.order_by('-granted_at', '-pk').first()
@@ -36,7 +36,7 @@ def lab_dashboard(device):
         'contact_status': 'UNAVAILABLE' if not reading else 'RECENT' if fresh else 'STALE',
         'stale_after_seconds': 90,
         'last_meter_contact': device.last_contact_at.isoformat() if device.last_contact_at else None,
-        'last_measurement_at': reading.measured_at.isoformat() if reading else None,
+        'last_measurement_at': reading.observed_at.isoformat() if reading and reading.observed_at else None,
         'meter_reported_remaining_wh': None,  # Not independently verified physical/utility credit.
         'lab_remaining_credit_uwh': str(data['remaining_credit_uwh']) if data else None,
         'lab_consumed_uwh': str(data['consumed_uwh']) if data else None,
@@ -44,8 +44,8 @@ def lab_dashboard(device):
         'lab_pzem_wh': str(data['pzem_wh']) if measured else None,
         'lab_interval_usage_wh': str(data['pzem_wh'] - previous.payload['pzem_wh'])
             if measured and previous and previous.payload['sensor_status'] == 'OK' else None,
-        'lab_interval_start': previous.measured_at.isoformat() if previous else None,
-        'lab_sensor_status': data['sensor_status'] if data else 'UNAVAILABLE',
+        'lab_interval_start': previous.observed_at.isoformat() if previous and previous.observed_at else None,
+        'lab_sensor_status': ('FAULT' if data.get('fault_status') == 'SENSOR_UNAVAILABLE' else data['sensor_status']) if data else 'UNAVAILABLE',
         'lab_received_at': reading.received_at.isoformat() if reading else None,
         'lab_measurement_state': measurement_state,
         'lab_voltage_mv': data.get('voltage_mv') if measured else None,
@@ -57,7 +57,9 @@ def lab_dashboard(device):
         'lab_fault_status': data.get('fault_status', 'OK' if measured else 'SENSOR_UNAVAILABLE') if data else 'SENSOR_UNAVAILABLE',
         'output_authorized': output['output_authorized'],
         'output_authorization_state': authorization.state if authorization else 'NONE',
-        'output_authorization_expires_at': authorization.expires_at.isoformat() if authorization else None,
+        'output_authorization_expires_at': authorization.expires_at.isoformat() if authorization and authorization.expires_at else None,
+        'output_commissioning_mode': authorization.mode if authorization else None,
+        'output_offline_allowed': output['output_offline_allowed'],
         'output_restart_policy': output['output_restart_policy'],
         'reported_relay_state': 'UNKNOWN', 'relay_source': 'AC_LAB',
         'output_enabled': output['output_authorized'], 'output_feedback': 'UNKNOWN',
@@ -71,7 +73,7 @@ def lab_history(owner, meter, environment):
     return [{
         'boot_id': str(row.boot_id), 'sequence': str(row.sequence),
         'environment': row.device.environment,
-        'measured_at': row.measured_at.isoformat(), 'received_at': row.received_at.isoformat(),
+        'measured_at': row.observed_at.isoformat() if row.observed_at else None, 'received_at': row.received_at.isoformat(),
         'consumed_uwh': str(row.payload['consumed_uwh']) if row.payload['sensor_status'] == 'OK' else None,
         'remaining_credit_uwh': str(row.payload['remaining_credit_uwh']),
         'uncertain_uwh': str(row.payload['uncertain_uwh']), 'sensor_status': row.payload['sensor_status'],

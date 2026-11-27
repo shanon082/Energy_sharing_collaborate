@@ -1,5 +1,5 @@
 from django.urls import path
-from .prototype_output_views import PrototypeOutputAuthorizationView, PrototypeOutputRevocationView
+from .prototype_output_views import PrototypeOutputAuthorizationView, PrototypeOutputPersistenceView, PrototypeOutputRevocationView
 from .views import (
     # Dashboard
     AdminDashboardView,
@@ -68,6 +68,8 @@ urlpatterns = [
          PrototypeOutputAuthorizationView.as_view(), name='prototype-output-authorization'),
     path('prototype-devices/<uuid:device_id>/output-authorization/revoke/',
          PrototypeOutputRevocationView.as_view(), name='prototype-output-revoke'),
+    path('prototype-devices/<uuid:device_id>/output-authorization/persistent/',
+         PrototypeOutputPersistenceView.as_view(), name='prototype-output-persistent'),
 
     # --- Dashboard ---
     path('dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),

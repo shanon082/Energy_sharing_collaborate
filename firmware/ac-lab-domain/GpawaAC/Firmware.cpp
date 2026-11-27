@@ -34,7 +34,7 @@ hd44780_I2Cexp lcd;
 char keypadMap[4][4] = { { '1', '2', '3', 'A' }, { '4', '5', '6', 'B' }, { '7', '8', '9', 'C' }, { '*', '0', '#', 'D' } };
 byte rowPins[4] = { 4, 5, 6, 7 }, colPins[4] = { 10, 11, 12, 13 };
 Keypad keypad(makeKeymap(keypadMap), rowPins, colPins, 4, 4);
-bool displayOK = false, configured = false, storageOK = false, sensorOK = false, sessionReady = false, loadRequested = false, userPaused = false, outputOn = false, outputAuthorized = false, outputAutoRestart = false, busy = false, fatal = false, watchdogReady = false;
+bool displayOK = false, configured = false, storageOK = false, sensorOK = false, sessionReady = false, outputOn = false, outputAuthorized = false, busy = false, fatal = false, watchdogReady = false;
 char message[48] = "Starting", tokenDigits[16] = {}, bootId[37] = {};
 uint8_t tokenLength = 0, good = 0;
 uint32_t lastSample = 0, lastUi = 0, lastTelemetry = 0, lastWifiAttempt = 0, nextNetwork = 0, telemetrySequence = 0, retryDelay = 2000, showAt = 0, savedWh = 0;
@@ -48,6 +48,7 @@ pz::MeterMonitor meterMonitor{};
 uint32_t lastValidSample = 0, pzemDiagnosticStarted = 0;
 bool pzemDiagnosticStaleReported = false;
 bool recoveryRequired = true, serverBaselineReady = false, baselineStatusKnown = false;
+bool offlineApproved = false, offlineGap = false;
 bool verifiedWhKnown = false, creditCommandPending = false, faultPosted = false;
 bool pendingCreditRequiresCheckpoint = false;
 uint32_t verifiedWh = 0;
@@ -160,14 +161,23 @@ void switchOff() {
 #endif
   outputOn = false;
 }
-void inhibitForRecovery() {
+void requireNetworkRecovery() {
   ++safetyEpoch;
   recoveryRequired = true;
   outputAuthorized = false;
   outputLeaseUntil = 0;
-  loadRequested = false;
+}
+void inhibitForRecovery() {
+  requireNetworkRecovery();
   switchOff();
 }
+void networkUnavailable() {
+  requireNetworkRecovery();
+  offlineGap = true;
+  if (!offlineApproved) switchOff();
+}
+bool storeOfflineApproval();
+bool clearOfflineApproval();
 bool acceptOutputAuthorization(JsonVariantConst reply, uint32_t sentAt, bool eligible) {
   if (!reply["output_authorized"].is<bool>() ||
       !reply["output_lease_seconds"].is<uint32_t>() ||
@@ -177,21 +187,27 @@ bool acceptOutputAuthorization(JsonVariantConst reply, uint32_t sentAt, bool eli
   const char* restart = reply["output_restart_policy"].as<const char*>();
   if (lease > 90 || authorized != (lease > 0) ||
       (strcmp(restart, "AUTO") && strcmp(restart, "MANUAL"))) return false;
-  outputAutoRestart = !strcmp(restart, "AUTO");
-  outputAuthorized = authorized && eligible && leaseLiveAt(millis(), sentAt, lease);
+  const bool autoRestart = !strcmp(restart, "AUTO");
+  if (!reply["output_commissioning_mode"].isNull() && !reply["output_commissioning_mode"].is<const char*>()) return false;
+  const char* mode = reply["output_commissioning_mode"] | "";
+  const bool persistent = !strcmp(mode, "PERSISTENT");
+  if ((*mode && !persistent && strcmp(mode, "TEMPORARY")) ||
+      (persistent && (!autoRestart || !reply["output_authorization_expires_at"].isNull()))) return false;
+  const auto offline = reply["output_offline_allowed"];
+  if ((!offline.isNull() && !offline.is<bool>()) || (offline == true && !persistent)) return false;
+  const bool timely = leaseLiveAt(millis(), sentAt, lease);
+  outputAuthorized = authorized && autoRestart && eligible && timely;
   outputLeaseUntil = outputAuthorized ? sentAt + lease * 1000UL : 0;
-  if (!outputAuthorized) {
-    switchOff();
-    loadRequested = false;
-    return true;
-  }
-#if GPAWA_COMMISSIONED_OUTPUT
-  if (outputAutoRestart && storageOK && sensorOK && state.availableUWh &&
-      !state.hold && !state.ackPending && state.hasMeter && !measurementPaused(state) &&
-      !migrationPresent && !fatal && !userPaused) {
-    loadRequested = true;
-  }
-#endif
+  if (offline != true && !clearOfflineApproval()) return false;
+  if (offline == true && outputAuthorized && !storeOfflineApproval()) return false;
+  if (!outputAuthorized && !offlineApproved) switchOff();
+  Serial.printf("OUTPUT_LEASE request_id=%s server_reason=%s local=%s seconds=%lu restart=%s mode=%s offline=%s\n",
+                diagnosticReply ? diagnosticLogId(diagnosticReply->requestId, diagnosticReply->serverRequestId) : "unavailable",
+                outputAuthorizationReason(reply),
+                !authorized ? "SERVER_DENIED" : !autoRestart ? "AUTO_POLICY_REQUIRED" :
+                !eligible ? "LOCAL_INTERLOCK" : !timely ? "RESPONSE_LATE" : "ACCEPTED",
+                static_cast<unsigned long>(lease), autoRestart ? "AUTO" : "MANUAL",
+                persistent ? "PERSISTENT" : *mode ? "TEMPORARY" : "UNREPORTED", offlineApproved ? "STORED" : "NONE");
   return true;
 }
 #if GPAWA_RELAY_DIAGNOSTIC
@@ -228,7 +244,6 @@ void tickSound() {
 }
 void latch(const char* why) {
   switchOff();
-  loadRequested = false;
   fatal = true;
   say(why);
   Serial.println(why);
@@ -272,8 +287,29 @@ bool saveRecord(const char* key, Record& item) {
   }
   return true;
 }
+bool storeOfflineApproval() {
+#if GPAWA_COMMISSIONED_OUTPUT
+  if (!offlineApproved) {
+    if (savedWh != state.meterWh && !persist(state)) return false;
+    OfflineApproval approval = offlineApprovalFor(state, hw::RELAY_ACTIVE_LEVEL);
+    if (!saveRecord("offlineOutput", approval)) return false;
+    offlineApproved = true;
+  }
+#endif
+  return true;
+}
+bool clearOfflineApproval() {
+  if (!offlineApproved) return true;
+  offlineApproved = false;
+  switchOff();
+  if (!prefs.remove("offlineOutput") || prefs.isKey("offlineOutput")) {
+    latch("Offline policy save failed");
+    return false;
+  }
+  return true;
+}
 bool evidenceMatchesJournal() {
-  return evidence.capturedAt && evidence.reading.wh == state.meterWh &&
+  return evidence.reading.mv && evidence.reading.wh == state.meterWh &&
          evidence.applicationCounter == state.applicationCounter &&
          evidence.consumedUWh == state.consumedUWh;
 }
@@ -641,6 +677,7 @@ void sendTelemetry() {
   const bool healthy = sensorOK && lastValidSample && millis() - lastValidSample <= 3000 && evidenceMatchesJournal();
   const bool outstanding = !verifiedWhKnown || state.meterWh != verifiedWh || state.consumedUWh != verifiedConsumed;
   const bool readingAvailable = healthy || (outstanding && evidenceMatchesJournal());
+  if (healthy && !evidence.capturedAt) return; // Wait for a fresh, timed sample.
   // A fault is not accounting evidence. Keep the unpaid proof pending until
   // the saved observation can be sent or a new valid reading is acquired.
   if (outstanding && !readingAvailable) return;
@@ -656,14 +693,17 @@ void sendTelemetry() {
   j["boot_counter"] = state.bootCounter;
   j["sequence"] = ++telemetrySequence;
   char at[25];
-  if (readingAvailable) {
+  const bool untimed = readingAvailable && !evidence.capturedAt;
+  if (readingAvailable && !untimed) {
     time_t captured = evidence.capturedAt;
     struct tm utc {};
     gmtime_r(&captured, &utc);
     strftime(at, sizeof at, "%Y-%m-%dT%H:%M:%SZ", &utc);
   } else timestamp(at, sizeof at);
-  j["measured_at"] = at;
-  j["clock_status"] = "NETWORK_TIME";
+  if (untimed) j["measured_at"] = nullptr;
+  else j["measured_at"] = at;
+  j["clock_status"] = untimed ? "OFFLINE_UNTIMED" : "NETWORK_TIME";
+  if (offlineGap) j["offline_gap"] = true;
   j["application_counter"] = state.applicationCounter;
   j["credited_uwh"] = state.creditedUWh;
   j["consumed_uwh"] = state.consumedUWh;
@@ -770,7 +810,7 @@ void handleReply() {
     outputAuthorized = false;
     outputLeaseUntil = 0;
     switchOff();
-    loadRequested = false;
+    if (!clearOfflineApproval()) return;
 
     sessionReady = false;
     latch("Device access denied");
@@ -778,16 +818,17 @@ void handleReply() {
   }
   if (r.status < 200 || r.status >= 300) {
     if (!GPAWA_AUTH_CREDIT_ONLY && (r.kind != JobKind::Redeem || r.status <= 0 || r.status >= 500)) {
-      inhibitForRecovery();
+      networkUnavailable();
       sessionReady = false;
     }
+    if ((!strcmp(code, "AC_LAB_DISABLED") || !strcmp(code, "TESTING_OPERATION_UNAVAILABLE")) && !clearOfflineApproval()) return;
     nextNetwork = millis() + retryDelay;
     retryDelay = retryDelay < 30000 ? retryDelay * 2 : 60000;
     if (r.status == 409 && r.kind != JobKind::Redeem) {
       outputAuthorized = false;
       outputLeaseUntil = 0;
       switchOff();
-      loadRequested = false;
+      if (!clearOfflineApproval()) return;
 
       sessionReady = false;
       latch("Reconciliation required");
@@ -811,7 +852,7 @@ void handleReply() {
   JsonDocument& j = diagnostic;
   if (!matching(j.as<JsonVariantConst>())) {
     diagnosticLocal("COMMAND_VALIDATION_FAILURE", "response_binding");
-    latch("Wrong reply bind");
+    if (clearOfflineApproval()) latch("Wrong reply bind");
     return;
   }
   retryDelay = 2000;
@@ -854,7 +895,7 @@ void handleReply() {
       }
     }
     say(state.ackPending ? "Recovering receipt" : GPAWA_AUTH_CREDIT_ONLY ? "Credit API ready"
-                                                                         : "Ready: D to arm");
+                                                                         : "Meter ready");
   } else if (r.kind == JobKind::Redeem) {
     if ((!GPAWA_AUTH_CREDIT_ONLY && !j["credit_checkpoint_required"].is<bool>()) ||
         !stageCredit(j["command"], !GPAWA_AUTH_CREDIT_ONLY && j["credit_checkpoint_required"].as<bool>())) {
@@ -922,8 +963,6 @@ void handleReply() {
     if (persist(next) && removeMigration()) {
       outputAuthorized = false;
       outputLeaseUntil = 0;
-      outputAutoRestart = false;
-      loadRequested = false;
       switchOff();
       serverBaselineReady = true;
       verifiedWhKnown = true;
@@ -952,6 +991,7 @@ void handleReply() {
     if (!clearTelemetryOutbox()) return;
     const bool current = !strcmp(sampleBoot, bootId) && sessionReady && WiFi.status() == WL_CONNECTED && clockValid();
     const bool afterInhibit = telemetrySafetyEpoch == safetyEpoch;
+    if (current && afterInhibit && sent["offline_gap"] == true) offlineGap = false;
     const bool validReading = sent["pzem_wh"].is<uint32_t>();
     if (validReading) {
       verifiedWhKnown = true;
@@ -1265,6 +1305,14 @@ void meterTick(bool force) {
     return;
   }
   if (!GPAWA_USB_EXERCISE) {
+    if (offlineApproved && !meterMonitor.initialized && !offlineCounterRestorable(state.meterWh, measured.wh)) {
+      State next = state;
+      next.hold = 1;
+      switchOff();
+      persist(next);
+      latch("Offline counter review");
+      return;
+    }
     const pz::CounterStatus counter = meterMonitor.accept(
         measured.wh, now, state.hasMeter != 0, state.meterWh);
     if (counter == pz::CounterStatus::Regression ||
@@ -1272,7 +1320,6 @@ void meterTick(bool force) {
       State next = state;
       next.hold = 1;
       switchOff();
-      loadRequested = false;
       persist(next);
       latch(counter == pz::CounterStatus::Regression ?
                 "Counter reversed" : "Meter jump review");
@@ -1294,9 +1341,8 @@ void meterTick(bool force) {
   if (good < 3) ++good;
   if (good == 3 && !sensorOK) faultPosted = false;
   sensorOK = good >= 3;
-  if (!GPAWA_USB_EXERCISE && (measurementPaused(state) || !serverBaselineReady || migrationPresent)) {
+  if (!GPAWA_USB_EXERCISE && (measurementPaused(state) || (!serverBaselineReady && !offlineApproved) || migrationPresent)) {
     switchOff();
-    loadRequested = false;
     if (sensorOK && sessionReady && baselineStatusKnown && !serverBaselineReady &&
         !migrationPresent && !state.ackPending && !creditCommandPending) {
       const auto source = measurementPaused(state) ? BaselineSource::Paused :
@@ -1310,7 +1356,6 @@ void meterTick(bool force) {
   auto result = observe(next, measured.wh);
   if (result == Reading::BaselineRequired) {
     switchOff();
-    loadRequested = false;
     return;
   }
   if (result == Reading::Fault) {
@@ -1321,16 +1366,15 @@ void meterTick(bool force) {
   }
   if (!next.availableUWh) {
     switchOff();
-    loadRequested = false;
   }
-  if (result == Reading::First || (before && !next.availableUWh) || next.meterWh - savedWh >= 32) {
+  if (result == Reading::First || (before && !next.availableUWh) || next.meterWh - savedWh >= METER_CHECKPOINT_WH) {
     if (!persist(next)) return;
   } else {
     seal(next);
     state = next;
   }
-  if (!GPAWA_USB_EXERCISE && clockValid()) {
-    evidence = {measured, uint32_t(time(nullptr)), state.applicationCounter, state.consumedUWh, 0};
+  if (!GPAWA_USB_EXERCISE && (offlineApproved || clockValid())) {
+    evidence = {measured, clockValid() ? uint32_t(time(nullptr)) : 0, state.applicationCounter, state.consumedUWh, 0};
   }
 }
 void outputTick() {
@@ -1340,49 +1384,36 @@ void outputTick() {
   if (outputAuthorized && !leaseLive) {
     outputAuthorized = false;
     outputLeaseUntil = 0;
-    switchOff();
-    loadRequested = false;
+    if (!offlineApproved) switchOff();
   }
-  const bool permit = !GPAWA_AUTH_CREDIT_ONLY && (GPAWA_USB_EXERCISE || GPAWA_COMMISSIONED_OUTPUT) &&
-                      storageOK && sensorOK && lastValidSample && millis() - lastValidSample <= 3000 &&
-                      !fatal && loadRequested && !state.hold && state.hasMeter && !measurementPaused(state) &&
-                      !migrationPresent && !recoveryRequired && !creditCommandPending && state.availableUWh &&
-                      !state.ackPending && state.reservedBytes[0] &&
-                      leaseLive &&
-                      (GPAWA_USB_EXERCISE || (sessionReady && WiFi.status() == WL_CONNECTED && clockValid()));
+  const OutputConditions conditions{
+    GPAWA_AUTH_CREDIT_ONLY, GPAWA_USB_EXERCISE || GPAWA_COMMISSIONED_OUTPUT,
+    storageOK, fatal, state.hold != 0, measurementPaused(state) || migrationPresent,
+    state.hasMeter && (GPAWA_USB_EXERCISE || serverBaselineReady || offlineApproved),
+    sensorOK && lastValidSample && now - lastValidSample <= 3000, state.availableUWh != 0,
+    state.ackPending || creditCommandPending, recoveryRequired,
+    sessionReady && state.reservedBytes[0], GPAWA_USB_EXERCISE || WiFi.status() == WL_CONNECTED,
+    GPAWA_USB_EXERCISE || clockValid(), leaseLive, offlineApproved,
+  };
+  const char* inhibit = outputInhibit(conditions);
+  if (inhibit) switchOff();
+  const char* block = inhibit ? inhibit : offlineApproved && (!sessionReady || recoveryRequired)
+      ? "AUTHORIZED_OFFLINE" : "AUTHORIZED";
   static uint32_t lastDiagnostic = 0;
   static char lastBlock[32] = {};
-  const char* block = GPAWA_AUTH_CREDIT_ONLY ? "AUTH_CREDIT_ONLY" :
-                      (!GPAWA_USB_EXERCISE && !GPAWA_COMMISSIONED_OUTPUT) ? "OUTPUT_NOT_COMMISSIONED" :
-                      !storageOK ? "STORAGE_UNAVAILABLE" : fatal ? "FAULT_LATCHED" : state.hold ? "METER_HOLD" :
-                      measurementPaused(state) || migrationPresent ? "BASELINE_MIGRATION" :
-                      !state.hasMeter ? "NO_METER_BASELINE" : !sensorOK ? "SENSOR_NOT_READY" :
-                      !state.availableUWh ? "CREDIT_EMPTY" : state.ackPending ? "ACK_PENDING" :
-                      recoveryRequired || creditCommandPending ? "METER_RECOVERY_PENDING" :
-                      !leaseLive ? "OUTPUT_NOT_AUTHORIZED" :
-                      !sessionReady ? "SESSION_NOT_READY" :
-                      (!GPAWA_USB_EXERCISE && WiFi.status() != WL_CONNECTED) ? "NETWORK_OFFLINE" :
-                      (!GPAWA_USB_EXERCISE && !clockValid()) ? "CLOCK_UNAVAILABLE" :
-                      !loadRequested ? "NOT_ARMED" : "AUTHORIZED";
   if (strcmp(lastBlock, block) || now - lastDiagnostic >= 5000) {
     snprintf(lastBlock, sizeof lastBlock, "%s", block);
     lastDiagnostic = now;
     Serial.printf("OUTPUT_STATUS block=%s mode=%s storage=%s sensor=%s credit=%s ack_pending=%s session=%s wifi=%s armed=%s fault=%s hold=%s measurement=%s gpio14=%s\n",
                   block, GPAWA_AUTH_CREDIT_ONLY ? "AUTH_CREDIT_ONLY" : "METERED",
                   storageOK ? "READY" : "UNAVAILABLE",
-                  GPAWA_AUTH_CREDIT_ONLY ? "DISABLED_BY_MODE" : sensorOK ? "HEALTHY" : "MISSING_OR_INVALID",
+                  GPAWA_AUTH_CREDIT_ONLY ? "DISABLED_BY_MODE" : conditions.sensorReady ? "HEALTHY" : "MISSING_OR_INVALID",
                   state.availableUWh ? "AVAILABLE" : "ZERO", state.ackPending ? "YES" : "NO",
                   sessionReady ? "READY" : "NOT_READY", WiFi.status() == WL_CONNECTED ? "CONNECTED" : "OFFLINE",
-                  loadRequested ? "YES" : "NO", fatal ? "YES" : "NO", state.hold ? "YES" : "NO",
+                  inhibit ? "NO" : "YES", fatal ? "YES" : "NO", state.hold ? "YES" : "NO",
                   measurementState(state), GPAWA_COMMISSIONED_OUTPUT ? "CONTROLLED" : "NOT_DRIVEN");
   }
-  if (!permit) {
-    switchOff();
-    if (fatal || state.hold || !storageOK || !sensorOK || !sessionReady ||
-        !outputAuthorized || !state.availableUWh || !state.hasMeter || measurementPaused(state))
-      loadRequested = false;
-    return;
-  }
+  if (inhibit) return;
 #if GPAWA_COMMISSIONED_OUTPUT && !GPAWA_USB_EXERCISE
   digitalWrite(hw::SWITCH_PIN, hw::RELAY_ACTIVE_LEVEL);
   outputOn = true;
@@ -1396,7 +1427,7 @@ bool viewingMeter = false;
 uint32_t meterShownAt = 0;
 void handleKey() {
   char k = keypad.getKey();
-  if (!k) return;
+  if (!k || k == 'D') return;
   if (k == 'A') {
     viewingMeter = !viewingMeter;
     meterShownAt = millis();
@@ -1406,7 +1437,7 @@ void handleKey() {
     viewingMeter = false;
     if (k < '0' || k > '9') return;
   }
-  if (tokenLength && (k == 'D' || k == 'B')) return;
+  if (tokenLength && k == 'B') return;
   if (k >= '0' && k <= '9') {
     if (tokenLength < 15) {
       tokenDigits[tokenLength++] = k;
@@ -1429,31 +1460,6 @@ void handleKey() {
     return;
   }
 #endif
-  if (k == 'D') {
-    if (GPAWA_AUTH_CREDIT_ONLY) {
-      loadRequested = false;
-      switchOff();
-      say("Output disabled");
-      return;
-    }
-    if (!GPAWA_COMMISSIONED_OUTPUT || !outputAuthorized || recoveryRequired || creditCommandPending) {
-      loadRequested = false;
-      switchOff();
-      say("Output not authorized");
-      return;
-    }
-    if (loadRequested) {
-      loadRequested = false;
-      userPaused = true;
-      switchOff();
-      say("Paused");
-    } else if (sensorOK && state.availableUWh && sessionReady && WiFi.status() == WL_CONNECTED && clockValid() && !fatal && !state.hold) {
-      userPaused = false;
-      loadRequested = true;
-      say("Meter armed");
-    } else say(!state.availableUWh ? "Credit empty" : !sensorOK ? "Check meter" : "Check API/safety");
-    return;
-  }
 #if GPAWA_USB_EXERCISE
   if (k == 'B') {
     if (outputOn && state.availableUWh) {
@@ -1572,7 +1578,8 @@ void draw() {
     row(1, "# Send  * Delete");
     return;
   }
-  formatKWh(value, sizeof value, state.availableUWh);
+  const uint64_t pendingUWh = state.ackPending ? state.lastCommand.creditWh * UWH_PER_WH : 0;
+  formatKWh(value, sizeof value, state.availableUWh > pendingUWh ? state.availableUWh - pendingUWh : 0);
   snprintf(line, sizeof line, "Units: %skWh", value);
   row(0, line);
   if (millis() - showAt < 2000) {
@@ -1584,7 +1591,7 @@ void draw() {
              (unsigned long)(measured.mw / 1000));
     row(1, line);
   } else {
-    row(1, outputOn ? "Output command ON" : "Output command OFF");
+    row(1, outputOn ? (offlineApproved && (!sessionReady || recoveryRequired) ? "Output ON local" : "Output command ON") : "Output command OFF");
   }
 }
 bool configValid() {
@@ -1709,6 +1716,19 @@ void firmwareSetup() {
       return;
     }
   }
+#if GPAWA_COMMISSIONED_OUTPUT
+  if (prefs.isKey("offlineOutput")) {
+    OfflineApproval cached{};
+    if (prefs.getBytesLength("offlineOutput") != sizeof cached ||
+        prefs.getBytes("offlineOutput", &cached, sizeof cached) != sizeof cached ||
+        !matchesOfflineApproval(cached, state, hw::RELAY_ACTIVE_LEVEL)) {
+      latch("Offline policy review");
+      return;
+    }
+    offlineApproved = true;
+    offlineGap = true;
+  }
+#endif
   if (prefs.isKey("meterProof")) {
     if (prefs.getBytesLength("meterProof") != sizeof evidence ||
         prefs.getBytes("meterProof", &evidence, sizeof evidence) != sizeof evidence ||
@@ -1907,7 +1927,7 @@ void firmwareLoop() {
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
-    if (sessionReady || outputAuthorized) inhibitForRecovery();
+    if (sessionReady || outputAuthorized) networkUnavailable();
     sessionReady = false;
     if (millis() - lastWifiAttempt >= 15000) {
       lastWifiAttempt = millis();

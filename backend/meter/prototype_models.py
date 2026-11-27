@@ -73,6 +73,10 @@ class PrototypeTelemetry(models.Model):
     received_at = models.DateTimeField(auto_now_add=True)
     payload = models.JSONField()
     recovery_settled = models.BooleanField(default=False)
+
+    @property
+    def observed_at(self):
+        return None if self.payload.get('clock_status') == 'OFFLINE_UNTIMED' else self.measured_at
     class Meta:
         constraints = [models.UniqueConstraint(fields=['device', 'boot_id', 'sequence'], name='ac_lab_telemetry_identity')]
 
@@ -108,13 +112,19 @@ class PrototypeOutputAuthorization(models.Model):
     AUTO = 'AUTO'
     MANUAL = 'MANUAL'
     RESTART_POLICIES = [(AUTO, 'Automatic after safety checks'), (MANUAL, 'Manual arming required')]
+    TEMPORARY = 'TEMPORARY'
+    PERSISTENT = 'PERSISTENT'
+    MODES = [(TEMPORARY, 'Temporary test grant'), (PERSISTENT, 'Persistent commissioning')]
 
     device = models.ForeignKey(PrototypeDevice, on_delete=models.PROTECT,
                                related_name='output_authorizations')
     state = models.CharField(max_length=8, choices=STATES, default=ACTIVE)
     restart_policy = models.CharField(max_length=6, choices=RESTART_POLICIES, default=MANUAL)
     granted_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
+    mode = models.CharField(max_length=10, choices=MODES, default=TEMPORARY)
+    offline_enabled = models.BooleanField(default=False)
+    expires_at = models.DateTimeField(null=True)
+    binding_snapshot = models.JSONField(null=True)
     granted_by = models.ForeignKey('accounts.User', on_delete=models.PROTECT, related_name='+')
     reason = models.CharField(max_length=240)
     evidence = models.JSONField()
@@ -125,22 +135,34 @@ class PrototypeOutputAuthorization(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['device'], condition=models.Q(state='ACTIVE'),
                                     name='one_active_output_authorization_per_device'),
+            models.CheckConstraint(
+                condition=(models.Q(mode='TEMPORARY', expires_at__isnull=False)
+                           | models.Q(mode='PERSISTENT', expires_at__isnull=True,
+                                      binding_snapshot__isnull=False, restart_policy='AUTO')),
+                name='prototype_output_grant_mode',
+            ),
+            models.CheckConstraint(condition=models.Q(offline_enabled=False) | models.Q(mode='PERSISTENT'),
+                                   name='prototype_output_offline_persistent'),
         ]
         indexes = [models.Index(fields=['device', 'state', '-expires_at'])]
+
+    def is_expired(self, now):
+        return self.expires_at is not None and self.expires_at <= now
 
 
 class PrototypeOutputAuthorizationEvent(models.Model):
     GRANTED = 'GRANTED'
     REVOKED = 'REVOKED'
     EXPIRED = 'EXPIRED'
-    ACTIONS = [(GRANTED, 'Granted'), (REVOKED, 'Revoked'), (EXPIRED, 'Expired')]
+    PROMOTED = 'PROMOTED'
+    ACTIONS = [(GRANTED, 'Granted'), (REVOKED, 'Revoked'), (EXPIRED, 'Expired'), (PROMOTED, 'Promoted')]
 
     authorization = models.ForeignKey(PrototypeOutputAuthorization, on_delete=models.PROTECT,
                                       related_name='events')
     device = models.ForeignKey(PrototypeDevice, on_delete=models.PROTECT,
                                related_name='output_authorization_events')
     actor = models.ForeignKey('accounts.User', on_delete=models.PROTECT, null=True, related_name='+')
-    action = models.CharField(max_length=7, choices=ACTIONS)
+    action = models.CharField(max_length=8, choices=ACTIONS)
     occurred_at = models.DateTimeField(auto_now_add=True)
     reason = models.CharField(max_length=240)
     details = models.JSONField(default=dict)

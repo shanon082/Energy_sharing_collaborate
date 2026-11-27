@@ -1,0 +1,11 @@
+admin/prototype_output_views.py
+admin/urls.py
+backend/hosting_middleware.py
+meter/api/prototype_views.py
+meter/diagnostics.py
+meter/management/commands/revoke_ac_lab_device.py
+meter/measured_consumption.py
+meter/migrations/0037_persistent_output_commissioning.py
+meter/prototype_device.py
+meter/prototype_models.py
+meter/prototype_reads.py

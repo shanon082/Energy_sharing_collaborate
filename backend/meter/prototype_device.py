@@ -113,9 +113,10 @@ def identity(device):
                 environment=device.environment, hardware_class='AC_LAB')
 
 
-def active_binding(device):
+def active_binding(device, meter=None):
     mark_stage('device_binding')
-    meter = Meter.all_objects.get(pk=device.meter_id)
+    if meter is None:
+        meter = Meter.all_objects.get(pk=device.meter_id)
     if (not device.active or device.revoked_at or device.environment != permitted_environment()
             or device.hardware_class != 'AC_LAB' or meter.user_id != device.owner_id or meter.is_deleted
             or meter.status != 'ACTIVE' or not meter.sandbox_inventory or not re.fullmatch(r'[0-9]{11}', meter.meter_no)
@@ -127,7 +128,7 @@ def active_binding(device):
 
 
 def _expire_output_authorization(authorization, now):
-    if authorization.state != PrototypeOutputAuthorization.ACTIVE or authorization.expires_at > now:
+    if authorization.state != PrototypeOutputAuthorization.ACTIVE or not authorization.is_expired(now):
         return False
     authorization.state = PrototypeOutputAuthorization.EXPIRED
     authorization.save(update_fields=['state'])
@@ -144,6 +145,14 @@ def _expire_output_authorization(authorization, now):
     return True
 
 
+def output_binding(device):
+    return {**identity(device), 'meter_id': device.meter_id, 'owner_id': device.owner_id}
+
+
+def matches_telemetry_binding(sample, device):
+    return all(sample.payload.get(key) == value for key, value in identity(device).items())
+
+
 @transaction.atomic
 def output_authorization(device, now=None, *, record_expiration=True):
     now = now or timezone.now()
@@ -152,9 +161,11 @@ def output_authorization(device, now=None, *, record_expiration=True):
         device = PrototypeDevice.objects.select_for_update().get(pk=device.pk)
         records = records.select_for_update()
     authorization = records.order_by('-granted_at', '-pk').first()
-    if authorization and authorization.expires_at <= now:
+    grant_state = authorization.state if authorization else None
+    if authorization and authorization.is_expired(now):
         if record_expiration:
             _expire_output_authorization(authorization, now)
+        grant_state = PrototypeOutputAuthorization.EXPIRED
         authorization = None
 
     restart_policy = authorization.restart_policy if authorization else PrototypeOutputAuthorization.MANUAL
@@ -162,47 +173,74 @@ def output_authorization(device, now=None, *, record_expiration=True):
         'output_authorized': False,
         'output_lease_seconds': 0,
         'output_restart_policy': restart_policy,
-        'output_authorization_expires_at': authorization.expires_at.isoformat() if authorization else None,
+        'output_authorization_expires_at': authorization.expires_at.isoformat() if authorization and authorization.expires_at else None,
+        'output_commissioning_mode': authorization.mode if authorization else None,
+        'output_offline_allowed': False,
     }
-    if (getattr(settings, 'PROTOTYPE_RELAY_OUTPUT_ENABLED', False) is not True
-            or not device.recovery_enabled or device.recovery_pending
-            or not device.active or device.revoked_at or not device.output_enabled or not authorization
-            or authorization.expires_at <= now
-            or not PrototypeMeasurementTransition.objects.filter(
-                device=device, state=PrototypeMeasurementTransition.COMMITTED,
-            ).exists()
-            or device.commands.filter(receipt_id__isnull=True).exists()):
-        return result
+    if getattr(settings, 'PROTOTYPE_RELAY_OUTPUT_ENABLED', False) is not True:
+        return {**result, 'output_reason': 'OUTPUT_GLOBAL_DISABLE'}
+    if not device.active or device.revoked_at:
+        return {**result, 'output_reason': 'DEVICE_DISABLED'}
+    if not authorization:
+        if grant_state is None:
+            grant_state = device.output_authorizations.order_by('-granted_at', '-pk').values_list('state', flat=True).first()
+        reason = {'REVOKED': 'OUTPUT_GRANT_REVOKED', 'EXPIRED': 'OUTPUT_GRANT_EXPIRED'}.get(grant_state, 'OUTPUT_GRANT_MISSING')
+        return {**result, 'output_reason': 'METER_RECOVERY_PENDING' if device.recovery_pending else reason}
+    if not device.output_enabled:
+        return {**result, 'output_reason': 'DEVICE_OUTPUT_DISABLED'}
+    if authorization.mode == PrototypeOutputAuthorization.PERSISTENT:
+        meters = Meter.all_objects.select_for_update() if record_expiration else Meter.all_objects
+        device.meter = meters.get(pk=device.meter_id)
+        if (authorization.binding_snapshot != output_binding(device)
+                or device.meter.user_id != device.owner_id or device.meter.is_deleted):
+            if record_expiration:
+                _revoke_output_grant(authorization, None, 'Device binding replaced')
+                device.output_enabled = False
+                device.save(update_fields=['output_enabled'])
+            return {**result, 'output_reason': 'OUTPUT_BINDING_CHANGED'}
+        try:
+            active_binding(device, device.meter)
+        except BenchError:
+            return {**result, 'output_reason': 'DEVICE_DISABLED'}
+    if not PrototypeMeasurementTransition.objects.filter(device=device, state=PrototypeMeasurementTransition.COMMITTED).exists():
+        return {**result, 'output_reason': 'MEASUREMENT_BASELINE_REQUIRED'}
+    result['output_offline_allowed'] = authorization.offline_enabled
+    if not device.recovery_enabled or device.recovery_pending:
+        return {**result, 'output_reason': 'METER_RECOVERY_PENDING'}
+    if device.commands.filter(receipt_id__isnull=True).exists():
+        return {**result, 'output_reason': 'ACK_REQUIRED'}
 
     latest = device.telemetry.order_by('-received_at', '-pk').first()
-    if not latest or latest.boot_id != device.boot_id:
-        return result
+    if not latest or latest.boot_id != device.boot_id or not matches_telemetry_binding(latest, device):
+        return {**result, 'output_reason': 'CURRENT_BOOT_SAMPLE_REQUIRED'}
     received_age = (now - latest.received_at).total_seconds()
     measured_age = (now - latest.measured_at).total_seconds()
-    if (received_age > OUTPUT_LEASE_SECONDS
-            or abs(measured_age) > OUTPUT_LEASE_SECONDS
-            or latest.payload.get('sensor_status') != 'OK'
-            or latest.payload.get('fault_status') != 'OK'
-            or latest.payload.get('uncertain_uwh') != 0
-            or latest.payload.get('remaining_credit_uwh') <= 0
-            or latest.payload.get('relay_active_level') != authorization.evidence['relay_active_level']):
-        return result
+    if received_age > OUTPUT_LEASE_SECONDS or abs(measured_age) > OUTPUT_LEASE_SECONDS:
+        return {**result, 'output_reason': 'OUTPUT_SAMPLE_STALE'}
+    if latest.payload.get('sensor_status') != 'OK' or latest.payload.get('fault_status') != 'OK':
+        return {**result, 'output_reason': 'METER_NOT_READY'}
+    if device.uncertain_uwh or latest.payload.get('uncertain_uwh') != 0:
+        return {**result, 'output_reason': 'CREDIT_UNCERTAIN'}
+    if latest.payload.get('remaining_credit_uwh', 0) <= 0:
+        return {**result, 'output_reason': 'CREDIT_UNAVAILABLE'}
+    if latest.payload.get('relay_active_level') != authorization.evidence['relay_active_level']:
+        return {**result, 'output_offline_allowed': False, 'output_reason': 'RELAY_POLARITY_MISMATCH'}
 
     credited = sum(
         command.delivery.command_payload['credit_wh'] * 1_000_000
         for command in device.commands.filter(receipt_id__isnull=False).select_related('delivery')
     )
-    if device.uncertain_uwh or credited <= device.consumed_uwh:
-        return result
+    if credited <= device.consumed_uwh:
+        return {**result, 'output_reason': 'CREDIT_UNAVAILABLE'}
 
     freshness_remaining = int(OUTPUT_LEASE_SECONDS - max(received_age, abs(measured_age), 0))
-    lease = min(
-        OUTPUT_LEASE_SECONDS, freshness_remaining,
-        int((authorization.expires_at - now).total_seconds()),
-    )
+    lease = min(OUTPUT_LEASE_SECONDS, freshness_remaining)
+    if authorization.expires_at:
+        lease = min(lease, int((authorization.expires_at - now).total_seconds()))
     if lease <= 0:
-        return result
-    result.update(output_authorized=True, output_lease_seconds=lease)
+        reason = 'OUTPUT_SAMPLE_STALE' if freshness_remaining <= 0 else 'OUTPUT_GRANT_EXPIRING'
+        return {**result, 'output_reason': reason}
+    result.update(output_authorized=True, output_lease_seconds=lease, output_reason='LEASE_GRANTED')
     return result
 
 
@@ -218,13 +256,20 @@ def _commissioning_request(body):
     if (expires_at is None or timezone.is_naive(expires_at) or expires_at.utcoffset() != timedelta(0)
             or not now < expires_at <= now + MAX_OUTPUT_AUTHORIZATION):
         fail('REQUEST_INVALID', 'Authorization expiry must be UTC and within 24 hours.', 400)
-    reason = body['reason']
-    if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 240:
-        fail('REQUEST_INVALID', 'A reason of 8 to 240 characters is required.', 400)
+    reason = output_reason_text(body['reason'])
     restart_policy = body['restart_policy']
     if restart_policy not in (PrototypeOutputAuthorization.AUTO, PrototypeOutputAuthorization.MANUAL):
         fail('REQUEST_INVALID', 'Unsupported output restart policy.', 400)
-    evidence = body['evidence']
+    return expires_at, reason, restart_policy, validated_output_evidence(body['evidence'])
+
+
+def output_reason_text(reason):
+    if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 240:
+        fail('REQUEST_INVALID', 'A reason of 8 to 240 characters is required.', 400)
+    return reason.strip()
+
+
+def validated_output_evidence(evidence):
     expected = OUTPUT_EVIDENCE_FLAGS | {'relay_active_level', 'evidence_reference'}
     if not isinstance(evidence, dict) or set(evidence) != expected:
         fail('COMMISSIONING_EVIDENCE_REQUIRED', 'The complete physical commissioning record is required.', 400)
@@ -233,36 +278,48 @@ def _commissioning_request(body):
             or not 1 <= len(evidence['evidence_reference'].strip()) <= 120
             or any(evidence[key] is not True for key in OUTPUT_EVIDENCE_FLAGS)):
         fail('COMMISSIONING_EVIDENCE_REQUIRED', 'All physical safety checks must be verified.', 400)
-    return expires_at, reason.strip(), restart_policy, evidence
+    return evidence
 
 
-@transaction.atomic
-def commission_output(device_id, actor, body):
+def lock_for_commissioning(device_id):
     require_lab()
     if getattr(settings, 'PROTOTYPE_RELAY_OUTPUT_ENABLED', False) is not True:
         fail('OUTPUT_GLOBAL_DISABLE', 'Physical output is disabled by the global safety switch.', 503)
-    expires_at, reason, restart_policy, evidence = _commissioning_request(body)
     device = PrototypeDevice.objects.select_for_update(of=('self',)).select_related(
         'meter', 'owner__profile',
     ).filter(pk=device_id).first()
     if not device:
         fail('DEVICE_UNAVAILABLE', 'Device is unavailable.', 404)
-    Meter.all_objects.select_for_update().get(pk=device.meter_id)
-    active_binding(device)
+    meter = Meter.all_objects.select_for_update().get(pk=device.meter_id)
+    active_binding(device, meter)
+    return device
+
+
+def require_commissioning_sample(device, polarity, now):
     if not PrototypeMeasurementTransition.objects.filter(
         device=device, state=PrototypeMeasurementTransition.COMMITTED,
     ).exists():
         fail('MEASUREMENT_BASELINE_REQUIRED', 'A committed authenticated meter baseline is required.', 409)
     latest = device.telemetry.order_by('-received_at', '-pk').first()
-    now = timezone.now()
     if (not device.recovery_enabled or device.recovery_pending or not latest or latest.boot_id != device.boot_id
+            or not matches_telemetry_binding(latest, device)
+            or device.commands.filter(receipt_id__isnull=True).exists()
             or (now - latest.received_at).total_seconds() > OUTPUT_LEASE_SECONDS
             or abs((now - latest.measured_at).total_seconds()) > OUTPUT_LEASE_SECONDS
             or latest.payload.get('sensor_status') != 'OK'
-            or latest.payload.get('fault_status', 'OK') != 'OK'
-            or latest.payload.get('relay_active_level') != evidence['relay_active_level']
+            or latest.payload.get('fault_status') != 'OK'
+            or latest.payload.get('relay_active_level') != polarity
+            or device.uncertain_uwh
             or latest.payload.get('uncertain_uwh') != 0):
         fail('METER_NOT_READY', 'A fresh valid meter sample from the matching commissioned relay profile is required.', 409)
+
+
+@transaction.atomic
+def commission_output(device_id, actor, body):
+    device = lock_for_commissioning(device_id)
+    expires_at, reason, restart_policy, evidence = _commissioning_request(body)
+    now = timezone.now()
+    require_commissioning_sample(device, evidence['relay_active_level'], now)
     credited = sum(
         command.delivery.command_payload['credit_wh'] * 1_000_000
         for command in device.commands.filter(receipt_id__isnull=False).select_related('delivery')
@@ -280,7 +337,7 @@ def commission_output(device_id, actor, body):
 
     authorization = PrototypeOutputAuthorization.objects.create(
         device=device, restart_policy=restart_policy, expires_at=expires_at,
-        granted_by=actor, reason=reason, evidence=evidence,
+        granted_by=actor, reason=reason, evidence=evidence, binding_snapshot=output_binding(device),
     )
     device.output_enabled = True
     device.save(update_fields=['output_enabled'])
@@ -294,18 +351,72 @@ def commission_output(device_id, actor, body):
             'evidence_reference': evidence['evidence_reference'],
         },
     )
+    return output_grant_record(authorization)
+
+
+def output_grant_record(authorization):
     return {
-        'device_id': str(device.pk), 'status': authorization.state,
-        'expires_at': authorization.expires_at.isoformat(),
-        'restart_policy': authorization.restart_policy,
-        'output_enabled': True,
+        'device_id': str(authorization.device_id), 'authorization_id': authorization.pk,
+        'status': authorization.state, 'mode': authorization.mode,
+        'expires_at': authorization.expires_at.isoformat() if authorization.expires_at else None,
+        'restart_policy': authorization.restart_policy, 'output_enabled': True,
+        'offline_enabled': authorization.offline_enabled,
     }
 
 
 @transaction.atomic
+def persist_output_commissioning(device_id, actor, body):
+    if (not isinstance(body, dict) or 'reason' not in body or set(body) - {'reason', 'offline'}
+            or type(body.get('offline', False)) is not bool):
+        fail('REQUEST_INVALID', 'An administrative reason is required.', 400)
+    reason = output_reason_text(body['reason'])
+    device = lock_for_commissioning(device_id)
+    source = device.output_authorizations.select_for_update().order_by('-granted_at', '-pk').first()
+    snapshot = output_binding(device)
+    offline = body.get('offline', source.offline_enabled if source and source.mode == PrototypeOutputAuthorization.PERSISTENT else False)
+    if (source and source.mode == PrototypeOutputAuthorization.PERSISTENT
+            and source.state == PrototypeOutputAuthorization.ACTIVE and source.binding_snapshot == snapshot
+            and device.output_enabled and source.offline_enabled == offline):
+        return output_grant_record(source), False
+    if (not source or source.state == PrototypeOutputAuthorization.REVOKED or not source.events.filter(
+            action=(PrototypeOutputAuthorizationEvent.GRANTED if source.mode == PrototypeOutputAuthorization.TEMPORARY
+                    else PrototypeOutputAuthorizationEvent.PROMOTED)).exists()):
+        fail('OUTPUT_COMMISSIONING_REVIEW_REQUIRED', 'A recorded, non-revoked commissioning grant is required.', 409)
+    evidence = validated_output_evidence(source.evidence)
+    if source.binding_snapshot is None:
+        # Earlier grants checked this accepted sample at creation, before there
+        # was a separate binding snapshot on the grant row.
+        original_sample = device.telemetry.filter(received_at__lte=source.granted_at).order_by('-received_at', '-pk').first()
+        if (not original_sample or not matches_telemetry_binding(original_sample, device)
+                or original_sample.payload.get('relay_active_level') != evidence['relay_active_level']
+                or original_sample.payload.get('sensor_status') != 'OK'):
+            fail('OUTPUT_BINDING_CHANGED', 'The recorded commissioning binding could not be established.', 409)
+    elif source.binding_snapshot != snapshot:
+        fail('OUTPUT_BINDING_CHANGED', 'The recorded commissioning binding has changed.', 409)
+    now = timezone.now()
+    require_commissioning_sample(device, evidence['relay_active_level'], now)
+    if source.state == PrototypeOutputAuthorization.ACTIVE and not _expire_output_authorization(source, now):
+        _revoke_output_grant(source, actor, 'Replaced by reviewed persistent commissioning policy')
+
+    grant = PrototypeOutputAuthorization.objects.create(
+        device=device, mode=PrototypeOutputAuthorization.PERSISTENT, restart_policy=PrototypeOutputAuthorization.AUTO,
+        binding_snapshot=snapshot, granted_by=actor, reason=reason, evidence=evidence, offline_enabled=offline,
+    )
+    device.output_enabled = True
+    device.save(update_fields=['output_enabled'])
+    PrototypeOutputAuthorizationEvent.objects.create(
+        authorization=grant, device=device, actor=actor, action=PrototypeOutputAuthorizationEvent.PROMOTED,
+        reason=reason, details={'source_authorization_id': source.pk, 'restart_policy': grant.restart_policy,
+                                'offline_enabled': offline,
+                                'relay_active_level': evidence['relay_active_level'],
+                                'evidence_reference': evidence['evidence_reference']},
+    )
+    return output_grant_record(grant), True
+
+
+@transaction.atomic
 def revoke_output(device_id, actor, reason):
-    if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 240:
-        fail('REQUEST_INVALID', 'A reason of 8 to 240 characters is required.', 400)
+    reason = output_reason_text(reason)
     device = PrototypeDevice.objects.select_for_update().filter(pk=device_id).first()
     if not device:
         fail('DEVICE_UNAVAILABLE', 'Device is unavailable.', 404)
@@ -313,18 +424,21 @@ def revoke_output(device_id, actor, reason):
         state=PrototypeOutputAuthorization.ACTIVE,
     ).first()
     if authorization:
-        authorization.state = PrototypeOutputAuthorization.REVOKED
-        authorization.revoked_at = timezone.now()
-        authorization.revoked_by = actor
-        authorization.save(update_fields=['state', 'revoked_at', 'revoked_by'])
-        PrototypeOutputAuthorizationEvent.objects.create(
-            authorization=authorization, device=device, actor=actor,
-            action=PrototypeOutputAuthorizationEvent.REVOKED,
-            reason=reason.strip(), details={},
-        )
+        _revoke_output_grant(authorization, actor, reason)
     device.output_enabled = False
     device.save(update_fields=['output_enabled'])
     return {'device_id': str(device.pk), 'status': 'REVOKED', 'output_enabled': False}
+
+
+def _revoke_output_grant(authorization, actor, reason):
+    authorization.state = PrototypeOutputAuthorization.REVOKED
+    authorization.revoked_at = timezone.now()
+    authorization.revoked_by = actor
+    authorization.save(update_fields=['state', 'revoked_at', 'revoked_by'])
+    PrototypeOutputAuthorizationEvent.objects.create(
+        authorization=authorization, device_id=authorization.device_id, actor=actor,
+        action=PrototypeOutputAuthorizationEvent.REVOKED, reason=reason,
+    )
 
 
 @sensitive_variables()
@@ -410,8 +524,8 @@ def locked(device):
     require_lab()
     row = PrototypeDevice.objects.select_for_update(of=('self',)).select_related('meter', 'owner__profile').get(pk=device.pk)
     # Serialize against staff ownership changes, as well as other device calls.
-    Meter.all_objects.select_for_update().get(pk=row.meter_id)
-    active_binding(row)
+    meter = Meter.all_objects.select_for_update().get(pk=row.meter_id)
+    active_binding(row, meter)
     return row
 
 
@@ -551,6 +665,11 @@ def session(device, body):
         device.consumed_uwh, device.uncertain_uwh = reported_consumed, reported_uncertain
     contact(device)
     result = {**identity(device), 'status': 'READY', **output_authorization(device)}
+    if result['output_offline_allowed']:
+        # A reconnect may check the cached policy while accounting catches up.
+        # Bind that decision to the relay polarity in this authenticated boot.
+        grant = device.output_authorizations.get(state=PrototypeOutputAuthorization.ACTIVE)
+        result['output_offline_allowed'] = body.get('relay_active_level') == grant.evidence['relay_active_level']
     if recovery:
         result['measurement_baseline'] = transition.state if transition else 'REQUIRED'
         result['verified_consumed_uwh'] = device.consumed_uwh
@@ -843,7 +962,7 @@ def telemetry(device, body, *, replay=False):
     fields = {'boot_id', 'boot_counter', 'sequence', 'measured_at', 'clock_status', 'application_counter', 'credited_uwh',
               'consumed_uwh', 'uncertain_uwh', 'remaining_credit_uwh', 'voltage_mv', 'current_ma', 'power_mw', 'pzem_wh',
               'output_requested', 'output_feedback', 'sensor_status'}
-    optional_fields = {'frequency_cHz', 'power_factor_pct', 'fault_status', 'relay_active_level', 'accounting_protocol'}
+    optional_fields = {'frequency_cHz', 'power_factor_pct', 'fault_status', 'relay_active_level', 'accounting_protocol', 'offline_gap'}
     validate(body, device, fields, optional_fields)
     recovery = recovery_protocol(device, body)
     if recovery != device.recovery_enabled:
@@ -851,7 +970,6 @@ def telemetry(device, body, *, replay=False):
     boot = canonical_uuid(body['boot_id'])
     integer(body, 'boot_counter', minimum=1)
     seq = integer(body, 'sequence', minimum=1)
-    at = timestamp(body['measured_at'])
     if device.boot_id != boot or device.boot_counter != body['boot_counter']:
         fail('DEVICE_SESSION_REQUIRED')
     prior = device.telemetry.filter(boot_id=boot, sequence=seq).first()
@@ -863,11 +981,25 @@ def telemetry(device, body, *, replay=False):
             device.save(update_fields=['recovery_pending'])
         return {
             **identity(device), 'status': 'ACCEPTED', 'boot_id': str(boot), 'sequence': seq,
-            **(no_output_lease() if recovery else output_authorization(device)),
-            **({'recovery_pending': True} if recovery else {}),
+            **output_authorization(device),
+            **({'recovery_pending': True, 'output_authorized': False, 'output_lease_seconds': 0,
+                'output_reason': 'METER_RECOVERY_PENDING'} if recovery else {}),
         }
     if seq <= device.telemetry_sequence:
         fail('STALE_TELEMETRY')
+    clock_known = body['clock_status'] == 'NETWORK_TIME'
+    if type(body.get('offline_gap', False)) is not bool:
+        fail('REQUEST_INVALID', 'Invalid upload gap marker.', 400)
+    if clock_known:
+        at = timestamp(body['measured_at'])
+    else:
+        # This is an accounting checkpoint with an unknown capture time. The
+        # database timestamp is its receipt-time upper bound, not a sample time.
+        if (body['clock_status'] != 'OFFLINE_UNTIMED' or body['measured_at'] is not None
+                or not recovery or body['sensor_status'] != 'OK' or body.get('fault_status') != 'SENSOR_UNAVAILABLE'
+                or not device.output_authorizations.filter(offline_enabled=True, binding_snapshot=output_binding(device)).exists()):
+            fail('REQUEST_INVALID', 'Invalid untimed offline observation.', 400)
+        at = timezone.now().replace(microsecond=0)
     previous = device.telemetry.order_by('-received_at', '-pk').first()
     if previous and at < previous.measured_at:
         fail('STALE_TELEMETRY')
@@ -895,7 +1027,7 @@ def telemetry(device, body, *, replay=False):
             fail('REQUEST_INVALID', 'Unavailable sensor data must be null.', 400)
     else:
         fail('REQUEST_INVALID', 'Invalid sensor state.', 400)
-    if (body['clock_status'] != 'NETWORK_TIME' or body['output_feedback'] != 'UNKNOWN'
+    if (body['output_feedback'] != 'UNKNOWN'
             or type(body['output_requested']) is not bool):
         fail('REQUEST_INVALID', 'Invalid measurement state.', 400)
     if body.get('fault_status', 'OK' if body['sensor_status'] == 'OK' else 'SENSOR_UNAVAILABLE') not in {
@@ -929,7 +1061,10 @@ def telemetry(device, body, *, replay=False):
         if recovery and not anchor and transition.payload.get('source_state') == 'SERVER_LEGACY_ANCHOR':
             anchor = device.telemetry.filter(pk=transition.payload.get('telemetry_id')).first()
         if recovery and anchor:
-            elapsed = max(0, (at - anchor.measured_at).total_seconds())
+            if anchor.payload.get('clock_status') == 'OFFLINE_UNTIMED':
+                anchor = valid_telemetry.filter(payload__clock_status='NETWORK_TIME').order_by('-received_at', '-pk').first()
+            lower_bound = anchor.measured_at if anchor else transition.committed_at
+            elapsed = max(0, (at - lower_bound).total_seconds())
             # The PZEM reports integer Wh and firmware sends whole UTC seconds.
             if delta_wh > 26_000 * (elapsed + 1) / 3600 + 2:
                 fail('PZEM_ENERGY_JUMP')
@@ -938,7 +1073,7 @@ def telemetry(device, body, *, replay=False):
                 or body['uncertain_uwh'] != previous_uncertain):
             fail('METER_ACCOUNTING_MISMATCH')
     device.recovery_pending = recovery and (
-        replay or body['sensor_status'] != 'OK' or body.get('fault_status') != 'OK'
+        replay or not clock_known or body['sensor_status'] != 'OK' or body.get('fault_status') != 'OK'
         or consumed < device.recovery_target_consumed_uwh or body['pzem_wh'] < device.recovery_target_wh
     )
     PrototypeTelemetry.objects.create(device=device, boot_id=boot, sequence=seq, measured_at=at, payload=body,
@@ -950,12 +1085,4 @@ def telemetry(device, body, *, replay=False):
         **identity(device), 'status': 'ACCEPTED', 'boot_id': str(boot), 'sequence': seq,
         **output_authorization(device),
         **({'recovery_pending': device.recovery_pending} if recovery else {}),
-    }
-
-
-def no_output_lease():
-    return {
-        'output_authorized': False, 'output_lease_seconds': 0,
-        'output_restart_policy': PrototypeOutputAuthorization.MANUAL,
-        'output_authorization_expires_at': None,
     }

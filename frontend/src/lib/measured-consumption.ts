@@ -41,13 +41,13 @@ function binding(data: Record<string, unknown>) {
 function interval(value: unknown) {
   const data = row(value);
   return { ...binding(data), boot_id: text(data.boot_id), sequence: text(data.sequence),
-    start_at: nullableTime(data.start_at), measured_at: time(data.measured_at), received_at: time(data.received_at),
+    start_at: nullableTime(data.start_at), measured_at: nullableTime(data.measured_at), received_at: time(data.received_at),
     classification: choice(data.classification, KINDS), consumption_kwh: decimal(data.consumption_kwh),
     sensor_state: choice(data.sensor_state, SENSOR) };
 }
 function latest(value: unknown) {
   const data = row(value);
-  return { ...binding(data), measured_at: time(data.measured_at), received_at: time(data.received_at),
+  return { ...binding(data), measured_at: nullableTime(data.measured_at), received_at: time(data.received_at),
     freshness: choice(data.freshness, ['RECENT', 'STALE']), sensor_state: choice(data.sensor_state, SENSOR),
     fault_status: data.fault_status == null ? null : text(data.fault_status),
     voltage_v: decimal(data.voltage_v), current_a: decimal(data.current_a), power_w: decimal(data.power_w),
@@ -79,6 +79,8 @@ export function parseMeasuredConsumption(value: unknown, scope: UsageScope) {
     relay: {
       authorized: boolean(relay.authorized), state: choice(relay.state, ['NONE', 'ACTIVE', 'REVOKED', 'EXPIRED']),
       expires_at: nullableTime(relay.expires_at),
+      mode: relay.mode == null ? null : choice(relay.mode, ['TEMPORARY', 'PERSISTENT']),
+      offline_allowed: relay.offline_allowed == null ? false : boolean(relay.offline_allowed),
       restart_policy: relay.restart_policy === null ? null : choice(relay.restart_policy, ['AUTO', 'MANUAL']),
       contact: choice(relay.contact, ['UNKNOWN']),
     },
@@ -96,6 +98,7 @@ export function sameUsageScope(a: UsageScope, b: UsageScope) {
 export function measuredFreshness(data: MeasuredConsumption, now: number) {
   const reading = data.latest;
   if (!reading) return 'UNAVAILABLE';
+  if (!reading.measured_at) return 'STALE';
   const age = Math.max(now - Date.parse(reading.received_at), Math.abs(now - Date.parse(reading.measured_at)));
   return reading.freshness === 'STALE' || age > data.stale_after_seconds * 1000 ? 'STALE' : 'RECENT';
 }

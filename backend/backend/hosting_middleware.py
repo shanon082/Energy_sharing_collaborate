@@ -55,7 +55,7 @@ class FreeTestingMiddleware:
             "/api/v1/prototype-device/v1/measurement/commit/",
             }
             or re.fullmatch(
-                r"/api/v1/admin/prototype-devices/[0-9a-fA-F-]{36}/output-authorization(?:/revoke)?/",
+                r"/api/v1/admin/prototype-devices/[0-9a-fA-F-]{36}/output-authorization(?:/revoke|/persistent)?/",
                 path,
             )
         )

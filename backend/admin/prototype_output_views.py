@@ -28,7 +28,10 @@ class PrototypeOutputAuthorizationView(APIView, RBACMixin):
             **eligibility,
             'device_id': str(device.pk),
             'authorization_state': authorization.state if authorization else 'NONE',
-            'expires_at': authorization.expires_at.isoformat() if authorization else None,
+            'authorization_id': authorization.pk if authorization else None,
+            'mode': authorization.mode if authorization else None,
+            'offline_enabled': authorization.offline_enabled if authorization else False,
+            'expires_at': authorization.expires_at.isoformat() if authorization and authorization.expires_at else None,
             'restart_policy': authorization.restart_policy if authorization else None,
             'events': [{
                 'action': event.action,
@@ -48,6 +51,20 @@ class PrototypeOutputAuthorizationView(APIView, RBACMixin):
         except BenchError as exc:
             return Response(exc.detail, status=exc.status_code)
         return Response(result, status=201)
+
+
+class PrototypeOutputPersistenceView(APIView, RBACMixin):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, device_id):
+        allowed, response = self._require_role(request, User.ADMIN)
+        if not allowed:
+            return response
+        try:
+            result, created = prototype_device.persist_output_commissioning(device_id, request.user, request.data)
+        except BenchError as exc:
+            return Response(exc.detail, status=exc.status_code)
+        return Response(result, status=201 if created else 200)
 
 
 class PrototypeOutputRevocationView(APIView, RBACMixin):

@@ -28,6 +28,17 @@ test('the shared consumer contract distinguishes zero power, missing usage and s
   assert.equal(parsed.daily[0].measured_kwh, null);
   assert.equal(parsed.relay.restart_policy, 'MANUAL');
   assert.equal(parsed.relay.contact, 'UNKNOWN');
+  const persistent = parseMeasuredConsumption(packet(selected, {
+    relay: { ...packet(selected).relay, mode: 'PERSISTENT', restart_policy: 'AUTO', expires_at: null },
+  }), selected);
+  assert.equal(persistent.relay.mode, 'PERSISTENT');
+  assert.equal(persistent.relay.expires_at, null);
+  const untimed = parseMeasuredConsumption(packet(selected, {
+    latest: { ...packet(selected).latest, measured_at: null },
+    relay: { ...packet(selected).relay, offline_allowed: true },
+  }), selected);
+  assert.equal(untimed.relay.offline_allowed, true);
+  assert.equal(measuredFreshness(untimed, Date.parse(asOf)), 'STALE');
   assert.equal(measuredFreshness(parsed, Date.parse(asOf) + 89999), 'RECENT');
   assert.equal(measuredFreshness(parsed, Date.parse(asOf) + 90001), 'STALE');
   assert.equal(measuredFreshness(parseMeasuredConsumption(packet(selected, { latest: null }), selected), Date.parse(asOf)), 'UNAVAILABLE');

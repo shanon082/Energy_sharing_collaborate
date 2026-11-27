@@ -199,3 +199,85 @@ The archived upload-folder FQBN, used as the validation reference only, is
 ```text
 esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=4M,PartitionScheme=default,DebugLevel=none,PSRAM=disabled,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default
 ```
+
+## Live rollout preflight
+
+Release source is commit `75032da137f500cb5dab6455bffb85ef1fbdc79d`. On 26 November 2026, the public feature endpoint returned 200 and advertised MTN Sandbox with the AC lab in `SANDBOX` using `GPAWA_PZEM_V2`. The existing mobile meter list returned 401 to an unauthenticated request, and the measured-consumption path returned an HTML 404. The Vercel meter page redirected to sign-in. Alwaysdata rejected noninteractive SSH authentication, so the deployed source, migration state and private configuration could not be inspected. No production state was changed.
+
+1. Restore existing SSH authentication in the shell performing the rollout. Use strict host-key checking. Inspect the host's code reference before backup. If the deployment is an rsync tree, retain a source archive and compare representative path hashes instead of expecting Git revision metadata.
+
+   ```bash
+   ssh -o BatchMode=yes -o StrictHostKeyChecking=yes shanonsimon@ssh-shanonsimon.alwaysdata.net
+   ```
+
+   On the server:
+
+   ```bash
+   cd /home/shanonsimon/energy-sharing
+   git rev-parse --verify HEAD || sha256sum backend/alwaysdata_sandbox_settings.py meter/api/urls.py meter/prototype_device.py
+   export ALWAYSDATA_ENV_FILE=/home/shanonsimon/.config/energy-sharing/backend.env
+   export DJANGO_SETTINGS_MODULE=backend.alwaysdata_sandbox_settings
+   django=/home/shanonsimon/energy-venv/bin/python
+   "$django" manage.py check_alwaysdata_database
+   "$django" manage.py showmigrations meter
+   "$django" manage.py shell -c 'from django.conf import settings; from meter.prototype_device import permitted_environment; print("AC lab:", getattr(settings, "PROTOTYPE_AC_LAB_ENABLED", False), "environment:", permitted_environment(), "relay server gate:", getattr(settings, "PROTOTYPE_RELAY_OUTPUT_ENABLED", False))'
+   ```
+
+2. Run `python3 backend/deploy/preview_combined_migrations.py` locally and review the read-only PostgreSQL plan. Follow deployment steps 1–2 above for the rsync preview and the private source/config/DB backup. Validate the created dump with `pg_restore --list "$GPAWA_ROLLOUT_BACKUP/database-before.dump" > /dev/null` before upload. If the existing deployment differs from the AC-lab baseline, review the actual diff and prerequisites before applying the allowlist. The target revision defaults the server relay gate to true when its environment variable is absent. For a sensor-only rollout, verify the effective gate and use an explicit `PROTOTYPE_RELAY_OUTPUT_ENABLED=false` in the private host configuration before activating the new code. Preserve the other settings and review any existing active grants before the transition. Issue no grants. Apply the reviewed plan through `meter.0036`; for a plan confined to that dependency chain the apply command is `"$django" manage.py migrate meter 0036 --noinput`. Restart the existing WSGI site and confirm the applied migrations and effective sandbox settings.
+
+3. Run the protected endpoint checks before deploying the web client. Use existing authorized test accounts and private curl config files. The second consumer must not own the selected meter. Store the owner response privately and print only the contract checks below.
+
+   ```bash
+   umask 077
+   route="https://shanonsimon.alwaysdata.net/api/v1/meter/mobile-meters/${GPAWA_METER_ID}/measured-consumption/?environment=SANDBOX&days=7"
+   curl -sS -o /dev/null -w 'unauthenticated HTTP %{http_code}\n' "$route"
+   curl -fsS --config "$GPAWA_OWNER_CURL_CONFIG" -o gpawa-owner-read.json -w 'owner HTTP %{http_code}\n' "$route"
+   curl -sS --config "$GPAWA_OTHER_OWNER_CURL_CONFIG" -o /dev/null -w 'other owner HTTP %{http_code}\n' "$route"
+   python3 -c 'import json; d=json.load(open("gpawa-owner-read.json")); assert d["environment"]=="SANDBOX" and d["source"]=="AC_LAB_PZEM" and d["period"]["timezone"]=="UTC" and d["relay"]["contact"]=="UNKNOWN" and not d["relay"]["authorized"]; print("Contract OK. Bound:",d["device_bound"],"Sample present:",d["latest"] is not None,"Coverage:",d["period"]["coverage"])'
+   ```
+
+   Expect 401, 200 and 404 respectively. A 200 with `latest: null` verifies access and contract only. An existing sample must be correlated to its device and timestamps to demonstrate real-device telemetry in the acceptance run.
+
+4. Authenticate the existing Vercel account, then link the checkout to the **existing** project serving `energy-sharing-collaborate.vercel.app`. Confirm the project and its Root Directory before deploying. Record the previous production deployment ID from `vercel inspect`. Verify the existing production `API_URL` privately and retain the other variables.
+
+   ```bash
+   cd frontend
+   npx vercel whoami
+   npx vercel link
+   npx vercel inspect https://energy-sharing-collaborate.vercel.app
+   npx vercel env ls production
+   npx vercel env run -e production -- node -e 'if (process.env.API_URL !== "https://shanonsimon.alwaysdata.net/api/v1") process.exit(1)'
+   npx vercel deploy --prod
+   ```
+
+   If the API check fails, stop and review the production target. If the value is missing or confirmed outdated, set only that key in the existing project with `npx vercel env add API_URL production` or `npx vercel env update API_URL production` as appropriate, enter `https://shanonsimon.alwaysdata.net/api/v1`, and repeat the check. Use `npx vercel rollback "$GPAWA_PREVIOUS_DEPLOYMENT"` if a reviewed web rollback is needed. The server source backup is its rollback reference. Retain the DB backup and evaluate transactions since backup before any decision to restore it.
+
+## Windows Android update
+
+The verified APK is staged at `C:\Users\USER\Downloads\gpawa-measured-1.1.0-debug.apk`. Connect the phone with USB debugging enabled and authorize it in the phone prompt. Run these in PowerShell with Android platform-tools and `apksigner.bat` available:
+
+```powershell
+$apk = "$env:USERPROFILE\Downloads\gpawa-measured-1.1.0-debug.apk"
+$pkg = 'org.gpawa.consumer.prototype'
+Get-FileHash -Algorithm SHA256 $apk
+adb.exe devices
+adb.exe shell dumpsys package $pkg | Select-String 'versionCode=|versionName='
+$installed = adb.exe shell pm path $pkg | Where-Object { $_ -match '/base\.apk\s*$' } | Select-Object -First 1
+if (-not $installed) { throw 'Existing application was not found. Check the selected phone and package.' }
+$base = Join-Path $env:TEMP ('gpawa-installed-' + [guid]::NewGuid() + '.apk')
+adb.exe pull ($installed.Trim() -replace '^package:','') $base
+if ($LASTEXITCODE) { throw 'Could not inspect the existing package.' }
+apksigner.bat verify --print-certs $base
+apksigner.bat verify --print-certs $apk
+```
+
+Verify both commands succeed and report certificate SHA-256 `e9fb53040e78b6a525b67462cc5cc72a656de66ebe6c55061714e785eae86b4c`. With the matching installed package, a compatible installed version code, and exactly one authorized phone, run `adb.exe install -r $apk`. Stop on a signature mismatch or downgrade error and retain the original app and its data.
+
+## Review before a device-specific build and upload
+
+Windows enumerated no matching serial device and ADB listed no phone during preflight. The local core is Arduino-ESP32 3.3.12 and its build recipe consumes the synchronized `build_opt.h`. Open the exact Arduino sketch path above and use only **Verify** when board settings have been established.
+
+1. With the load physically isolated, identify the COM port in Windows. Collect existing serial logs at 115200 with DTR and RTS disabled where available. Record the running firmware identification, booted app offset, startup PSRAM/flash details, and any journal/binding status already reported. Opening some USB serial bridges can toggle control lines. If the adapter cannot guarantee passive attachment, review reset behavior first. Boot logs and the app's firmware identity are evidence of the previously running image; a bootable partition entry alone is insufficient.
+2. If physical capacity or the table is still unknown, a separate read-only inspection can enter the ROM loader. Entering it resets and interrupts the application, and leaving it starts the application again. Record that before any attempt and keep the load physically isolated. After manually entering the loader, `esptool.exe --chip esp32s3 --port COMx --before no-reset --after no-reset --no-stub flash-id` checks physical capacity and `get-security-info` with the same options checks secure boot and encryption state. With the confirmed table offset, read only its 4 KiB sector (`read-flash <confirmed-table-offset> 0x1000 <private-table-file>`, adding the permitted RAM stub only if needed). Decode the table with the installed `gen_esp32part.exe`. Share the parsed labels, offsets and sizes. Do not dump NVS or raw journal records. If the boot log is insufficient, inspect only verified app-slot metadata and the documented boot selection before choosing a destination. Stop if read protection or the active slot is unresolved.
+3. Match the full FQBN to the verified capacity, PSRAM, flash mode and frequency, partition layout, USB/runtime options and core. For a custom table, use `partitions.csv` in a private copy of the sketch folder with the existing private headers and profile file. Run the metered profile from the repository root using `python3 firmware/ac-lab-domain/build_profile.py metered --cli "$GPAWA_CLI" --windows-paths --sketch "$GPAWA_ARDUINO_SKETCH" --fqbn "$GPAWA_CONFIRMED_FQBN" --build-path "$GPAWA_SCRATCH_BUILD"`, or compile in the configured Windows IDE. `GPAWA_CLI` is the installed Windows Arduino CLI executable as a WSL path, and the fresh build directory must also be accessible from Windows. Do not distribute the resulting private application image. Inspect its fit in the verified app partition, including the sector-rounded write range, and compare its metadata and profile with the build log.
+4. The installed core's normal ESP32-S3 upload passes the bootloader at `0x0`, table at `0x8000`, `boot_app0.bin` at `0xe000`, and application at `0x10000`. Its fast-flash wrapper still writes the OTA selection file unconditionally. It can overwrite the existing table and OTA selection even when full erase is disabled. The recipe for subsequent review is a single `write-flash` address/image pair to the verified booted application slot, preserving flash mode, frequency and size. Confirm the security and boot rollback state permits that method, and confirm the entire write is inside the app partition. No bootloader, table, OTA metadata, NVS or merged image is included. A different OTA slot would require separate review of how it is selected. There is no device-specific upload command until the live offsets and image match, and no upload is part of this phase.

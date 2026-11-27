@@ -3,7 +3,7 @@ from django.db import transaction
 from django.utils import timezone
 from accounts.models import User
 from meter.models import PrototypeDevice
-from meter.prototype_device import require_lab
+from meter.prototype_device import require_lab, revoke_output
 
 
 class Command(BaseCommand):
@@ -21,4 +21,5 @@ class Command(BaseCommand):
             device = PrototypeDevice.objects.select_for_update().get(pk=options['device_id'])
             device.active = False; device.revoked_at = timezone.now(); device.revoked_by = operator
             device.save(update_fields=['active', 'revoked_at', 'revoked_by'])
+            revoke_output(device.pk, operator, 'AC laboratory device credentials revoked')
         self.stdout.write(f'Revoked {device.pk}; reservations and receipts retained; operator_id={operator.pk}.')

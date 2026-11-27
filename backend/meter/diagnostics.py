@@ -15,6 +15,14 @@ CODES |= frozenset((
     'MEASUREMENT_TRANSITION_INVALID', 'MEASUREMENT_TRANSITION_PENDING',
     'METER_ACCOUNTING_MISMATCH', 'METER_RECOVERY_PENDING', 'PZEM_ENERGY_JUMP',
 ))
+OUTPUT_REASONS = frozenset((
+    'LEASE_GRANTED', 'OUTPUT_GLOBAL_DISABLE', 'DEVICE_DISABLED', 'METER_RECOVERY_PENDING',
+    'OUTPUT_GRANT_MISSING', 'OUTPUT_GRANT_REVOKED', 'OUTPUT_GRANT_EXPIRED', 'OUTPUT_GRANT_EXPIRING',
+    'DEVICE_OUTPUT_DISABLED', 'MEASUREMENT_BASELINE_REQUIRED', 'ACK_REQUIRED',
+    'OUTPUT_BINDING_CHANGED',
+    'CURRENT_BOOT_SAMPLE_REQUIRED', 'OUTPUT_SAMPLE_STALE', 'METER_NOT_READY',
+    'CREDIT_UNCERTAIN', 'CREDIT_UNAVAILABLE', 'RELAY_POLARITY_MISMATCH',
+))
 _current = ContextVar('device_diagnostic', default=None)
 logger = logging.getLogger('meter.device')
 # The isolated protocol logger must retain 2xx replies too: a device may reject
@@ -92,14 +100,16 @@ def safe_trace(exc):
     return name + ':' + (' > '.join(locations[-16:]) or 'unavailable')
 
 
-def log_result(state, status, code):
+def log_result(state, status, code, data=None):
     stage = error_stage(code, state['stage']) if status >= 400 else 'complete'
     if code == 'TOKEN_UNAVAILABLE' and stage == 'token_lookup':
         code = 'TOKEN_LOOKUP_MISS'  # Operator only; public reply stays generic.
+    reason = data.get('output_reason') if 200 <= status < 300 and isinstance(data, dict) else None
+    output = ' output_reason=' + reason if isinstance(reason, str) and reason in OUTPUT_REASONS else ''
     logger.log(logging.ERROR if status >= 500 else logging.WARNING if status >= 400 else logging.INFO,
-               'DEVICE request_id=%s operation=%s http=%d stage=%s code=%s%s',
+               'DEVICE request_id=%s operation=%s http=%d stage=%s code=%s%s%s',
                state['request_id'], state['operation'], status, stage, code,
-               ' traceback=' + state['traceback'] if 'traceback' in state else '')
+               output, ' traceback=' + state['traceback'] if 'traceback' in state else '')
 
 
 def hosting_rejection(request):

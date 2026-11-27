@@ -11,6 +11,9 @@ parser.add_argument('--arduinojson', type=Path, default=Path(
 parser.add_argument('--sketch', type=Path, help='Existing sketch public headers; read only')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
+firmware = (args.sketch or root / 'GpawaAC') / 'Firmware.cpp'
+key_handler = firmware.read_text().split('void handleKey() {', 1)[1]
+assert key_handler.lstrip().startswith("char k = keypad.getKey();\n  if (!k || k == 'D') return;"), 'D must exit before any keypad side effects'
 if not (args.arduinojson / 'ArduinoJson.h').is_file():
     raise SystemExit('Provide existing ArduinoJson headers with --arduinojson')
 with tempfile.TemporaryDirectory(prefix='gpawa-domain-cpp-') as directory:

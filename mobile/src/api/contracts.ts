@@ -46,6 +46,8 @@ export type AllocationStatus = {
   output_authorization_state?: "NONE" | "ACTIVE" | "REVOKED" | "EXPIRED";
   output_authorization_expires_at?: string | null;
   output_restart_policy?: "AUTO" | "MANUAL";
+  output_commissioning_mode?: "TEMPORARY" | "PERSISTENT";
+  output_offline_allowed?: boolean;
 };
 
 export type DailyUsage = { date: string; kwh: string; source: string };
@@ -54,7 +56,7 @@ export type Telemetry = {
   received_at: string; classification: string;
 };
 export type LabTelemetry = {
-  boot_id: string; sequence: string; measured_at: string; received_at: string;
+  boot_id: string; sequence: string; measured_at: string | null; received_at: string;
   consumed_uwh: string | null; remaining_credit_uwh: string; uncertain_uwh: string;
   sensor_status: "OK" | "FAULT"; pzem_wh: string | null;
   voltage_mv: string | null; current_ma: string | null; power_mw: string | null;
@@ -180,6 +182,9 @@ export function parseMeterDashboard(payload: unknown, selected: MeterInfo): Allo
       Number.isFinite(Date.parse(data.output_authorization_expires_at)) ? data.output_authorization_expires_at : null,
     output_restart_policy: data.output_restart_policy === "AUTO" || data.output_restart_policy === "MANUAL"
       ? data.output_restart_policy : undefined,
+    output_commissioning_mode: data.output_commissioning_mode === "TEMPORARY" || data.output_commissioning_mode === "PERSISTENT"
+      ? data.output_commissioning_mode : undefined,
+    output_offline_allowed: data.output_offline_allowed === true,
   };
 }
 
@@ -267,7 +272,7 @@ function parseLabTelemetry(value: unknown): LabTelemetry[] {
   };
   return value.map(item => {
     const row = record(item);
-    if (typeof row.boot_id !== "string" || typeof row.measured_at !== "string" ||
+    if (typeof row.boot_id !== "string" || (row.measured_at !== null && typeof row.measured_at !== "string") ||
         typeof row.received_at !== "string" || !["OK", "FAULT"].includes(String(row.sensor_status)))
       throw new Error("Invalid lab measurement.");
     const optionalMetric = (v: unknown) => v == null ? null : count(v);

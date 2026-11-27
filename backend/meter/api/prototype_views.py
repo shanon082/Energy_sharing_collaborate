@@ -42,7 +42,9 @@ class PrototypeView(APIView):
                     self.diagnostic['stage'] = 'response_serialization'
                     response.render()
                     self.diagnostic['stage'] = stage
-                log_result(self.diagnostic, response.status_code, self.diagnostic.get('result_code', safe_code(getattr(response, 'data', None), response.status_code)))
+                data = getattr(response, 'data', None)
+                log_result(self.diagnostic, response.status_code,
+                           self.diagnostic.get('result_code', safe_code(data, response.status_code)), data)
                 return response
             except Exception as exc:
                 self.diagnostic['traceback'] = safe_trace(exc)

@@ -45,6 +45,15 @@ inline const char* diagnosticCorrelation(const char* sent,const char* returned){
   if(!diagnosticId(returned))return "invalid";
   return diagnosticId(sent)&&!strcmp(sent,returned)?"matched":"mismatch";
 }
+inline const char* outputAuthorizationReason(JsonVariantConst reply){
+  const char* value=reply["output_reason"].as<const char*>();
+  const char* known[]={"LEASE_GRANTED","OUTPUT_GLOBAL_DISABLE","DEVICE_DISABLED","METER_RECOVERY_PENDING",
+    "OUTPUT_GRANT_MISSING","OUTPUT_GRANT_REVOKED","OUTPUT_GRANT_EXPIRED","OUTPUT_GRANT_EXPIRING",
+    "DEVICE_OUTPUT_DISABLED","MEASUREMENT_BASELINE_REQUIRED","ACK_REQUIRED","CURRENT_BOOT_SAMPLE_REQUIRED","OUTPUT_BINDING_CHANGED",
+    "OUTPUT_SAMPLE_STALE","METER_NOT_READY","CREDIT_UNCERTAIN","CREDIT_UNAVAILABLE","RELAY_POLARITY_MISMATCH"};
+  if(value)for(auto code:known)if(!strcmp(value,code))return code;
+  return "UNREPORTED";
+}
 inline const char* rejectionMessage(const char* code){
   if(!strcmp(code,"TOKEN_UNAVAILABLE")||!strcmp(code,"TOKEN_LOOKUP_MISS"))return "Token unavailable";
   if(!strcmp(code,"TOKEN_SOURCE_UNVERIFIED"))return "Source review";

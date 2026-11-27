@@ -30,7 +30,7 @@ specific readiness checks is sufficient; weakening authentication is unnecessary
 The active sketch already had WIFI_TEST=0; that user change was preserved. Mixing
 authenticated credit mode with diagnostics/exercise is a compile error. The
 existing unconditional prohibition on physical-output compilation is retained.
-No relay GPIO is configured or driven; D displays “Output disabled”.
+No relay GPIO is configured or driven. The keypad ignores D.
 
 In authenticated credit-only mode:
 
